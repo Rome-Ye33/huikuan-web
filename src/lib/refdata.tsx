@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { supabase } from './supabase'
 import type { Account, Customer, Nature, Salesperson } from './supabase'
 import { useAuth } from './auth'
+import { tr } from './i18n'
 
 // 下拉框用的基础资料：账户、款项性质、业务员、客户。登录后加载一次，改动后调用 reload。
 type RefData = {
@@ -85,7 +86,7 @@ export function accountOptions(accounts: Account[], onlyActive = true) {
   const groups = new Map<string, { label: string; value: number }[]>()
   for (const a of accounts) {
     if (onlyActive && !a.active) continue
-    const g = a.kind === 'bank' ? a.company || '其他' : '现金 / momo'
+    const g = a.kind === 'bank' ? a.company || tr('其他') : tr('现金 / momo')
     if (!groups.has(g)) groups.set(g, [])
     groups.get(g)!.push({ label: a.short_name, value: a.id })
   }

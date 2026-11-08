@@ -2,10 +2,11 @@ import { DeleteOutlined, FilePdfOutlined, PaperClipOutlined, UploadOutlined } fr
 import { App, Button, Image, Space, Tooltip, Upload } from 'antd'
 import { useEffect, useState } from 'react'
 import { errorText } from '../lib/errors'
+import { useT } from '../lib/i18n'
 import { supabase, VOUCHER_BUCKET } from '../lib/supabase'
 
-// 凭证（水单、Credit Alert、截图）：存在私有 bucket，只有财务和管理员能看
-// 路径：年/月/随机号-文件名
+// 凭证（水单、Credit Alert、截图）：存在私有 bucket。财务和管理员能看全部；业务员只能看自己上传的
+// 路径：年/月/随机号-文件名；业务员提交到账时放在 sub/<用户id>/ 下面
 
 function safeName(name: string): string {
   const dot = name.lastIndexOf('.')
@@ -14,10 +15,10 @@ function safeName(name: string): string {
   return base + ext
 }
 
-export async function uploadVoucher(file: File): Promise<string> {
+export async function uploadVoucher(file: File, prefix?: string): Promise<string> {
   const now = new Date()
   const id = crypto.randomUUID().slice(0, 8)
-  const path = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}/${id}-${safeName(file.name || 'paste.png')}`
+  const path = `${prefix ? prefix + '/' : ''}${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}/${id}-${safeName(file.name || 'paste.png')}`
   const { error } = await supabase.storage.from(VOUCHER_BUCKET).upload(path, file, {
     contentType: file.type || undefined,
     upsert: false,
@@ -34,10 +35,13 @@ type Props = {
   value: string[]
   onChange?: (paths: string[]) => void
   readOnly?: boolean
+  /** 上传到哪个文件夹下（业务员：sub/<用户id>） */
+  prefix?: string
 }
 
-export default function Vouchers({ value, onChange, readOnly }: Props) {
+export default function Vouchers({ value, onChange, readOnly, prefix }: Props) {
   const { message } = App.useApp()
+  const t = useT()
   const [urls, setUrls] = useState<Record<string, string>>({})
   const [uploading, setUploading] = useState(false)
 
@@ -66,11 +70,11 @@ export default function Vouchers({ value, onChange, readOnly }: Props) {
     setUploading(true)
     try {
       const paths: string[] = []
-      for (const f of files) paths.push(await uploadVoucher(f))
+      for (const f of files) paths.push(await uploadVoucher(f, prefix))
       onChange([...value, ...paths])
-      message.success(`已上传 ${paths.length} 个凭证`)
+      message.success(t('已上传 {n} 个凭证', { n: paths.length }))
     } catch (e) {
-      message.error('上传失败：' + errorText(e))
+      message.error(t('上传失败：') + errorText(e))
     } finally {
       setUploading(false)
     }
@@ -112,7 +116,7 @@ export default function Vouchers({ value, onChange, readOnly }: Props) {
                 </a>
               )}
               {!readOnly && onChange && (
-                <Tooltip title="移除（不会删除已上传的文件）">
+                <Tooltip title={t('移除（不会删除已上传的文件）')}>
                   <Button
                     size="small"
                     type="text"
@@ -137,17 +141,17 @@ export default function Vouchers({ value, onChange, readOnly }: Props) {
             }}
           >
             <Button icon={<UploadOutlined />} loading={uploading}>
-              上传凭证
+              {t('上传凭证')}
             </Button>
           </Upload>
         )}
       </Space>
       {!readOnly && onChange && (
         <div className="hint" style={{ marginTop: 4 }}>
-          可以直接 Ctrl+V 粘贴截图
+          {t('可以直接 Ctrl+V 粘贴截图')}
         </div>
       )}
-      {readOnly && value.length === 0 && <span className="hint">没有凭证</span>}
+      {readOnly && value.length === 0 && <span className="hint">{t('没有凭证')}</span>}
     </div>
   )
 }

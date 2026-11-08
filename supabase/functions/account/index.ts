@@ -118,6 +118,7 @@ async function deleteUser(req: Request, body: Record<string, unknown>) {
     db.from('receipt_claims').select('id', { count: 'exact', head: true }).eq('created_by', userId),
     db.from('vehicles').select('id', { count: 'exact', head: true }).eq('created_by', userId),
     db.from('import_batches').select('id', { count: 'exact', head: true }).eq('created_by', userId),
+    db.from('receipt_submissions').select('id', { count: 'exact', head: true }).or(`submitted_by.eq.${userId},reviewed_by.eq.${userId}`),
   ])
   for (const r of results) {
     if (r.error) return reply(500, { error: r.error.message })

@@ -569,6 +569,117 @@ export type Database = {
         }
         Relationships: []
       }
+      receipt_submissions: {
+        Row: {
+          account_id: number
+          amount_orig: number
+          attachments: string[]
+          bank_ref: string | null
+          cheque_no: string | null
+          claims: Json
+          created_at: string
+          currency: string
+          fx_rate: number | null
+          id: number
+          note: string | null
+          payer_summary: string | null
+          receipt_date: string
+          receipt_id: number | null
+          review_note: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          salesperson_id: number
+          status: string
+          submitted_at: string
+          submitted_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          account_id: number
+          amount_orig: number
+          attachments?: string[]
+          bank_ref?: string | null
+          cheque_no?: string | null
+          claims?: Json
+          created_at?: string
+          currency: string
+          fx_rate?: number | null
+          id?: never
+          note?: string | null
+          payer_summary?: string | null
+          receipt_date: string
+          receipt_id?: number | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          salesperson_id: number
+          status?: string
+          submitted_at?: string
+          submitted_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          account_id?: number
+          amount_orig?: number
+          attachments?: string[]
+          bank_ref?: string | null
+          cheque_no?: string | null
+          claims?: Json
+          created_at?: string
+          currency?: string
+          fx_rate?: number | null
+          id?: never
+          note?: string | null
+          payer_summary?: string | null
+          receipt_date?: string
+          receipt_id?: number | null
+          review_note?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          salesperson_id?: number
+          status?: string
+          submitted_at?: string
+          submitted_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "receipt_submissions_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bank_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receipt_submissions_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: true
+            referencedRelation: "bank_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receipt_submissions_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: true
+            referencedRelation: "v_bank_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receipt_submissions_receipt_id_fkey"
+            columns: ["receipt_id"]
+            isOneToOne: true
+            referencedRelation: "v_receipt_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receipt_submissions_salesperson_id_fkey"
+            columns: ["salesperson_id"]
+            isOneToOne: false
+            referencedRelation: "salespersons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       salespersons: {
         Row: {
           active: boolean
@@ -981,6 +1092,10 @@ export type Database = {
           p_rows: Json
         }
         Returns: Json
+      }
+      link_submission: {
+        Args: { p_receipt_id: number; p_submission_id: number }
+        Returns: undefined
       }
       match_statement_lines: { Args: { p_account_id: number }; Returns: number }
       receipt_report_text: { Args: { p_receipt_id: number }; Returns: string }

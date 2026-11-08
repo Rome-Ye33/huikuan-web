@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { cleanSearch, usd } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import type { Vehicle } from '../lib/supabase'
+import { useT } from '../lib/i18n'
 
 // 按大架号或客户名搜车辆（远程搜索）
 
@@ -21,6 +22,7 @@ export function vehicleLabel(v: Vehicle): string {
 }
 
 export default function VehicleSelect({ value, onChange, known = [], placeholder, style, disabled }: Props) {
+  const t = useT()
   const [found, setFound] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(false)
   const timer = useRef<number | undefined>(undefined)
@@ -61,11 +63,11 @@ export default function VehicleSelect({ value, onChange, known = [], placeholder
       showSearch={{ filterOption: false, onSearch: search }}
       allowClear
       value={value ?? undefined}
-      placeholder={placeholder ?? '输入大架号或客户名搜索'}
+      placeholder={placeholder ?? t('输入大架号或客户名搜索')}
       style={style}
       disabled={disabled}
       loading={loading}
-      notFoundContent={loading ? '搜索中…' : '输入至少 2 个字搜索'}
+      notFoundContent={loading ? t('搜索中…') : t('输入至少 2 个字搜索')}
       options={options}
       optionRender={(o) => {
         const v = (o.data as { vehicle: Vehicle }).vehicle
@@ -75,7 +77,7 @@ export default function VehicleSelect({ value, onChange, known = [], placeholder
               <b>{v.vin}</b> · {v.model}
             </div>
             <div className="hint">
-              {v.customer_name} · {v.salesperson_name ?? '无业务员'} · {v.payment_method} · 合同 {usd(v.contract_usd)} · 余额{' '}
+              {v.customer_name} · {v.salesperson_name ?? t('无业务员')} · {t(v.payment_method ?? '')} · {t('合同')} {usd(v.contract_usd)} · {t('余额')}{' '}
               {usd(v.balance_usd)}
             </div>
           </div>

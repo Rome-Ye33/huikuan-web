@@ -1,6 +1,7 @@
 // 调用服务端的账号服务（Edge Function “account”）：注册、重设密码、删除账号
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from './supabase'
+import { tr } from './i18n'
 
 type AccountAction =
   | { action: 'register'; email: string; password: string; full_name?: string }
@@ -14,11 +15,11 @@ export async function accountCall(body: AccountAction): Promise<void> {
   if (error) {
     if (error instanceof FunctionsHttpError) {
       const j = (await error.context.json().catch(() => null)) as { error?: string } | null
-      throw new Error(j?.error ?? '操作失败，请稍后再试')
+      throw new Error(j?.error ?? tr('操作失败，请稍后再试'))
     }
-    throw new Error('网络连接失败，请检查网络后重试')
+    throw new Error(tr('网络连接失败，请检查网络后重试'))
   }
-  if (!(data as { ok?: boolean } | null)?.ok) throw new Error('操作失败，请稍后再试')
+  if (!(data as { ok?: boolean } | null)?.ok) throw new Error(tr('操作失败，请稍后再试'))
 }
 
 // 管理员重设密码时用：10 位，去掉容易看错的 0/O/1/l/I

@@ -9,10 +9,12 @@ import { money } from '../lib/format'
 import { supabase } from '../lib/supabase'
 import type { Receipt } from '../lib/supabase'
 import { CLAIM_COLOR } from './ReceiptsPage'
+import { useT } from '../lib/i18n'
 
 type Item = { receipt: Receipt; text: string }
 
 export default function ReportsPage() {
+  const t = useT()
   const { message } = App.useApp()
   const [mode, setMode] = useState<'todo' | 'done'>('todo')
   const [items, setItems] = useState<Item[]>([])
@@ -47,8 +49,8 @@ export default function ReportsPage() {
 
   const copyChosen = async () => {
     const text = chosen.map((i) => i.text).join('\n\n')
-    if (await copyText(text)) message.success(`已复制 ${chosen.length} 条，可以一起粘贴到群里`)
-    else message.error('复制失败')
+    if (await copyText(text)) message.success(t('已复制 {n} 条，可以一起粘贴到群里', { n: chosen.length }))
+    else message.error(t('复制失败'))
   }
 
   const markChosen = async () => {
@@ -63,21 +65,21 @@ export default function ReportsPage() {
       const { error } = await supabase.from('bank_receipts').update({ needs_correction: false }).in('id', corrected)
       if (error) return message.error(errorText(error))
     }
-    message.success(`已标记 ${chosen.length} 条为已发群`)
+    message.success(t('已标记 {n} 条为已发群', { n: chosen.length }))
     void load()
   }
 
   return (
     <div>
       <div className="page-title">
-        <h2>报款</h2>
+        <h2>{t('报款')}</h2>
         <Space wrap>
           <Segmented
             value={mode}
             onChange={(v) => setMode(v as 'todo' | 'done')}
             options={[
-              { value: 'todo', label: '待发群' },
-              { value: 'done', label: '最近已发' },
+              { value: 'todo', label: t('待发群') },
+              { value: 'done', label: t('最近已发') },
             ]}
           />
           <Button icon={<ReloadOutlined />} onClick={() => void load()} />
@@ -90,19 +92,19 @@ export default function ReportsPage() {
             indeterminate={selected.length > 0 && selected.length < items.length}
             onChange={(e) => setSelected(e.target.checked ? items.map((i) => i.receipt.id as number) : [])}
           >
-            全选
+            {t('全选')}
           </Checkbox>
           <Button icon={<CopyOutlined />} disabled={!chosen.length} onClick={copyChosen}>
-            复制选中（{chosen.length}）
+            {t('复制选中（{n}）', { n: chosen.length })}
           </Button>
           <Button icon={<CheckOutlined />} disabled={!chosen.length} onClick={markChosen}>
-            选中的都标记已发群
+            {t('选中的都标记已发群')}
           </Button>
-          <span className="hint">建议先复制、发到群里，再标记已发。</span>
+          <span className="hint">{t('建议先复制、发到群里，再标记已发。')}</span>
         </Space>
       )}
       <Spin spinning={loading}>
-        {items.length === 0 && !loading && <Empty description={mode === 'todo' ? '没有待发的报款' : '还没有已发的报款'} />}
+        {items.length === 0 && !loading && <Empty description={mode === 'todo' ? t('没有待发的报款') : t('还没有已发的报款')} />}
         <Space orientation="vertical" style={{ width: '100%' }} size={12}>
           {items.map(({ receipt: r, text }) => (
             <Card
@@ -125,13 +127,13 @@ export default function ReportsPage() {
                   <span className="num">
                     {r.currency} {money(r.amount_orig)}
                   </span>
-                  <Tag color={CLAIM_COLOR[r.claim_status ?? '']}>{r.claim_status}</Tag>
-                  {r.is_late && !r.needs_correction && <Tag>补</Tag>}
+                  <Tag color={CLAIM_COLOR[r.claim_status ?? '']}>{t(r.claim_status ?? '')}</Tag>
+                  {r.is_late && !r.needs_correction && <Tag>{t('补')}</Tag>}
                 </Space>
               }
               extra={
                 <Button type="link" onClick={() => setEditId(r.id as number)}>
-                  打开
+                  {t('打开')}
                 </Button>
               }
             >

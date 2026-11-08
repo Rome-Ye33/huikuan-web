@@ -1,11 +1,14 @@
 import { PaperClipOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { Button, DatePicker, Input, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { Badge, Button, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
 import ReceiptEditor from '../components/ReceiptEditor'
+import SubmissionList from '../components/SubmissionList'
 import { cleanSearch, money, todayAccra, usd } from '../lib/format'
+import { tr, useT } from '../lib/i18n'
 import { accountOptions, useRefData } from '../lib/refdata'
+import { useSubmissionCount } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import type { Receipt } from '../lib/supabase'
 
@@ -13,12 +16,13 @@ export const CLAIM_COLOR: Record<string, string> = { 未认领: 'red', 部分认
 export const BANK_COLOR: Record<string, string> = { 已核对: 'green', 银行查不到: 'red', 待核对: 'default', 无需核对: 'default' }
 
 export function reportTag(r: Receipt) {
-  if (r.needs_correction) return <Tag color="orange">需发修改</Tag>
-  if (r.is_reported) return <Tag color="green">已报 {r.report_date?.slice(5)}</Tag>
-  return <Tag color="blue">未报</Tag>
+  if (r.needs_correction) return <Tag color="orange">{tr('需发修改')}</Tag>
+  if (r.is_reported) return <Tag color="green">{tr('已报 {date}', { date: r.report_date?.slice(5) ?? '' })}</Tag>
+  return <Tag color="blue">{tr('未报')}</Tag>
 }
 
-export default function ReceiptsPage() {
+function ReceiptList() {
+  const t = useT()
   const { accounts } = useRefData()
   const [rows, setRows] = useState<Receipt[]>([])
   const [loading, setLoading] = useState(false)
@@ -57,12 +61,19 @@ export default function ReceiptsPage() {
     void load()
   }, [load])
 
+  // 审核通过了业务员的提交，这里也多了一笔
+  useEffect(() => {
+    const h = () => void load()
+    window.addEventListener('submissions-changed', h)
+    return () => window.removeEventListener('submissions-changed', h)
+  }, [load])
+
   const columns: ColumnsType<Receipt> = [
-    { title: '编号', dataIndex: 'receipt_no', width: 150 },
-    { title: '到账日期', dataIndex: 'receipt_date', width: 104 },
-    { title: '收款账户', dataIndex: 'account_name', width: 210, ellipsis: true },
+    { title: t('编号'), dataIndex: 'receipt_no', width: 150 },
+    { title: t('到账日期'), dataIndex: 'receipt_date', width: 104 },
+    { title: t('收款账户'), dataIndex: 'account_name', width: 210, ellipsis: true },
     {
-      title: '金额',
+      title: t('金额'),
       width: 150,
       align: 'right',
       render: (_, r) => (
@@ -71,36 +82,32 @@ export default function ReceiptsPage() {
         </span>
       ),
     },
-    { title: '汇率', dataIndex: 'fx_rate', width: 76, align: 'right', render: (v: number) => (v == 1 ? '' : Number(v)) },
+    { title: t('汇率'), dataIndex: 'fx_rate', width: 76, align: 'right', render: (v: number) => (v == 1 ? '' : Number(v)) },
     { title: 'USD', dataIndex: 'amount_usd', width: 96, align: 'right', render: (v: number) => <span className="num">{usd(v)}</span> },
     {
-      title: '拆分',
+      title: t('拆分'),
       width: 150,
       render: (_, r) => (
         <Space size={4}>
-          <Tag color={CLAIM_COLOR[r.claim_status ?? '']}>{r.claim_status}</Tag>
-          {r.claim_status === '部分认领' && (
-            <span className="hint">
-              剩 {money(r.pending_orig)}
-            </span>
-          )}
+          <Tag color={CLAIM_COLOR[r.claim_status ?? '']}>{t(r.claim_status ?? '')}</Tag>
+          {r.claim_status === '部分认领' && <span className="hint">{t('剩 {amt}', { amt: money(r.pending_orig) })}</span>}
         </Space>
       ),
     },
-    { title: '报款', width: 100, render: (_, r) => reportTag(r) },
+    { title: t('报款'), width: 100, render: (_, r) => reportTag(r) },
     {
-      title: '银行核对',
+      title: t('银行核对'),
       dataIndex: 'bank_status',
       width: 96,
-      render: (v: string) => <Tag color={BANK_COLOR[v]}>{v}</Tag>,
+      render: (v: string) => <Tag color={BANK_COLOR[v]}>{t(v)}</Tag>,
     },
-    { title: '付款方 / 摘要', dataIndex: 'payer_summary', ellipsis: true },
+    { title: t('付款方 / 摘要'), dataIndex: 'payer_summary', ellipsis: true },
     {
       title: '',
       width: 36,
       render: (_, r) =>
         r.attachments && r.attachments.length > 0 ? (
-          <Tooltip title={`${r.attachments.length} 个凭证`}>
+          <Tooltip title={t('{n} 个凭证', { n: r.attachments.length })}>
             <PaperClipOutlined />
           </Tooltip>
         ) : null,
@@ -108,64 +115,46 @@ export default function ReceiptsPage() {
   ]
 
   const total = rows.reduce((s, r) => s + Number(r.amount_usd ?? 0), 0)
+  const opts = (list: string[]) => list.map((x) => ({ value: x, label: t(x) }))
 
   return (
     <div>
-      <div className="page-title">
-        <h2>到账录入</h2>
-        <Space>
-          <Button icon={<ReloadOutlined />} onClick={() => void load()} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
-            新建到账
-          </Button>
-        </Space>
-      </div>
       <Space wrap className="filters">
         <DatePicker.RangePicker
           value={range}
           allowClear={false}
           onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])}
           presets={[
-            { label: '今天', value: [dayjs(todayAccra()), dayjs(todayAccra())] },
-            { label: '最近 7 天', value: [dayjs(todayAccra()).subtract(7, 'day'), dayjs(todayAccra())] },
-            { label: '最近 30 天', value: [dayjs(todayAccra()).subtract(30, 'day'), dayjs(todayAccra())] },
-            { label: '今年', value: [dayjs(todayAccra()).startOf('year'), dayjs(todayAccra())] },
+            { label: t('今天'), value: [dayjs(todayAccra()), dayjs(todayAccra())] },
+            { label: t('最近 7 天'), value: [dayjs(todayAccra()).subtract(7, 'day'), dayjs(todayAccra())] },
+            { label: t('最近 30 天'), value: [dayjs(todayAccra()).subtract(30, 'day'), dayjs(todayAccra())] },
+            { label: t('今年'), value: [dayjs(todayAccra()).startOf('year'), dayjs(todayAccra())] },
           ]}
         />
         <Select
           allowClear
-          placeholder="收款账户"
+          placeholder={t('收款账户')}
           style={{ width: 230 }}
           showSearch={{ optionFilterProp: 'label' }}
           options={accountOptions(accounts, false)}
           value={accountId}
           onChange={setAccountId}
         />
+        <Select allowClear placeholder={t('拆分状态')} style={{ width: 120 }} value={claimStatus} onChange={setClaimStatus} options={opts(['未认领', '部分认领', '已认领'])} />
+        <Select allowClear placeholder={t('报款状态')} style={{ width: 120 }} value={reportStatus} onChange={setReportStatus} options={opts(['未报', '已报', '需发修改'])} />
         <Select
           allowClear
-          placeholder="拆分状态"
-          style={{ width: 110 }}
-          value={claimStatus}
-          onChange={setClaimStatus}
-          options={['未认领', '部分认领', '已认领'].map((x) => ({ value: x, label: x }))}
-        />
-        <Select
-          allowClear
-          placeholder="报款状态"
-          style={{ width: 110 }}
-          value={reportStatus}
-          onChange={setReportStatus}
-          options={['未报', '已报', '需发修改'].map((x) => ({ value: x, label: x }))}
-        />
-        <Select
-          allowClear
-          placeholder="银行核对"
-          style={{ width: 120 }}
+          placeholder={t('银行核对')}
+          style={{ width: 130 }}
           value={bankStatus}
           onChange={setBankStatus}
-          options={['已核对', '待核对', '银行查不到', '无需核对'].map((x) => ({ value: x, label: x }))}
+          options={opts(['已核对', '待核对', '银行查不到', '无需核对'])}
         />
-        <Input.Search allowClear placeholder="编号、摘要、参考号、支票号" style={{ width: 240 }} onSearch={setQ} />
+        <Input.Search allowClear placeholder={t('编号、摘要、参考号、支票号')} style={{ width: 240 }} onSearch={setQ} />
+        <Button icon={<ReloadOutlined />} onClick={() => void load()} />
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
+          {t('新建到账')}
+        </Button>
       </Space>
       <Table
         rowKey="id"
@@ -174,7 +163,7 @@ export default function ReceiptsPage() {
         columns={columns}
         dataSource={rows}
         scroll={{ x: 1300 }}
-        pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => `共 ${n} 笔，合计 ${usd(total)}` }}
+        pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 笔，合计 {usd}', { n, usd: usd(total) }) }}
         rowClassName={() => 'clickable-row'}
         onRow={(r) => ({ onClick: () => setEditor({ open: true, id: r.id }) })}
       />
@@ -185,6 +174,37 @@ export default function ReceiptsPage() {
           setEditor({ open: false, id: null })
           if (changed) void load()
         }}
+      />
+    </div>
+  )
+}
+
+export default function ReceiptsPage() {
+  const t = useT()
+  const pending = useSubmissionCount('pending', true)
+  const [tab, setTab] = useState('receipts')
+
+  return (
+    <div>
+      <div className="page-title">
+        <h2>{t('到账录入')}</h2>
+      </div>
+      <Tabs
+        activeKey={tab}
+        onChange={setTab}
+        destroyOnHidden={false}
+        items={[
+          { key: 'receipts', label: t('到账'), children: <ReceiptList /> },
+          {
+            key: 'subs',
+            label: (
+              <Badge count={pending} size="small" offset={[8, -2]}>
+                {t('业务员提交')}
+              </Badge>
+            ),
+            children: <SubmissionList />,
+          },
+        ]}
       />
     </div>
   )

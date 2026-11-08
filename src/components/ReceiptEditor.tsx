@@ -1,4 +1,4 @@
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, LinkOutlined, PlusOutlined } from '@ant-design/icons'
 import {
   Alert,
   App,
@@ -23,8 +23,12 @@ import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
-import { money, num, round2, todayAccra, usd } from '../lib/format'
+import { dateTime, money, num, round2, todayAccra, usd } from '../lib/format'
+import { useT } from '../lib/i18n'
+import { defaultNature, receiptNatures } from '../lib/natures'
 import { accountOptions, lookupRate, useRefData } from '../lib/refdata'
+import { notifySubmissionsChanged, parseClaims } from '../lib/submissions'
+import type { Submission, SubmissionClaim } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import type { Receipt, Vehicle } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
@@ -49,6 +53,8 @@ type Props = {
   open: boolean
   receiptId?: number | null
   prefill?: ReceiptPrefill | null
+  /** 审核业务员提交的到账：按提交的内容预填，通过后生成正式到账 */
+  submission?: Submission | null
   onClose: (changed: boolean) => void
 }
 
@@ -60,6 +66,8 @@ type ClaimDraft = {
   customer_id?: number | null
   amount_orig?: number | null
   report_note?: string
+  /** 业务员提交时这一行手填的客户、车型、大架号（车不在系统里时） */
+  sub?: SubmissionClaim
 }
 
 type FormValues = {
@@ -76,16 +84,10 @@ type FormValues = {
 let keySeq = 0
 const newKey = () => `k${++keySeq}`
 
-function defaultNature(v: Vehicle): string {
-  const received = num(v.received_usd)
-  if (v.payment_method === '预付') return '预付款'
-  if (v.payment_method === '分期') return received < num(v.down_payment_usd) ? '首付款' : '分期款'
-  return received > 0 ? '全款尾款' : '全款'
-}
-
-export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Props) {
+export default function ReceiptEditor({ open, receiptId, prefill, submission, onClose }: Props) {
+  const t = useT()
   const { isStaff, isAdmin } = useAuth()
-  const { accounts, accountById, natures, natureByName } = useRefData()
+  const { accounts, accountById, natures, natureByName, salespersons } = useRefData()
   const { message, modal } = App.useApp()
   const [form] = Form.useForm<FormValues>()
 
@@ -100,6 +102,11 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
   const [dirty, setDirty] = useState(false)
   const [changed, setChanged] = useState(false)
   const [newVehicleFor, setNewVehicleFor] = useState<string | null>(null)
+  /** 正在审核的业务员提交（通过后清空，变成普通的到账） */
+  const [review, setReview] = useState<Submission | null>(null)
+  const [dupes, setDupes] = useState<Receipt[]>([])
+  const [rejecting, setRejecting] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
   const rateTouched = useRef(false)
 
   const accountId = Form.useWatch('account_id', form)
@@ -121,7 +128,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
   const load = useCallback(
     async (id: number) => {
       setLoading(true)
-      const [r, c, t] = await Promise.all([
+      const [r, c, tx] = await Promise.all([
         supabase.from('v_bank_receipts').select('*').eq('id', id).single(),
         supabase.from('v_receipt_claims').select('*').eq('receipt_id', id).order('id'),
         supabase.rpc('receipt_report_text', { p_receipt_id: id }),
@@ -134,7 +141,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
       const rec = r.data
       setReceipt(rec)
       setCurrentId(id)
-      setReportText(t.data ?? '')
+      setReportText(tx.data ?? '')
       setAttachments(rec.attachments ?? [])
       rateTouched.current = true
       form.setFieldsValue({
@@ -168,32 +175,94 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
     [form, message, rememberVehicles],
   )
 
-  // 打开时：编辑 → 读数据；新建 → 清空并预填
+  // 打开时：编辑 → 读数据；审核提交 → 按提交预填；新建 → 清空并预填
   useEffect(() => {
     if (!open) return
     setChanged(false)
     setDirty(false)
+    setDupes([])
+    setReview(null)
     if (receiptId) {
       void load(receiptId)
-    } else {
-      setCurrentId(null)
-      setReceipt(null)
-      setReportText('')
-      setAttachments([])
-      setVehicles(new Map())
-      rateTouched.current = false
-      form.resetFields()
-      form.setFieldsValue({
-        account_id: prefill?.account_id,
-        receipt_date: dayjs(prefill?.receipt_date ?? todayAccra()),
-        amount_orig: prefill?.amount_orig ?? null,
-        payer_summary: prefill?.payer_summary ?? '',
-        bank_ref: prefill?.bank_ref ?? '',
-        cheque_no: prefill?.cheque_no ?? '',
-      })
-      setClaims([{ key: newKey() }])
+      return
     }
-  }, [open, receiptId, prefill, load, form])
+    setCurrentId(null)
+    setReceipt(null)
+    setReportText('')
+    setVehicles(new Map())
+    form.resetFields()
+    if (submission) {
+      setReview(submission)
+      rateTouched.current = submission.fx_rate != null
+      form.setFieldsValue({
+        account_id: submission.account_id,
+        receipt_date: dayjs(submission.receipt_date),
+        amount_orig: num(submission.amount_orig),
+        fx_rate: submission.fx_rate != null ? num(submission.fx_rate) : null,
+        payer_summary: submission.payer_summary ?? '',
+        bank_ref: submission.bank_ref ?? '',
+        cheque_no: submission.cheque_no ?? '',
+        note: submission.note ?? '',
+      })
+      setAttachments(submission.attachments ?? [])
+      const lines = parseClaims(submission.claims)
+      setClaims(
+        lines.length
+          ? lines.map((c) => ({
+              key: newKey(),
+              nature: c.nature ?? undefined,
+              vehicle_id: c.vehicle_id ?? null,
+              customer_id: c.customer_id ?? null,
+              amount_orig: c.amount_orig ?? null,
+              report_note: '',
+              sub: c.vehicle_id ? undefined : c,
+            }))
+          : [{ key: newKey() }],
+      )
+      const vids = lines.map((c) => c.vehicle_id).filter((x): x is number => !!x)
+      if (vids.length) void supabase.from('v_vehicle_ledger').select('*').in('id', vids).then((v) => rememberVehicles(v.data ?? []))
+      return
+    }
+    rateTouched.current = false
+    setAttachments([])
+    form.setFieldsValue({
+      account_id: prefill?.account_id,
+      receipt_date: dayjs(prefill?.receipt_date ?? todayAccra()),
+      amount_orig: prefill?.amount_orig ?? null,
+      payer_summary: prefill?.payer_summary ?? '',
+      bank_ref: prefill?.bank_ref ?? '',
+      cheque_no: prefill?.cheque_no ?? '',
+    })
+    setClaims([{ key: newKey() }])
+  }, [open, receiptId, prefill, submission, load, form, rememberVehicles])
+
+  // 审核时：看看财务是不是已经录过这笔（同账户、同金额、日期相差 3 天内，还没关联别的提交）
+  useEffect(() => {
+    if (!open || !review) return
+    let alive = true
+    void (async () => {
+      const d = dayjs(review.receipt_date)
+      const { data } = await supabase
+        .from('v_bank_receipts')
+        .select('*')
+        .eq('account_id', review.account_id)
+        .eq('amount_orig', review.amount_orig)
+        .gte('receipt_date', d.subtract(3, 'day').format('YYYY-MM-DD'))
+        .lte('receipt_date', d.add(3, 'day').format('YYYY-MM-DD'))
+        .limit(10)
+      const list = data ?? []
+      const ids = list.map((x) => x.id).filter((x): x is number => x != null)
+      let taken = new Set<number>()
+      if (ids.length) {
+        const s = await supabase.from('receipt_submissions').select('receipt_id').in('receipt_id', ids)
+        taken = new Set((s.data ?? []).map((x) => x.receipt_id).filter((x): x is number => x != null))
+      }
+      if (alive) setDupes(list.filter((x) => x.id != null && !taken.has(x.id)))
+    })()
+    return () => {
+      alive = false
+    }
+  }, [open, review])
 
   // 换账户或日期：自动带汇率（手工改过就不再覆盖）
   const receiptDate = Form.useWatch('receipt_date', form)
@@ -248,14 +317,14 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
   const validateClaims = (rows: ClaimDraft[]): string | null => {
     for (const [i, r] of rows.entries()) {
       const n = r.nature ? natureByName.get(r.nature) : undefined
-      const label = `第 ${i + 1} 行`
-      if (!n) return `${label}：请选款项性质`
-      if (!(num(r.amount_orig) > 0)) return `${label}：请填金额`
-      if (n.kind === 'payment' && !r.vehicle_id) return `${label}：“${n.name}”必须选车`
-      if ((n.kind === 'refund' || n.kind === 'parts') && !r.vehicle_id && !r.customer_id) return `${label}：请选车或客户`
+      const row = i + 1
+      if (!n) return t('第 {n} 行：请选款项性质', { n: row })
+      if (!(num(r.amount_orig) > 0)) return t('第 {n} 行：请填金额', { n: row })
+      if (n.kind === 'payment' && !r.vehicle_id) return t('第 {n} 行：“{nature}”必须选车', { n: row, nature: t(n.name) })
+      if ((n.kind === 'refund' || n.kind === 'parts') && !r.vehicle_id && !r.customer_id) return t('第 {n} 行：请选车或客户', { n: row })
     }
     const total = round2(rows.reduce((s, r) => s + num(r.amount_orig), 0))
-    if (total > amount + 0.001) return `拆分合计 ${money(total)} 超过到账金额 ${money(amount)}`
+    if (total > amount + 0.001) return t('拆分合计 {a} 超过到账金额 {b}', { a: money(total), b: money(amount) })
     return null
   }
 
@@ -284,7 +353,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
       attachments,
     }
     if (currentId) p_receipt.id = currentId
-    else if (prefill?.line_id) p_receipt.line_id = prefill.line_id
+    else if (review) {
+      p_receipt.submission_id = review.id
+      p_receipt.submission_updated_at = review.updated_at
+    } else if (prefill?.line_id) p_receipt.line_id = prefill.line_id
     const p_claims = rows.map((r) => ({
       id: r.id ?? null,
       nature: r.nature ?? null,
@@ -297,20 +369,70 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
     const { data, error } = await supabase.rpc('save_receipt', { p_receipt, p_claims: p_claims as Json })
     setSaving(false)
     if (error) {
-      message.error('保存失败：' + errorText(error))
+      message.error((review ? t('通过失败：') : t('保存失败：')) + errorText(error))
       return
     }
-    message.success(currentId ? '已保存' : '已保存，报款文字在下面')
+    if (review) {
+      message.success(t('已通过，生成了正式到账，报款文字在下面'))
+      setReview(null)
+      notifySubmissionsChanged()
+    } else message.success(currentId ? t('已保存') : t('已保存，报款文字在下面'))
     setChanged(true)
     await load(data)
+  }
+
+  const reject = async () => {
+    if (!review) return
+    const reason = rejectReason.trim()
+    if (!reason) {
+      message.error(t('请写退回原因，业务员会看到'))
+      return
+    }
+    const { data, error } = await supabase
+      .from('receipt_submissions')
+      .update({ status: 'rejected', review_note: reason })
+      .eq('id', review.id)
+      .eq('status', 'pending')
+      .select('id')
+    if (error || !data?.length) {
+      message.error(error ? errorText(error) : t('这条提交已经处理过了，请刷新后再看'))
+      return
+    }
+    setRejecting(false)
+    message.success(t('已退回给业务员'))
+    notifySubmissionsChanged()
+    onClose(true)
+  }
+
+  const linkTo = (r: Receipt) => {
+    if (!review || r.id == null) return
+    modal.confirm({
+      title: t('这笔就是 {no}？', { no: r.receipt_no ?? '' }),
+      content: t('提交会标为已通过并关联到 {no}，业务员上传的凭证也会挂到这笔到账上。不会新建到账。', { no: r.receipt_no ?? '' }),
+      okText: t('关联'),
+      cancelText: t('取消'),
+      onOk: async () => {
+        const { error } = await supabase.rpc('link_submission', { p_submission_id: review.id, p_receipt_id: r.id as number })
+        if (error) {
+          message.error(errorText(error))
+          return
+        }
+        message.success(t('已关联到 {no}', { no: r.receipt_no ?? '' }))
+        setReview(null)
+        notifySubmissionsChanged()
+        setChanged(true)
+        await load(r.id as number)
+      },
+    })
   }
 
   const remove = () => {
     if (!currentId) return
     modal.confirm({
-      title: `删除到账 ${receipt?.receipt_no}？`,
-      content: '会连同它的拆分一起删除，不能恢复。',
-      okText: '删除',
+      title: t('删除到账 {no}？', { no: receipt?.receipt_no ?? '' }),
+      content: t('会连同它的拆分一起删除，不能恢复。'),
+      okText: t('删除'),
+      cancelText: t('取消'),
       okButtonProps: { danger: true },
       onOk: async () => {
         const a = await supabase.rpc('save_claims', { p_receipt_id: currentId, p_claims: [] })
@@ -323,7 +445,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
           message.error(errorText(b.error))
           return
         }
-        message.success('已删除')
+        message.success(t('已删除'))
+        notifySubmissionsChanged()
         onClose(true)
       },
     })
@@ -332,34 +455,33 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
   const close = () => {
     if (dirty && !readOnly) {
       modal.confirm({
-        title: '有改动还没保存，确定关闭？',
-        okText: '不保存，关闭',
+        title: t('有改动还没保存，确定关闭？'),
+        okText: t('不保存，关闭'),
+        cancelText: t('取消'),
         onOk: () => onClose(changed),
       })
     } else onClose(changed)
   }
 
-  const natureOptions = natures
-    .filter((n) => n.active && (n.kind === 'payment' || n.kind === 'parts' || n.kind === 'refund'))
-    .map((n) => ({ value: n.name, label: n.name }))
+  const natureOptions = receiptNatures(natures).map((n) => ({ value: n.name, label: t(n.name) }))
 
   const columns = [
     {
-      title: '款项性质',
+      title: t('款项性质'),
       width: 120,
       render: (_: unknown, r: ClaimDraft) => (
         <Select
           value={r.nature}
           options={natureOptions}
           style={{ width: '100%' }}
-          placeholder="选择"
+          placeholder={t('选择')}
           disabled={readOnly}
           onChange={(x: string) => setRow(r.key, { nature: x })}
         />
       ),
     },
     {
-      title: '车辆（大架号）',
+      title: t('车辆（大架号）'),
       render: (_: unknown, r: ClaimDraft) => {
         const v = r.vehicle_id ? vehicles.get(r.vehicle_id) : undefined
         return (
@@ -373,15 +495,29 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
                 onChange={(id, veh) => pickVehicle(r.key, id, veh)}
               />
               {!readOnly && (
-                <Tooltip title="系统里还没有这台车？新增一台">
+                <Tooltip title={t('系统里还没有这台车？新增一台')}>
                   <Button icon={<PlusOutlined />} onClick={() => setNewVehicleFor(r.key)} />
                 </Tooltip>
               )}
             </Space.Compact>
+            {!v && r.sub && (
+              <div className="text-warn" style={{ fontSize: 12 }}>
+                {t('业务员填的：{info}', {
+                  info: [r.sub.customer_name, r.sub.model, r.sub.vin ? t('大架号 {vin}', { vin: r.sub.vin }) : t('大架号未定')]
+                    .filter(Boolean)
+                    .join(' · '),
+                })}
+              </div>
+            )}
             {v ? (
               <div className="hint">
-                {v.customer_name} · {v.salesperson_name ?? '无业务员'} · 合同 {usd(v.contract_usd)} · 已到 {usd(v.received_usd)} · 余额{' '}
-                {usd(v.balance_usd)}
+                {t('{customer} · {sp} · 合同 {contract} · 已到 {received} · 余额 {balance}', {
+                  customer: v.customer_name,
+                  sp: v.salesperson_name ?? t('无业务员'),
+                  contract: usd(v.contract_usd),
+                  received: usd(v.received_usd),
+                  balance: usd(v.balance_usd),
+                })}
               </div>
             ) : (
               r.nature &&
@@ -389,7 +525,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
                 <CustomerSelect
                   value={r.customer_id}
                   onChange={(id) => setRow(r.key, { customer_id: id })}
-                  placeholder="不选车时选客户"
+                  placeholder={t('不选车时选客户')}
                   style={{ width: '100%', marginTop: 4 }}
                 />
               )
@@ -399,7 +535,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
       },
     },
     {
-      title: `金额 ${currency}`,
+      title: t('金额 {cur}', { cur: currency }),
       width: 150,
       render: (_: unknown, r: ClaimDraft) => (
         <InputNumber
@@ -419,12 +555,12 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
       render: (_: unknown, r: ClaimDraft) => (rate > 0 && r.amount_orig ? usd(num(r.amount_orig) / rate) : ''),
     },
     {
-      title: '报款备注（可空）',
+      title: t('报款备注（可空）'),
       width: 180,
       render: (_: unknown, r: ClaimDraft) => (
         <Input
           value={r.report_note}
-          placeholder="如：老板给予$500折扣"
+          placeholder={t('如：老板给予$500折扣')}
           disabled={readOnly}
           onChange={(e) => setRow(r.key, { report_note: e.target.value })}
         />
@@ -451,61 +587,106 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
         ]),
   ]
 
-  const title = currentId ? `到账 ${receipt?.receipt_no ?? ''}` : '新建到账'
+  const title = currentId
+    ? t('到账 {no}', { no: receipt?.receipt_no ?? '' })
+    : review
+      ? t('审核业务员提交 #{id}', { id: review.id })
+      : t('新建到账')
+  const reviewer = review ? salespersons.find((s) => s.id === review.salesperson_id)?.name : undefined
+  const newVehicleRow = newVehicleFor ? claims.find((c) => c.key === newVehicleFor) : undefined
 
   return (
     <Drawer
       open={open}
       title={title}
-      size={1080}
+      size={Math.min(1080, typeof window !== 'undefined' ? window.innerWidth : 1080)}
       onClose={close}
       destroyOnHidden
       extra={
         <Space>
           {isAdmin && currentId && (
             <Button danger onClick={remove}>
-              删除
+              {t('删除')}
+            </Button>
+          )}
+          {!readOnly && review && (
+            <Button
+              danger
+              onClick={() => {
+                setRejectReason('')
+                setRejecting(true)
+              }}
+            >
+              {t('退回')}
             </Button>
           )}
           {!readOnly && (
             <Button type="primary" loading={saving} onClick={save}>
-              保存
+              {review ? t('通过，生成到账') : t('保存')}
             </Button>
           )}
         </Space>
       }
     >
       <Spin spinning={loading}>
-        {prefill?.line_id && !currentId && (
+        {review && (
           <Alert
-            type="info"
+            type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            title="这笔是从银行对账单生成的，保存后会自动和那条流水配对。"
+            title={t('{name} 在 {when} 提交，等你审核', { name: reviewer ?? t('业务员'), when: dateTime(review.submitted_at) })}
+            description={
+              <div>
+                <div>{t('核对凭证和金额，选好车（车不在系统里可以点 + 新增），没问题点“通过，生成到账”；不对就点“退回”写明原因。')}</div>
+                {review.note && <div>{t('业务员说明：{note}', { note: review.note })}</div>}
+                {review.review_note && <div>{t('上次退回原因：{reason}', { reason: review.review_note })}</div>}
+              </div>
+            }
           />
         )}
-        <Card size="small" title="到账信息" style={{ marginBottom: 12 }}>
+        {review && dupes.length > 0 && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('系统里已经有同账户、同金额、日期相近的到账，可能已经录过了')}
+            description={
+              <Space orientation="vertical" size={4}>
+                {dupes.map((d) => (
+                  <Space key={d.id} wrap>
+                    <span>
+                      {d.receipt_no} · {d.receipt_date} · {d.currency} {money(d.amount_orig)} · {t(d.claim_status ?? '')}
+                    </span>
+                    <Button size="small" icon={<LinkOutlined />} onClick={() => linkTo(d)}>
+                      {t('就是这笔，关联')}
+                    </Button>
+                  </Space>
+                ))}
+              </Space>
+            }
+          />
+        )}
+        {prefill?.line_id && !currentId && !review && (
+          <Alert type="info" showIcon style={{ marginBottom: 12 }} title={t('这笔是从银行对账单生成的，保存后会自动和那条流水配对。')} />
+        )}
+        <Card size="small" title={t('到账信息')} style={{ marginBottom: 12 }}>
           <Form form={form} layout="vertical" disabled={readOnly} onValuesChange={() => setDirty(true)}>
             <Row gutter={12}>
               <Col xs={24} md={10}>
-                <Form.Item name="account_id" label="收款账户" rules={[{ required: true, message: '请选收款账户' }]}>
-                  <Select
-                    showSearch={{ optionFilterProp: 'label' }}
-                    options={accountOptions(accounts)}
-                    placeholder="搜索账户，如 ECO 8651"
-                  />
+                <Form.Item name="account_id" label={t('收款账户')} rules={[{ required: true, message: t('请选收款账户') }]}>
+                  <Select showSearch={{ optionFilterProp: 'label' }} options={accountOptions(accounts)} placeholder={t('搜索账户，如 ECO 8651')} />
                 </Form.Item>
               </Col>
               <Col xs={12} md={6}>
-                <Form.Item name="receipt_date" label="到账日期" rules={[{ required: true, message: '请选日期' }]}>
+                <Form.Item name="receipt_date" label={t('到账日期')} rules={[{ required: true, message: t('请选日期') }]}>
                   <DatePicker style={{ width: '100%' }} allowClear={false} />
                 </Form.Item>
               </Col>
               <Col xs={12} md={8}>
                 <Form.Item
                   name="amount_orig"
-                  label={`到账金额${currency ? `（${currency}）` : ''}`}
-                  rules={[{ required: true, message: '请填金额' }]}
+                  label={currency ? t('到账金额（{cur}）', { cur: currency }) : t('到账金额')}
+                  rules={[{ required: true, message: t('请填金额') }]}
                 >
                   <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
                 </Form.Item>
@@ -513,9 +694,9 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
               <Col xs={12} md={6}>
                 <Form.Item
                   name="fx_rate"
-                  label="汇率（1 美元 = ? 原币）"
-                  rules={[{ required: !isUsd, message: '请填汇率' }]}
-                  extra={amount > 0 && rate > 0 ? `折合 ${usd(amount / rate)}` : undefined}
+                  label={t('汇率（1 美元 = ? 原币）')}
+                  rules={[{ required: !isUsd, message: t('请填汇率') }]}
+                  extra={amount > 0 && rate > 0 ? t('折合 {usd}', { usd: usd(amount / rate) }) : undefined}
                 >
                   <InputNumber
                     min={0.000001}
@@ -529,29 +710,29 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
                 </Form.Item>
               </Col>
               <Col xs={12} md={6}>
-                <Form.Item name="cheque_no" label="支票号">
+                <Form.Item name="cheque_no" label={t('支票号')}>
                   <Input />
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
-                <Form.Item name="payer_summary" label="付款方 / 银行摘要">
-                  <Input placeholder="如 TRF FROM ABC LTD" />
+                <Form.Item name="payer_summary" label={t('付款方 / 银行摘要')}>
+                  <Input placeholder={t('如 TRF FROM ABC LTD')} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={8}>
-                <Form.Item name="bank_ref" label="银行参考号（有就填）">
+                <Form.Item name="bank_ref" label={t('银行参考号（有就填）')}>
                   <Input />
                 </Form.Item>
               </Col>
               <Col xs={24} md={16}>
-                <Form.Item name="note" label="内部备注（不进报款）">
+                <Form.Item name="note" label={t('内部备注（不进报款）')}>
                   <Input />
                 </Form.Item>
               </Col>
             </Row>
           </Form>
           <div style={{ marginTop: 4 }}>
-            <Typography.Text strong>凭证</Typography.Text>
+            <Typography.Text strong>{t('凭证')}</Typography.Text>
             <div style={{ marginTop: 6 }}>
               <Vouchers
                 value={attachments}
@@ -566,8 +747,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
           {receipt && (
             <div style={{ marginTop: 8 }}>
               <Space wrap>
-                <Tag>{receipt.bank_status}</Tag>
-                {receipt.import_batch_id && <Tag color="purple">银行导入</Tag>}
+                <Tag>{t(receipt.bank_status ?? '')}</Tag>
+                {receipt.import_batch_id && <Tag color="purple">{t('银行导入')}</Tag>}
               </Space>
             </div>
           )}
@@ -575,11 +756,11 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
 
         <Card
           size="small"
-          title="拆分到车"
+          title={t('拆分到车')}
           style={{ marginBottom: 12 }}
           extra={
             <span className={remaining < 0 ? 'text-danger' : remaining > 0 ? 'text-warn' : 'text-ok'}>
-              已拆 {currency} {money(claimedTotal)} / 到账 {money(amount)}，剩余 {money(remaining)}
+              {t('已拆 {cur} {a} / 到账 {b}，剩余 {c}', { cur: currency, a: money(claimedTotal), b: money(amount), c: money(remaining) })}
             </span>
           }
         >
@@ -590,25 +771,25 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
             dataSource={claims}
             columns={columns}
             scroll={{ x: 860 }}
-            locale={{ emptyText: '还没有拆分。钱还不知道是哪台车的，也可以先只存到账。' }}
+            locale={{ emptyText: t('还没有拆分。钱还不知道是哪台车的，也可以先只存到账。') }}
           />
           {!readOnly && (
             <Space style={{ marginTop: 8 }} wrap>
               <Button icon={<PlusOutlined />} onClick={addRow}>
-                再加一行
+                {t('再加一行')}
               </Button>
               {remaining > 0 && claims.some((c) => c.vehicle_id || c.customer_id) && (
-                <Button onClick={refundRemaining}>剩余 {money(remaining)} 退还客户</Button>
+                <Button onClick={refundRemaining}>{t('剩余 {amt} 退还客户', { amt: money(remaining) })}</Button>
               )}
-              <span className="hint">一笔钱付多台车时，每台车一行；金额按业务员通知的原币填写。</span>
+              <span className="hint">{t('一笔钱付多台车时，每台车一行；金额按业务员通知的原币填写。')}</span>
             </Space>
           )}
         </Card>
 
         {currentId && receipt && (
-          <Card size="small" title="报款文字">
+          <Card size="small" title={t('报款文字')}>
             {dirty && !readOnly ? (
-              <Alert type="info" showIcon title="有改动还没保存，保存后这里会更新。" />
+              <Alert type="info" showIcon title={t('有改动还没保存，保存后这里会更新。')} />
             ) : (
               <ReportBox receipt={receipt} text={reportText} readOnly={readOnly} onChanged={() => void load(currentId).then(() => setChanged(true))} />
             )}
@@ -618,6 +799,18 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
 
       <VehicleFormModal
         open={newVehicleFor !== null}
+        initial={
+          newVehicleRow?.sub
+            ? {
+                vin: newVehicleRow.sub.vin,
+                model: newVehicleRow.sub.model,
+                customer_id: newVehicleRow.sub.customer_id,
+                salesperson_id: review?.salesperson_id,
+              }
+            : review
+              ? { salesperson_id: review.salesperson_id }
+              : undefined
+        }
         onClose={async (savedId) => {
           const key = newVehicleFor
           setNewVehicleFor(null)
@@ -627,6 +820,27 @@ export default function ReceiptEditor({ open, receiptId, prefill, onClose }: Pro
           }
         }}
       />
+
+      <Drawer
+        open={rejecting}
+        title={t('退回给业务员')}
+        size={Math.min(480, typeof window !== 'undefined' ? window.innerWidth : 480)}
+        onClose={() => setRejecting(false)}
+        extra={
+          <Button danger type="primary" onClick={reject}>
+            {t('退回')}
+          </Button>
+        }
+      >
+        <Typography.Paragraph>{t('写清楚哪里不对、要怎么改，业务员会看到，改好后重新提交。')}</Typography.Paragraph>
+        <Input.TextArea
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          autoSize={{ minRows: 3, maxRows: 8 }}
+          placeholder={t('如：凭证看不清，请重新拍；金额和银行对不上')}
+          autoFocus
+        />
+      </Drawer>
     </Drawer>
   )
 }

@@ -22,6 +22,7 @@ body {
 .app-header {
   background: #fff !important;
   padding: 0 16px !important;
+  line-height: normal !important;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -113,4 +114,34 @@ body {
 }
 .clickable-row {
   cursor: pointer;
+}
+.field-label {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.75);
+  margin-bottom: 4px;
+}
+.sub-card {
+  cursor: pointer;
+}
+.sub-card .ant-card-body {
+  padding: 12px 14px;
+}
+.header-name {
+  max-width: 180px;
+}
+/* 窄屏收起菜单时，展开按钮放在页头左边，不挡页面标题 */
+.ant-layout-sider-zero-width-trigger {
+  top: 12px !important;
+  z-index: 20;
+}
+@media (max-width: 600px) {
+  .header-name {
+    max-width: 90px;
+  }
+  .header-logout {
+    display: none;
+  }
+  .app-content {
+    padding: 10px;
+  }
 }

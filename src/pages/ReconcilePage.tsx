@@ -33,8 +33,10 @@ import { DATE_FORMATS, findHeaderRow, guessMapping, matchAccount, toLines } from
 import type { ImportResult, Mapping, ParsedLine } from '../lib/statement'
 import type { ImportFormat, Receipt, StatementLine } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
+import { useT } from '../lib/i18n'
 
 export default function ReconcilePage() {
+  const t = useT()
   const [tab, setTab] = useState('unmatched')
   const [accountId, setAccountId] = useState<number | undefined>()
   const [editor, setEditor] = useState<{ open: boolean; id: number | null; prefill: ReceiptPrefill | null }>({
@@ -49,10 +51,10 @@ export default function ReconcilePage() {
   return (
     <div>
       <div className="page-title">
-        <h2>银行对账</h2>
+        <h2>{t('银行对账')}</h2>
         <Select
           allowClear
-          placeholder="全部账户"
+          placeholder={t('全部账户')}
           style={{ width: 260 }}
           showSearch={{ optionFilterProp: 'label' }}
           options={accountOptions(bankAccounts, false)}
@@ -61,7 +63,7 @@ export default function ReconcilePage() {
         />
       </div>
       <Typography.Paragraph type="secondary">
-        每周或每月把银行流水导进来一次。系统按“同账户、同金额、日期相差 3 天内”自动和已录的到账配对，只需要处理下面两种：银行有但没人报的款，和录了但银行查不到的款。
+        {t('每周或每月把银行流水导进来一次。系统按“同账户、同金额、日期相差 3 天内”自动和已录的到账配对，只需要处理下面两种：银行有但没人报的款，和录了但银行查不到的款。')}
       </Typography.Paragraph>
       <Tabs
         activeKey={tab}
@@ -70,7 +72,7 @@ export default function ReconcilePage() {
         items={[
           {
             key: 'unmatched',
-            label: '银行有、没人报',
+            label: t('银行有、没人报'),
             children: (
               <UnmatchedLines
                 accountId={accountId}
@@ -95,12 +97,12 @@ export default function ReconcilePage() {
           },
           {
             key: 'missing',
-            label: '录了、银行查不到',
+            label: t('录了、银行查不到'),
             children: <MissingReceipts accountId={accountId} version={version} onOpen={(id) => setEditor({ open: true, id, prefill: null })} />,
           },
           {
             key: 'import',
-            label: '导入银行流水',
+            label: t('导入银行流水'),
             children: (
               <ImportStatement
                 accountId={accountId}
@@ -113,7 +115,7 @@ export default function ReconcilePage() {
           },
           {
             key: 'all',
-            label: '全部流水明细',
+            label: t('全部流水明细'),
             children: <AllLines accountId={accountId} version={version} onOpen={(id) => setEditor({ open: true, id, prefill: null })} />,
           },
         ]}
@@ -143,6 +145,7 @@ function UnmatchedLines({
   version: number
   onCreate: (l: StatementLine) => void
 }) {
+  const t = useT()
   const { message } = App.useApp()
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
@@ -177,7 +180,7 @@ function UnmatchedLines({
       n += data ?? 0
     }
     setMatching(false)
-    message.success(n ? `新配对上 ${n} 笔` : '没有新的可配对')
+    message.success(n ? t('新配对上 {n} 笔', { n }) : t('没有新的可配对'))
     void load()
   }
 
@@ -189,17 +192,17 @@ function UnmatchedLines({
       .eq('id', ignoreFor.id as number)
     if (error) message.error(errorText(error))
     else {
-      message.success('已忽略')
+      message.success(t('已忽略'))
       setIgnoreFor(null)
       void load()
     }
   }
 
   const columns: ColumnsType<StatementLine> = [
-    { title: '银行日期', dataIndex: 'line_date', width: 104 },
-    { title: '账户', dataIndex: 'account_name', width: 210, ellipsis: true },
+    { title: t('银行日期'), dataIndex: 'line_date', width: 104 },
+    { title: t('账户'), dataIndex: 'account_name', width: 210, ellipsis: true },
     {
-      title: '金额',
+      title: t('金额'),
       width: 150,
       align: 'right',
       render: (_, l) => (
@@ -208,18 +211,18 @@ function UnmatchedLines({
         </span>
       ),
     },
-    { title: '银行摘要', dataIndex: 'payer_summary', ellipsis: true },
-    { title: '参考号', dataIndex: 'bank_ref', width: 140, ellipsis: true },
+    { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true },
+    { title: t('参考号'), dataIndex: 'bank_ref', width: 140, ellipsis: true },
     {
-      title: '处理',
+      title: t('处理'),
       width: 250,
       render: (_, l) => (
         <Space size={4}>
           <Button size="small" type="primary" onClick={() => onCreate(l)}>
-            录成到账
+            {t('录成到账')}
           </Button>
           <Button size="small" onClick={() => setLinkFor(l)}>
-            关联已录的
+            {t('关联已录的')}
           </Button>
           <Button
             size="small"
@@ -229,7 +232,7 @@ function UnmatchedLines({
               setIgnoreFor(l)
             }}
           >
-            忽略
+            {t('忽略')}
           </Button>
         </Space>
       ),
@@ -241,10 +244,10 @@ function UnmatchedLines({
       <Space style={{ marginBottom: 8 }}>
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
         <Button icon={<SyncOutlined />} loading={matching} onClick={rematch} disabled={!rows.length}>
-          重新自动配对
+          {t('重新自动配对')}
         </Button>
         <span className="hint">
-          银行流水里有、但系统里没人录的款。是回款就“录成到账”；已经录过但金额或日期对不上就“关联已录的”；利息、内部转账等就“忽略”。
+          {t('银行流水里有、但系统里没人录的款。是回款就“录成到账”；已经录过但金额或日期对不上就“关联已录的”；利息、内部转账等就“忽略”。')}
         </span>
       </Space>
       <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={rows} scroll={{ x: 1000 }} pagination={{ defaultPageSize: 50 }} />
@@ -252,11 +255,11 @@ function UnmatchedLines({
         setLinkFor(null)
         if (ok) void load()
       }} />
-      <Modal open={!!ignoreFor} title="忽略这条流水" okText="忽略" onOk={ignore} onCancel={() => setIgnoreFor(null)}>
+      <Modal open={!!ignoreFor} title={t('忽略这条流水')} okText={t('忽略')} onOk={ignore} onCancel={() => setIgnoreFor(null)}>
         <Typography.Paragraph>
           {ignoreFor?.line_date} · {ignoreFor?.currency} {money(ignoreFor?.amount_orig)} · {ignoreFor?.payer_summary}
         </Typography.Paragraph>
-        <Input placeholder="原因，如：利息、公司内部转账" value={ignoreNote} onChange={(e) => setIgnoreNote(e.target.value)} />
+        <Input placeholder={t('原因，如：利息、公司内部转账')} value={ignoreNote} onChange={(e) => setIgnoreNote(e.target.value)} />
       </Modal>
     </div>
   )
@@ -264,6 +267,7 @@ function UnmatchedLines({
 
 /** 把一条银行流水手工关联到已录的到账 */
 function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok: boolean) => void }) {
+  const t = useT()
   const { message } = App.useApp()
   const [cands, setCands] = useState<Receipt[]>([])
   const [loading, setLoading] = useState(false)
@@ -299,16 +303,16 @@ function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok
       .eq('id', line.id as number)
     if (error) message.error(errorText(error))
     else {
-      message.success('已关联')
+      message.success(t('已关联'))
       onClose(true)
     }
   }
 
   return (
-    <Modal open={!!line} title="关联到已录的到账" okText="关联" okButtonProps={{ disabled: !picked }} onOk={link} onCancel={() => onClose(false)} width={760}>
+    <Modal open={!!line} title={t('关联到已录的到账')} okText={t('关联')} okButtonProps={{ disabled: !picked }} onOk={link} onCancel={() => onClose(false)} width={760}>
       {line && (
         <Typography.Paragraph>
-          银行流水：{line.line_date} · {line.currency} {money(line.amount_orig)} · {line.payer_summary}
+          {t('银行流水：')}{line.line_date} · {line.currency} {money(line.amount_orig)} · {line.payer_summary}
         </Typography.Paragraph>
       )}
       <Table
@@ -320,21 +324,21 @@ function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok
         scroll={{ y: 360 }}
         rowSelection={{ type: 'radio', selectedRowKeys: picked ? [picked] : [], onChange: (keys) => setPicked(Number(keys[0])) }}
         onRow={(r) => ({ onClick: () => setPicked(r.id as number) })}
-        locale={{ emptyText: '这个账户前后 30 天内没有还没核对的到账' }}
+        locale={{ emptyText: t('这个账户前后 30 天内没有还没核对的到账') }}
         columns={[
-          { title: '编号', dataIndex: 'receipt_no', width: 150 },
-          { title: '到账日期', dataIndex: 'receipt_date', width: 104 },
-          { title: '金额', width: 140, align: 'right', render: (_, r) => `${r.currency} ${money(r.amount_orig)}` },
+          { title: t('编号'), dataIndex: 'receipt_no', width: 150 },
+          { title: t('到账日期'), dataIndex: 'receipt_date', width: 104 },
+          { title: t('金额'), width: 140, align: 'right', render: (_, r) => `${r.currency} ${money(r.amount_orig)}` },
           {
-            title: '差额',
+            title: t('差额'),
             width: 110,
             align: 'right',
             render: (_, r) => {
               const diff = round2(Number(r.amount_orig) - Number(line?.amount_orig ?? 0))
-              return diff === 0 ? <Tag color="green">一致</Tag> : <span className="text-warn">{money(diff)}</span>
+              return diff === 0 ? <Tag color="green">{t('一致')}</Tag> : <span className="text-warn">{money(diff)}</span>
             },
           },
-          { title: '摘要', dataIndex: 'payer_summary', ellipsis: true },
+          { title: t('摘要'), dataIndex: 'payer_summary', ellipsis: true },
         ]}
       />
     </Modal>
@@ -345,6 +349,7 @@ function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok
 // 录了、银行查不到
 // ---------------------------------------------------------------------------
 function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; version: number; onOpen: (id: number) => void }) {
+  const t = useT()
   const [rows, setRows] = useState<Receipt[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -367,7 +372,7 @@ function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; v
         type="warning"
         showIcon
         style={{ marginBottom: 8 }}
-        title="这些到账已经录进系统，但导入的银行流水里找不到对应的入账。常见原因：日期或金额录错、账户选错、银行扣了手续费、客户其实没付。请逐笔核实。"
+        title={t('这些到账已经录进系统，但导入的银行流水里找不到对应的入账。常见原因：日期或金额录错、账户选错、银行扣了手续费、客户其实没付。请逐笔核实。')}
       />
       <Table
         rowKey="id"
@@ -379,12 +384,12 @@ function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; v
         onRow={(r) => ({ onClick: () => onOpen(r.id as number) })}
         scroll={{ x: 900 }}
         columns={[
-          { title: '编号', dataIndex: 'receipt_no', width: 150 },
-          { title: '到账日期', dataIndex: 'receipt_date', width: 104 },
-          { title: '账户', dataIndex: 'account_name', width: 210, ellipsis: true },
-          { title: '金额', width: 150, align: 'right', render: (_, r) => `${r.currency} ${money(r.amount_orig)}` },
-          { title: '付款方 / 摘要', dataIndex: 'payer_summary', ellipsis: true },
-          { title: '报款', width: 90, render: (_, r) => (r.is_reported ? <Tag color="green">已报</Tag> : <Tag>未报</Tag>) },
+          { title: t('编号'), dataIndex: 'receipt_no', width: 150 },
+          { title: t('到账日期'), dataIndex: 'receipt_date', width: 104 },
+          { title: t('账户'), dataIndex: 'account_name', width: 210, ellipsis: true },
+          { title: t('金额'), width: 150, align: 'right', render: (_, r) => `${r.currency} ${money(r.amount_orig)}` },
+          { title: t('付款方 / 摘要'), dataIndex: 'payer_summary', ellipsis: true },
+          { title: t('报款'), width: 90, render: (_, r) => (r.is_reported ? <Tag color="green">{t('已报')}</Tag> : <Tag>{t('未报')}</Tag>) },
         ]}
       />
     </div>
@@ -395,6 +400,7 @@ function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; v
 // 全部流水明细
 // ---------------------------------------------------------------------------
 function AllLines({ accountId, version, onOpen }: { accountId?: number; version: number; onOpen: (id: number) => void }) {
+  const t = useT()
   const { message } = App.useApp()
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
@@ -431,7 +437,7 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
     }
   }
 
-  const MATCH_LABEL: Record<string, string> = { auto: '自动', manual: '手工', created: '由流水生成' }
+  const MATCH_LABEL: Record<string, string> = { auto: t('自动'), manual: t('手工'), created: t('由流水生成') }
 
   return (
     <div>
@@ -439,11 +445,11 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
         <DatePicker.RangePicker value={range} allowClear={false} onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])} />
         <Select
           allowClear
-          placeholder="配对状态"
+          placeholder={t('配对状态')}
           style={{ width: 120 }}
           value={status}
           onChange={setStatus}
-          options={['已配对', '未配对', '已忽略'].map((x) => ({ value: x, label: x }))}
+          options={['已配对', '未配对', '已忽略'].map((x) => ({ value: x, label: t(x) }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
       </Space>
@@ -455,45 +461,45 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
         pagination={{ defaultPageSize: 50 }}
         scroll={{ x: 1100 }}
         columns={[
-          { title: '银行日期', dataIndex: 'line_date', width: 104 },
-          { title: '账户', dataIndex: 'account_name', width: 200, ellipsis: true },
-          { title: '金额', width: 150, align: 'right', render: (_, l) => `${l.currency} ${money(l.amount_orig)}` },
-          { title: '银行摘要', dataIndex: 'payer_summary', ellipsis: true },
+          { title: t('银行日期'), dataIndex: 'line_date', width: 104 },
+          { title: t('账户'), dataIndex: 'account_name', width: 200, ellipsis: true },
+          { title: t('金额'), width: 150, align: 'right', render: (_, l) => `${l.currency} ${money(l.amount_orig)}` },
+          { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true },
           {
-            title: '状态',
+            title: t('状态'),
             width: 170,
             render: (_, l) =>
               l.match_status === '已配对' ? (
                 <Space size={4}>
-                  <Tag color="green">已配对</Tag>
+                  <Tag color="green">{t('已配对')}</Tag>
                   <span className="hint">{MATCH_LABEL[l.match_type ?? ''] ?? ''}</span>
                 </Space>
               ) : l.match_status === '已忽略' ? (
                 <Space size={4}>
-                  <Tag>已忽略</Tag>
+                  <Tag>{t('已忽略')}</Tag>
                   <span className="hint">{l.note}</span>
                 </Space>
               ) : (
-                <Tag color="red">未配对</Tag>
+                <Tag color="red">{t('未配对')}</Tag>
               ),
           },
           {
-            title: '到账',
+            title: t('到账'),
             width: 230,
             render: (_, l) =>
               l.receipt_id ? (
                 <Space size={4}>
                   <a onClick={() => onOpen(l.receipt_id as number)}>{l.receipt_no}</a>
                   {Number(l.receipt_amount_orig) !== Number(l.amount_orig) && (
-                    <Tag color="orange">差 {money(Number(l.receipt_amount_orig) - Number(l.amount_orig))}</Tag>
+                    <Tag color="orange">{t('差')} {money(Number(l.receipt_amount_orig) - Number(l.amount_orig))}</Tag>
                   )}
-                  <Button size="small" type="link" onClick={() => patch(l.id as number, { receipt_id: null, match_type: null }, '已取消配对')}>
-                    取消配对
+                  <Button size="small" type="link" onClick={() => patch(l.id as number, { receipt_id: null, match_type: null }, t('已取消配对'))}>
+                    {t('取消配对')}
                   </Button>
                 </Space>
               ) : l.ignored ? (
-                <Button size="small" type="link" onClick={() => patch(l.id as number, { ignored: false }, '已取消忽略')}>
-                  取消忽略
+                <Button size="small" type="link" onClick={() => patch(l.id as number, { ignored: false }, t('已取消忽略'))}>
+                  {t('取消忽略')}
                 </Button>
               ) : null,
           },
@@ -519,6 +525,7 @@ function ImportStatement({
   onAccount: (id: number | undefined) => void
   onDone: () => void
 }) {
+  const t = useT()
   const { isAdmin } = useAuth()
   const { accounts, accountById } = useRefData()
   const { message } = App.useApp()
@@ -549,7 +556,7 @@ function ImportStatement({
       .then(({ data }) => setFormats(data ?? []))
   }, [])
 
-  const headers = useMemo(() => (sheetRows[headerRow - 1] ?? []).map((h, i) => String(h ?? '').trim() || `第${i + 1}列`), [sheetRows, headerRow])
+  const headers = useMemo(() => (sheetRows[headerRow - 1] ?? []).map((h, i) => String(h ?? '').trim() || t('第{n}列', { n: i + 1 })), [sheetRows, headerRow, t])
   const parsed = useMemo(() => toLines(sheetRows, headerRow, mapping, dateFormat), [sheetRows, headerRow, mapping, dateFormat])
 
   const groups = useMemo<AccountGroup[]>(() => {
@@ -638,19 +645,19 @@ function ImportStatement({
   const doImport = async () => {
     setResult(null)
     if (!multi) {
-      if (!accountId) return message.error('先选收款账户')
-      if (!parsed.lines.length) return message.error('没有解析出贷方（入账）记录，请检查列的对应')
+      if (!accountId) return message.error(t('先选收款账户'))
+      if (!parsed.lines.length) return message.error(t('没有解析出贷方（入账）记录，请检查列的对应'))
       setImporting(true)
       const { data, error } = await runImport(accountId, parsed.lines)
       setImporting(false)
-      if (error) return message.error('导入失败：' + errorText(error))
+      if (error) return message.error(t('导入失败：') + errorText(error))
       setResult({ ...(data as ImportResult), accounts: 1, failed: [], multi: false })
-      message.success('导入完成')
+      message.success(t('导入完成'))
       onDone()
       return
     }
-    if (!readyGroups.length) return message.error('文件里的账户都没对上系统账户，请在“文件里的账户”表里选')
-    if (!period) return message.error('请选流水覆盖日期')
+    if (!readyGroups.length) return message.error(t('文件里的账户都没对上系统账户，请在“文件里的账户”表里选'))
+    if (!period) return message.error(t('请选流水覆盖日期'))
     // 同一个系统账户可能对应文件里的几个名字，合在一起导。
     // 只有支出或“无交易”的账户也导一次（0 条），记下这段日期已经核对过，录了但银行没有的款才查得出来。
     const byId = new Map<number, ParsedLine[]>()
@@ -675,14 +682,14 @@ function ImportStatement({
     }
     setImporting(false)
     setResult(sum)
-    if (sum.failed.length) message.warning(`有 ${sum.failed.length} 个账户没导进去，原因见下方`)
-    else message.success('导入完成')
+    if (sum.failed.length) message.warning(t('有 {n} 个账户没导进去，原因见下方', { n: sum.failed.length }))
+    else message.success(t('导入完成'))
     onDone()
   }
 
   const saveFormat = async () => {
     const name = saveName.trim()
-    if (!name) return message.error('给格式起个名字，如“GCB 网银 Excel”')
+    if (!name) return message.error(t('给格式起个名字，如“GCB 网银 Excel”'))
     const pick = (i?: number) => (i === undefined ? undefined : headers[i])
     const row = {
       name,
@@ -703,7 +710,7 @@ function ImportStatement({
     if (error) return message.error(errorText(error))
     setFormats((f) => [...f, data])
     setFormatId(data.id)
-    message.success('格式已保存，下次选它就不用再对列了')
+    message.success(t('格式已保存，下次选它就不用再对列了'))
   }
 
   const colSelect = (k: keyof Mapping, label: string, required = false) => (
@@ -718,18 +725,18 @@ function ImportStatement({
         value={mapping[k]}
         onChange={(v: number | undefined) => setMapping((m) => ({ ...m, [k]: v }))}
         options={headers.map((h, i) => ({ value: i, label: h }))}
-        placeholder="选列"
+        placeholder={t('选列')}
       />
     </Col>
   )
 
   const previewColumns: ColumnsType<ParsedLine> = [
-    ...(multi ? [{ title: '账户', dataIndex: 'account_key', width: 220, ellipsis: true }] : []),
-    { title: '日期', dataIndex: 'line_date', width: 110 },
-    { title: '金额', dataIndex: 'amount_orig', width: 140, align: 'right', render: (v: number) => money(v) },
-    { title: '摘要', dataIndex: 'payer_summary', ellipsis: true },
-    { title: '参考号', dataIndex: 'bank_ref', width: 160, ellipsis: true },
-    { title: '支票号', dataIndex: 'cheque_no', width: 100 },
+    ...(multi ? [{ title: t('账户'), dataIndex: 'account_key', width: 220, ellipsis: true }] : []),
+    { title: t('日期'), dataIndex: 'line_date', width: 110 },
+    { title: t('金额'), dataIndex: 'amount_orig', width: 140, align: 'right', render: (v: number) => money(v) },
+    { title: t('摘要'), dataIndex: 'payer_summary', ellipsis: true },
+    { title: t('参考号'), dataIndex: 'bank_ref', width: 160, ellipsis: true },
+    { title: t('支票号'), dataIndex: 'cheque_no', width: 100 },
   ]
 
   return (
@@ -738,10 +745,10 @@ function ImportStatement({
         <Row gutter={[12, 12]}>
           <Col xs={24} md={10}>
             <div className="hint">
-              收款账户{!multi && <span className="text-danger"> *</span>}
+              {t('收款账户')}{!multi && <span className="text-danger"> *</span>}
             </div>
             {multi ? (
-              <div style={{ lineHeight: '32px' }}>文件里有“账户”列，按账户分别导入，不用选</div>
+              <div style={{ lineHeight: '32px' }}>{t('文件里有“账户”列，按账户分别导入，不用选')}</div>
             ) : (
               <Select
                 style={{ width: '100%' }}
@@ -749,12 +756,12 @@ function ImportStatement({
                 options={accountOptions(bankAccounts)}
                 value={accountId}
                 onChange={onAccount}
-                placeholder="这份流水是哪个账户的"
+                placeholder={t('这份流水是哪个账户的')}
               />
             )}
           </Col>
           <Col xs={24} md={8}>
-            <div className="hint">银行导出格式（保存过的）</div>
+            <div className="hint">{t('银行导出格式（保存过的）')}</div>
             <Select
               allowClear
               style={{ width: '100%' }}
@@ -767,7 +774,7 @@ function ImportStatement({
                 )
               }}
               options={formats.map((f) => ({ value: f.id, label: f.name }))}
-              placeholder="没有就不选，下面手工对列"
+              placeholder={t('没有就不选，下面手工对列')}
             />
           </Col>
         </Row>
@@ -783,17 +790,17 @@ function ImportStatement({
           <p className="ant-upload-drag-icon">
             <InboxOutlined />
           </p>
-          <p className="ant-upload-text">{fileName ? `已读取：${fileName}（点这里换一个文件）` : '把网银导出的 Excel / CSV，或每月的流水汇总表拖到这里，或点击选择'}</p>
-          <p className="ant-upload-hint">只导入贷方（入账）记录，借方自动跳过；同一份流水重复导入不会重复。</p>
+          <p className="ant-upload-text">{fileName ? t('已读取：{fileName}（点这里换一个文件）', { fileName }) : t('把网银导出的 Excel / CSV，或每月的流水汇总表拖到这里，或点击选择')}</p>
+          <p className="ant-upload-hint">{t('只导入贷方（入账）记录，借方自动跳过；同一份流水重复导入不会重复。')}</p>
         </Upload.Dragger>
       </Card>
 
       {sheetRows.length > 0 && (
-        <Card size="small" title="对应列" style={{ marginBottom: 12 }}>
+        <Card size="small" title={t('对应列')} style={{ marginBottom: 12 }}>
           <Row gutter={[12, 12]}>
             {book && book.SheetNames.length > 1 && (
               <Col xs={24} md={8} lg={6}>
-                <div className="hint">工作表</div>
+                <div className="hint">{t('工作表')}</div>
                 <Select
                   style={{ width: '100%' }}
                   value={sheet}
@@ -803,25 +810,25 @@ function ImportStatement({
               </Col>
             )}
             <Col xs={12} md={8} lg={4}>
-              <div className="hint">表头在第几行</div>
+              <div className="hint">{t('表头在第几行')}</div>
               <InputNumber min={1} max={50} value={headerRow} onChange={(v) => setHeaderRow(v ?? 1)} style={{ width: '100%' }} />
             </Col>
-            {colSelect('date', '日期列', true)}
-            {colSelect('credit', '贷方 / 入账金额列', true)}
-            {colSelect('summary', '摘要列')}
-            {colSelect('ref', '参考号列')}
-            {colSelect('cheque', '支票号列')}
-            {colSelect('drcr', '借贷标志列（有就选）')}
-            {colSelect('account', '账户列（一个文件多个账户时选）')}
+            {colSelect('date', t('日期列'), true)}
+            {colSelect('credit', t('贷方 / 入账金额列'), true)}
+            {colSelect('summary', t('摘要列'))}
+            {colSelect('ref', t('参考号列'))}
+            {colSelect('cheque', t('支票号列'))}
+            {colSelect('drcr', t('借贷标志列（有就选）'))}
+            {colSelect('account', t('账户列（一个文件多个账户时选）'))}
             <Col xs={12} md={8} lg={4}>
-              <div className="hint">日期格式</div>
+              <div className="hint">{t('日期格式')}</div>
               <Select style={{ width: '100%' }} value={dateFormat} onChange={setDateFormat} options={DATE_FORMATS.map((f) => ({ value: f, label: f }))} />
             </Col>
           </Row>
           {isAdmin && (
             <Space style={{ marginTop: 12 }}>
-              <Input placeholder="保存为格式，如“GCB 网银 Excel”" value={saveName} onChange={(e) => setSaveName(e.target.value)} style={{ width: 260 }} />
-              <Button onClick={saveFormat}>保存格式</Button>
+              <Input placeholder={t('保存为格式，如“GCB 网银 Excel”')} value={saveName} onChange={(e) => setSaveName(e.target.value)} style={{ width: 260 }} />
+              <Button onClick={saveFormat}>{t('保存格式')}</Button>
             </Space>
           )}
         </Card>
@@ -830,8 +837,8 @@ function ImportStatement({
       {multi && sheetRows.length > 0 && (
         <Card
           size="small"
-          title={`文件里的账户：${groups.length} 个，对上 ${readyGroups.length} 个`}
-          extra={<span className="hint">按账户名自动对上；没对上的请选，留空就不导入</span>}
+          title={t('文件里的账户：{total} 个，对上 {matched} 个', { total: groups.length, matched: readyGroups.length })}
+          extra={<span className="hint">{t('按账户名自动对上；没对上的请选，留空就不导入')}</span>}
           style={{ marginBottom: 12 }}
         >
           <Table
@@ -841,12 +848,12 @@ function ImportStatement({
             dataSource={groups}
             scroll={{ y: 360 }}
             columns={[
-              { title: '文件里的账户', dataIndex: 'key', ellipsis: true },
-              { title: '行数', dataIndex: 'rows', width: 70, align: 'right' },
-              { title: '入账条数', width: 90, align: 'right', render: (_, g) => g.lines.length },
-              { title: '入账合计', width: 150, align: 'right', render: (_, g) => money(g.total) },
+              { title: t('文件里的账户'), dataIndex: 'key', ellipsis: true },
+              { title: t('行数'), dataIndex: 'rows', width: 70, align: 'right' },
+              { title: t('入账条数'), width: 90, align: 'right', render: (_, g) => g.lines.length },
+              { title: t('入账合计'), width: 150, align: 'right', render: (_, g) => money(g.total) },
               {
-                title: '对应系统账户',
+                title: t('对应系统账户'),
                 width: 300,
                 render: (_, g) => (
                   <Select
@@ -857,7 +864,7 @@ function ImportStatement({
                     options={accountOptions(bankAccounts)}
                     value={targetOf(g)}
                     status={targetOf(g) === undefined ? 'warning' : undefined}
-                    placeholder="不导入"
+                    placeholder={t('不导入')}
                     onChange={(v: number | undefined) => setAcctPick((p) => ({ ...p, [g.key]: v ?? null }))}
                   />
                 ),
@@ -872,12 +879,12 @@ function ImportStatement({
           size="small"
           title={
             multi
-              ? `预览：${parsed.lines.length} 条入账，${groups.length} 个账户`
-              : `预览：${parsed.lines.length} 条入账，合计 ${money(parsed.lines.reduce((s, l) => s + l.amount_orig, 0))}`
+              ? t('预览：{n} 条入账，{accounts} 个账户', { n: parsed.lines.length, accounts: groups.length })
+              : t('预览：{n} 条入账，合计 {total}', { n: parsed.lines.length, total: money(parsed.lines.reduce((s, l) => s + l.amount_orig, 0)) })
           }
           extra={
             <Space>
-              <span className="hint">流水覆盖日期</span>
+              <span className="hint">{t('流水覆盖日期')}</span>
               <DatePicker.RangePicker value={period} onChange={(v) => setPeriod(v && v[0] && v[1] ? [v[0], v[1]] : null)} />
               <Button
                 type="primary"
@@ -885,7 +892,7 @@ function ImportStatement({
                 onClick={doImport}
                 disabled={multi ? !readyGroups.length : !parsed.lines.length || !accountId}
               >
-                导入并自动配对
+                {t('导入并自动配对')}
               </Button>
             </Space>
           }
@@ -895,7 +902,7 @@ function ImportStatement({
               type="warning"
               showIcon
               style={{ marginBottom: 8 }}
-              title={`第 ${parsed.bad.slice(0, 10).join('、')} 行的日期认不出来，已跳过。请检查“日期格式”。`}
+              title={t('第 {rows} 行的日期认不出来，已跳过。请检查“日期格式”。', { rows: parsed.bad.slice(0, 10).join(t('、')) })}
             />
           )}
           {parsed.reversals.some((r) => r.paired) && (
@@ -903,7 +910,7 @@ function ImportStatement({
               type="info"
               showIcon
               style={{ marginBottom: 8 }}
-              title={`去掉了 ${parsed.reversals.filter((r) => r.paired).length} 对退票或冲回：先入账、后来又被冲掉的同额款，两笔都不导入。`}
+              title={t('去掉了 {n} 对退票或冲回：先入账、后来又被冲掉的同额款，两笔都不导入。', { n: parsed.reversals.filter((r) => r.paired).length })}
             />
           )}
           {parsed.reversals.some((r) => !r.paired) && (
@@ -911,11 +918,11 @@ function ImportStatement({
               type="warning"
               showIcon
               style={{ marginBottom: 8 }}
-              title="下面这些冲回在这份文件里找不到原来那笔入账，原入账多半在上个月的流水里。请到“全部流水明细”找到原入账，配过对的先取消配对，再忽略。"
+              title={t('下面这些冲回在这份文件里找不到原来那笔入账，原入账多半在上个月的流水里。请到“全部流水明细”找到原入账，配过对的先取消配对，再忽略。')}
               description={parsed.reversals
                 .filter((r) => !r.paired)
-                .map((r) => `${r.account_key ? r.account_key + ' ' : ''}${r.line_date ?? ''} 冲回 ${money(r.amount)} ${r.payer_summary}`)
-                .join('；')}
+                .map((r) => [r.account_key, r.line_date, t('冲回'), money(r.amount), r.payer_summary].filter(Boolean).join(' '))
+                .join(t('；'))}
             />
           )}
           {result && (
@@ -923,8 +930,18 @@ function ImportStatement({
               type={result.failed.length ? 'warning' : 'success'}
               showIcon
               style={{ marginBottom: 8 }}
-              title={`${result.multi ? `导入了 ${result.accounts} 个账户：` : ''}新导入 ${result.inserted} 条（重复跳过 ${result.skipped} 条），自动配对上 ${result.matched} 笔；${result.multi ? '这些账户' : '这个账户'}还有 ${result.unmatched} 条没人报，请到“银行有、没人报”处理。`}
-              description={result.failed.length ? `没导进去的账户：${result.failed.join('；')}` : undefined}
+              title={
+                (result.multi ? t('导入了 {n} 个账户：', { n: result.accounts }) : '') +
+                t('新导入 {inserted} 条（重复跳过 {skipped} 条），自动配对上 {matched} 笔；', {
+                  inserted: result.inserted,
+                  skipped: result.skipped,
+                  matched: result.matched,
+                }) +
+                (result.multi
+                  ? t('这些账户还有 {n} 条没人报，请到“银行有、没人报”处理。', { n: result.unmatched })
+                  : t('这个账户还有 {n} 条没人报，请到“银行有、没人报”处理。', { n: result.unmatched }))
+              }
+              description={result.failed.length ? t('没导进去的账户：{list}', { list: result.failed.join(t('；')) }) : undefined}
             />
           )}
           <Table rowKey={(_, i) => String(i)} size="small" dataSource={parsed.lines} pagination={{ defaultPageSize: 20 }} columns={previewColumns} />
