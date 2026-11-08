@@ -1,6 +1,7 @@
 import { PlusOutlined } from '@ant-design/icons'
 import { Alert, App, Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
+import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { dateTime } from '../lib/format'
@@ -14,11 +15,14 @@ const ROLE_COLOR: Record<AppRole, string> = { admin: 'red', finance: 'blue', sal
 export default function UsersPage() {
   const { session } = useAuth()
   const { salespersons } = useRefData()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
   const [editUser, setEditUser] = useState<Profile | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [pwUser, setPwUser] = useState<Profile | null>(null)
+  const [pwBusy, setPwBusy] = useState(false)
+  const [pform] = Form.useForm<{ password: string }>()
   const [uform] = Form.useForm<{ full_name?: string; role: AppRole | null; salesperson_id?: number | null; active: boolean }>()
   const [iform] = Form.useForm<{ email: string; role: AppRole; salesperson_id?: number | null; full_name?: string }>()
   const uRole = Form.useWatch('role', uform)
@@ -71,6 +75,40 @@ export default function UsersPage() {
     void load()
   }
 
+  const savePassword = async () => {
+    const v = await pform.validateFields()
+    setPwBusy(true)
+    try {
+      await accountCall({ action: 'set_password', user_id: pwUser!.id, password: v.password })
+    } catch (e) {
+      setPwBusy(false)
+      return message.error((e as Error).message)
+    }
+    setPwBusy(false)
+    modal.success({
+      title: '密码已重设',
+      content: (
+        <div>
+          把新密码告诉 {pwUser!.full_name || pwUser!.email}：
+          <Typography.Paragraph copyable strong style={{ fontSize: 16, marginTop: 8 }}>
+            {v.password}
+          </Typography.Paragraph>
+        </div>
+      ),
+    })
+    setPwUser(null)
+  }
+
+  const removeUser = async (p: Profile) => {
+    try {
+      await accountCall({ action: 'delete_user', user_id: p.id })
+    } catch (e) {
+      return message.error((e as Error).message)
+    }
+    message.success('已删除账号')
+    void load()
+  }
+
   const removeInvite = async (email: string) => {
     const { error } = await supabase.from('user_invites').delete().eq('email', email)
     if (error) message.error(errorText(error))
@@ -86,7 +124,7 @@ export default function UsersPage() {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        title="新同事：先在下面“邀请名单”加上对方的邮箱和角色，再让对方打开系统，在登录页点“第一次使用”设置密码。不在名单上的邮箱注册不了。离职的人把“启用”关掉即可。"
+        title="新同事：先在下面“邀请名单”加上对方的邮箱和角色，再让对方打开系统，在登录页点“第一次使用”设置密码。不在名单上的邮箱注册不了。忘记密码的用“重设密码”；离职的人把“启用”关掉即可。"
       />
       <Typography.Title level={5}>已注册的用户</Typography.Title>
       <Table
@@ -104,19 +142,38 @@ export default function UsersPage() {
           { title: '注册时间', dataIndex: 'created_at', width: 150, render: (v: string) => dateTime(v) },
           {
             title: '',
-            width: 70,
+            width: 200,
             render: (_, p) =>
               p.id === session?.user.id ? (
                 <span className="hint">自己</span>
               ) : (
-                <a
-                  onClick={() => {
-                    uform.setFieldsValue({ full_name: p.full_name ?? '', role: p.role, salesperson_id: p.salesperson_id, active: p.active })
-                    setEditUser(p)
-                  }}
-                >
-                  修改
-                </a>
+                <Space size="middle">
+                  <a
+                    onClick={() => {
+                      uform.setFieldsValue({ full_name: p.full_name ?? '', role: p.role, salesperson_id: p.salesperson_id, active: p.active })
+                      setEditUser(p)
+                    }}
+                  >
+                    修改
+                  </a>
+                  <a
+                    onClick={() => {
+                      pform.setFieldsValue({ password: randomPassword() })
+                      setPwUser(p)
+                    }}
+                  >
+                    重设密码
+                  </a>
+                  <Popconfirm
+                    title={`删除账号 ${p.email ?? ''}？`}
+                    description="只用于注册错的账号。离职的人请关掉“启用”；录过数据的账号也删不了。"
+                    okText="删除"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => removeUser(p)}
+                  >
+                    <a className="text-danger">删除</a>
+                  </Popconfirm>
+                </Space>
               ),
           },
         ]}
@@ -180,6 +237,30 @@ export default function UsersPage() {
           )}
           <Form.Item name="active" label="启用" valuePropName="checked">
             <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <Modal
+        open={!!pwUser}
+        title={`重设密码：${pwUser?.full_name || pwUser?.email || ''}`}
+        okText="重设"
+        confirmLoading={pwBusy}
+        onOk={savePassword}
+        onCancel={() => setPwUser(null)}
+        forceRender
+      >
+        <Form form={pform} layout="vertical">
+          <Form.Item
+            label="新密码（已经随机生成一个，也可以自己改）"
+            required
+            extra="重设后把新密码告诉对方，对方用它登录。"
+          >
+            <Space.Compact style={{ width: '100%' }}>
+              <Form.Item name="password" noStyle rules={[{ required: true, min: MIN_PASSWORD, message: `密码至少 ${MIN_PASSWORD} 位` }]}>
+                <Input autoComplete="off" />
+              </Form.Item>
+              <Button onClick={() => pform.setFieldsValue({ password: randomPassword() })}>换一个</Button>
+            </Space.Compact>
           </Form.Item>
         </Form>
       </Modal>
