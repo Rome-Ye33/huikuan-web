@@ -77,7 +77,7 @@ export function useSubmissionCount(status: SubmissionStatus, enabled: boolean): 
 }
 
 /** 拆分摘要：客户 · 大架号 · 款项，最多两行 */
-export function claimsSummary(s: Submission, t: (zh: string, v?: Record<string, string | number>) => string): string[] {
+export function claimsSummary(s: { claims: Json | null }, t: (zh: string, v?: Record<string, string | number>) => string): string[] {
   const list = parseClaims(s.claims)
   const lines = list.slice(0, 2).map((c) =>
     [c.customer_name, c.vin || (c.vehicle_id ? '' : c.model ? t('{model}（大架号未定）', { model: c.model }) : ''), c.nature ? t(c.nature) : '', c.amount_orig ? money(c.amount_orig) : '']

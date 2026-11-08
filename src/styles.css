@@ -301,3 +301,18 @@ body {
     print-color-adjust: exact;
   }
 }
+
+/* 工作台 */
+.wb-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.wb-line {
+  word-break: break-word;
+}
+.wb-tabs .ant-tabs-nav {
+  margin-bottom: 10px;
+}

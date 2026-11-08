@@ -37,6 +37,7 @@ import ReportBox from './ReportBox'
 import VehicleFormModal from './VehicleFormModal'
 import VehicleSelect from './VehicleSelect'
 import Vouchers from './Vouchers'
+import ApprovalTrail from './ApprovalTrail'
 
 export type ReceiptPrefill = {
   account_id?: number
@@ -849,6 +850,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             )}
           </Card>
         )}
+        {review && <ApprovalTrail docType="submission" docId={review.id} version={review.updated_at} />}
       </Spin>
 
       <VehicleFormModal
