@@ -61,7 +61,7 @@ export default function SubmitPage() {
     <div>
       <div className="page-title">
         <h2>{t('提交到账')}</h2>
-        <Space>
+        <Space wrap>
           <Button icon={<ReloadOutlined />} onClick={() => void load()} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditing({ open: true, sub: null })}>
             {t('提交新的到账')}

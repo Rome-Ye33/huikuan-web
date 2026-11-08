@@ -101,7 +101,7 @@ export default function CommissionPage() {
     <div>
       <div className="page-title">
         <h2>{t('提成申请单')}</h2>
-        <Space>
+        <Space wrap>
           <Button icon={<ReloadOutlined />} onClick={() => void load()} />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
             {t('新建提成单')}

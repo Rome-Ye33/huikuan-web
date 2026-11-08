@@ -181,7 +181,7 @@ export default function UsersPage() {
           },
         ]}
       />
-      <Space style={{ marginBottom: 8 }}>
+      <Space wrap style={{ marginBottom: 8 }}>
         <Typography.Title level={5} style={{ margin: 0 }}>
           {t('邀请名单')}
         </Typography.Title>

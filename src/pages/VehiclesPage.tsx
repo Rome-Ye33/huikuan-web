@@ -156,7 +156,7 @@ export default function VehiclesPage() {
     <div>
       <div className="page-title">
         <h2>{isStaff ? t('车辆台账') : t('我的车辆')}</h2>
-        <Space>
+        <Space wrap>
           <Button icon={<ReloadOutlined />} onClick={() => void load()} />
           <Badge count={unlockedCount} size="small" color="orange">
             <Button onClick={() => setUnlockedOpen(true)}>{t('大架号未锁定的到账')}</Button>

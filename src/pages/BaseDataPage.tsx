@@ -67,7 +67,7 @@ function FxRates() {
 
   return (
     <div>
-      <Space style={{ marginBottom: 8 }}>
+      <Space wrap style={{ marginBottom: 8 }}>
         <Button
           type="primary"
           icon={<PlusOutlined />}
@@ -178,7 +178,7 @@ function Customers() {
   const list = customers.filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase()))
   return (
     <div>
-      <Space style={{ marginBottom: 8 }}>
+      <Space wrap style={{ marginBottom: 8 }}>
         <Input.Search allowClear placeholder={t('搜索客户')} onSearch={setQ} style={{ width: 240 }} />
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
           {t('新增客户')}
@@ -243,11 +243,11 @@ function Salespersons() {
   const { salespersons, reload } = useRefData()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<Salesperson | null | 'new'>(null)
-  const [form] = Form.useForm<{ name: string; lark_account?: string; wechat?: string; active: boolean }>()
+  const [form] = Form.useForm<{ name: string; active: boolean }>()
 
   const save = async () => {
     const v = await form.validateFields()
-    const row = { name: v.name.trim(), lark_account: v.lark_account?.trim() || null, wechat: v.wechat?.trim() || null, active: v.active }
+    const row = { name: v.name.trim(), active: v.active }
     const res = edit === 'new' ? await supabase.from('salespersons').insert(row) : await supabase.from('salespersons').update(row).eq('id', (edit as Salesperson).id)
     if (res.error) return message.error(errorText(res.error))
     message.success(t('已保存'))
@@ -278,8 +278,6 @@ function Salespersons() {
         pagination={false}
         columns={[
           { title: t('名字（报款署名）'), dataIndex: 'name' },
-          { title: t('飞书'), dataIndex: 'lark_account', width: 160 },
-          { title: t('微信'), dataIndex: 'wechat', width: 160 },
           { title: t('状态'), dataIndex: 'active', width: 80, render: (v: boolean) => (v ? <Tag color="green">{t('在职')}</Tag> : <Tag>{t('停用')}</Tag>) },
           ...(isAdmin
             ? [
@@ -289,7 +287,7 @@ function Salespersons() {
                   render: (_: unknown, s: Salesperson) => (
                     <a
                       onClick={() => {
-                        form.setFieldsValue({ name: s.name, lark_account: s.lark_account ?? '', wechat: s.wechat ?? '', active: s.active })
+                        form.setFieldsValue({ name: s.name, active: s.active })
                         setEdit(s)
                       }}
                     >
@@ -304,12 +302,6 @@ function Salespersons() {
       <Modal open={edit !== null} title={t('业务员')} okText={t('保存')} onOk={save} onCancel={() => setEdit(null)} forceRender>
         <Form form={form} layout="vertical">
           <Form.Item name="name" label={t('名字（照报款里的写法，如 boss、Ibrahim kumasi）')} rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="lark_account" label={t('飞书账号')}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="wechat" label={t('微信')}>
             <Input />
           </Form.Item>
           <Form.Item name="active" label={t('在职')} valuePropName="checked">

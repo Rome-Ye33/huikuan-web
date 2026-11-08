@@ -241,7 +241,7 @@ function UnmatchedLines({
 
   return (
     <div>
-      <Space style={{ marginBottom: 8 }}>
+      <Space wrap style={{ marginBottom: 8 }}>
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
         <Button icon={<SyncOutlined />} loading={matching} onClick={rematch} disabled={!rows.length}>
           {t('重新自动配对')}
