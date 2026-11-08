@@ -3,6 +3,7 @@ import {
   BankOutlined,
   CarOutlined,
   DatabaseOutlined,
+  FileDoneOutlined,
   LogoutOutlined,
   MoneyCollectOutlined,
   SendOutlined,
@@ -13,6 +14,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import LangSwitch from './components/LangSwitch'
 import { ROLE_LABEL, useAuth } from './lib/auth'
+import { todoStatuses, useVoucherCount } from './lib/commission'
 import { useI18n } from './lib/i18n'
 import { useSubmissionCount } from './lib/submissions'
 import LoginPage from './pages/LoginPage'
@@ -24,6 +26,8 @@ const ReconcilePage = lazy(() => import('./pages/ReconcilePage'))
 const BaseDataPage = lazy(() => import('./pages/BaseDataPage'))
 const UsersPage = lazy(() => import('./pages/UsersPage'))
 const SubmitPage = lazy(() => import('./pages/SubmitPage'))
+const CommissionPage = lazy(() => import('./pages/CommissionPage'))
+const CommissionPrintPage = lazy(() => import('./pages/CommissionPrintPage'))
 
 const { Sider, Header, Content } = Layout
 
@@ -55,6 +59,8 @@ export default function App() {
   const isSales = auth.role === 'sales'
   const pending = useSubmissionCount('pending', auth.isStaff)
   const rejected = useSubmissionCount('rejected', isSales)
+  // 提成单待我处理：业务员 = 被退回；财务 = 待审核、待发放；管理员 = 待审核、待总经理审批
+  const voucherTodo = useVoucherCount(todoStatuses(auth.role), !!auth.role)
 
   // 登录后换成这个人上次选的语言
   useEffect(() => {
@@ -79,11 +85,26 @@ export default function App() {
     )
   }
 
+  const home = auth.isStaff ? '/receipts' : '/submit'
+
+  // 打印页不带菜单
+  if (location.pathname.startsWith('/print/')) {
+    return (
+      <Suspense fallback={<FullSpin />}>
+        <Routes>
+          <Route path="/print/commission/:id" element={<CommissionPrintPage />} />
+          <Route path="*" element={<Navigate to={home} replace />} />
+        </Routes>
+      </Suspense>
+    )
+  }
+
   const items = auth.isStaff
     ? [
         { key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) },
         { key: '/reports', icon: <AuditOutlined />, label: t('报款') },
         { key: '/vehicles', icon: <CarOutlined />, label: t('车辆台账') },
+        { key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) },
         { key: '/reconcile', icon: <BankOutlined />, label: t('银行对账') },
         { key: '/base', icon: <DatabaseOutlined />, label: t('基础资料') },
         ...(auth.isAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: t('用户与权限') }] : []),
@@ -91,9 +112,9 @@ export default function App() {
     : [
         { key: '/submit', icon: <SendOutlined />, label: withCount(t('提交到账'), rejected) },
         { key: '/vehicles', icon: <CarOutlined />, label: t('我的车辆') },
+        { key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) },
       ]
 
-  const home = auth.isStaff ? '/receipts' : '/submit'
   const selected = items.find((i) => location.pathname.startsWith(i.key))?.key ?? home
 
   return (
@@ -134,6 +155,7 @@ export default function App() {
               {auth.isStaff && <Route path="/reports" element={<ReportsPage />} />}
               {isSales && <Route path="/submit" element={<SubmitPage />} />}
               <Route path="/vehicles" element={<VehiclesPage />} />
+              <Route path="/commission" element={<CommissionPage />} />
               {auth.isStaff && <Route path="/reconcile" element={<ReconcilePage />} />}
               {auth.isStaff && <Route path="/base" element={<BaseDataPage />} />}
               {auth.isAdmin && <Route path="/users" element={<UsersPage />} />}

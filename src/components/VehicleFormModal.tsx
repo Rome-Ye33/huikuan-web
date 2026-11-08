@@ -23,7 +23,7 @@ type FormValues = {
   customer_id: number
   salesperson_id?: number | null
   contract_date?: dayjs.Dayjs | null
-  payment_method: '全款' | '分期' | '预付'
+  payment_method: '全款' | '分期' | '预付' | '挂账'
   contract_usd: number
   down_payment_usd?: number | null
   ship_status: '未发车' | '已发车'
@@ -141,13 +141,19 @@ export default function VehicleFormModal({ open, vehicle, initial, onClose }: Pr
             </Form.Item>
           </Col>
           <Col span={12}>
-            <Form.Item name="payment_method" label={t('付款方式')} rules={[{ required: true }]}>
+            <Form.Item
+              name="payment_method"
+              label={t('付款方式')}
+              rules={[{ required: true }]}
+              extra={method === '挂账' ? t('挂账：发车不看回款。') : t('银行担保按全款录，选“全款”。')}
+            >
               <Radio.Group
                 optionType="button"
                 options={[
                   { value: '全款', label: t('全款') },
                   { value: '分期', label: t('分期') },
                   { value: '预付', label: t('预付') },
+                  { value: '挂账', label: t('挂账') },
                 ]}
               />
             </Form.Item>

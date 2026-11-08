@@ -1,6 +1,7 @@
 import { DownloadOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import {
   App,
+  Badge,
   Button,
   DatePicker,
   Descriptions,
@@ -24,7 +25,7 @@ import ReceiptEditor from '../components/ReceiptEditor'
 import VehicleFormModal from '../components/VehicleFormModal'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
-import { cleanSearch, money, todayAccra, usd } from '../lib/format'
+import { cleanSearch, money, num, todayAccra, usd } from '../lib/format'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Claim, Vehicle } from '../lib/supabase'
@@ -45,6 +46,8 @@ export default function VehiclesPage() {
   const [ship, setShip] = useState<string | undefined>()
   const [form, setForm] = useState<{ open: boolean; vehicle: Vehicle | null }>({ open: false, vehicle: null })
   const [detail, setDetail] = useState<Vehicle | null>(null)
+  const [unlockedOpen, setUnlockedOpen] = useState(false)
+  const [unlockedCount, setUnlockedCount] = useState(0)
   // 只在详情还开着、而且还是同一台车时才刷新，免得用户刚关掉抽屉又被弹出来
   const refreshDetail = async (id: number) => {
     const { data } = await supabase.from('v_vehicle_ledger').select('*').eq('id', id).single()
@@ -68,6 +71,20 @@ export default function VehiclesPage() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // 大架号未锁定的到账有几笔（钱到了、记在客户名下，还没定是哪台车）
+  const loadUnlocked = useCallback(async () => {
+    const { count } = await supabase
+      .from('v_receipt_claims')
+      .select('id', { count: 'exact', head: true })
+      .is('vehicle_id', null)
+      .in('nature_kind', ['payment', 'opening'])
+    setUnlockedCount(count ?? 0)
+  }, [])
+
+  useEffect(() => {
+    void loadUnlocked()
+  }, [loadUnlocked])
 
   const totals = useMemo(
     () =>
@@ -141,6 +158,9 @@ export default function VehiclesPage() {
         <h2>{isStaff ? t('车辆台账') : t('我的车辆')}</h2>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void load()} />
+          <Badge count={unlockedCount} size="small" color="orange">
+            <Button onClick={() => setUnlockedOpen(true)}>{t('大架号未锁定的到账')}</Button>
+          </Badge>
           <Button icon={<DownloadOutlined />} onClick={exportExcel} disabled={!rows.length}>
             {t('导出 Excel')}
           </Button>
@@ -178,7 +198,7 @@ export default function VehiclesPage() {
           style={{ width: 110 }}
           value={method}
           onChange={setMethod}
-          options={['全款', '分期', '预付'].map((x) => ({ value: x, label: t(x) }))}
+          options={['全款', '分期', '预付', '挂账'].map((x) => ({ value: x, label: t(x) }))}
         />
         <Select
           allowClear
@@ -232,6 +252,14 @@ export default function VehiclesPage() {
           }
         }}
       />
+      <UnlockedDrawer
+        open={unlockedOpen}
+        onClose={() => setUnlockedOpen(false)}
+        onChanged={async () => {
+          await load()
+          await loadUnlocked()
+        }}
+      />
       <VehicleDrawer
         vehicle={detail}
         onClose={() => setDetail(null)}
@@ -242,6 +270,103 @@ export default function VehiclesPage() {
         }}
       />
     </div>
+  )
+}
+
+/** 大架号未锁定的到账：钱到了、记在客户名下，还没定是哪台车。财务知道是哪台车后打开到账把车选上 */
+function UnlockedDrawer({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => Promise<void> }) {
+  const t = useT()
+  const { isStaff } = useAuth()
+  const [rows, setRows] = useState<Claim[]>([])
+  const [loading, setLoading] = useState(false)
+  const [receiptId, setReceiptId] = useState<number | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const { data } = await supabase
+      .from('v_receipt_claims')
+      .select('*')
+      .is('vehicle_id', null)
+      .in('nature_kind', ['payment', 'opening'])
+      .order('claim_date', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(2000)
+    setRows(data ?? [])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    if (open) void load()
+  }, [open, load])
+
+  const total = rows.reduce((s, r) => s + num(r.amount_usd), 0)
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      size={Math.min(1000, typeof window !== 'undefined' ? window.innerWidth : 1000)}
+      title={t('大架号未锁定的到账')}
+      destroyOnHidden
+    >
+      <Typography.Paragraph type="secondary">
+        {isStaff
+          ? t('这些钱已经到账、记在客户名下，但还没定是哪台车，不算进任何一台车的回款。知道是哪台车后，点到账编号打开，把车选上就锁定了。')
+          : t('这些钱已经到账、记在客户名下，但还没定是哪台车，不算进任何一台车的回款。知道是哪台车后请告诉财务。')}
+      </Typography.Paragraph>
+      <Table
+        rowKey={(r) => r.id as number}
+        size="small"
+        loading={loading}
+        dataSource={rows}
+        pagination={{ defaultPageSize: 50, showTotal: (n) => t('共 {n} 笔', { n }) }}
+        scroll={{ x: 940 }}
+        columns={[
+          { title: t('日期'), dataIndex: 'claim_date', width: 100 },
+          { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true },
+          { title: t('业务员'), dataIndex: 'salesperson_name', width: 100, ellipsis: true },
+          { title: t('数量与设备型号'), dataIndex: 'model_desc', ellipsis: true },
+          { title: t('性质'), dataIndex: 'nature', width: 90, render: (x: string) => t(x) },
+          {
+            title: t('金额'),
+            width: 140,
+            align: 'right',
+            render: (_, c) => (c.receipt_id ? <span className="num">{`${c.currency} ${money(c.amount_orig)}`}</span> : ''),
+          },
+          { title: 'USD', dataIndex: 'amount_usd', width: 100, align: 'right', render: (x) => <span className="num">{usd(x)}</span> },
+          {
+            title: t('到账编号'),
+            dataIndex: 'receipt_no',
+            width: 150,
+            render: (no: string | null, c) => (no ? isStaff ? <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a> : no : '—'),
+          },
+        ]}
+        summary={() =>
+          rows.length ? (
+            <Table.Summary.Row>
+              <Table.Summary.Cell index={0} colSpan={6}>
+                {t('合计')}
+              </Table.Summary.Cell>
+              <Table.Summary.Cell index={6} align="right">
+                <span className="num">{usd(total)}</span>
+              </Table.Summary.Cell>
+              <Table.Summary.Cell index={7} />
+            </Table.Summary.Row>
+          ) : null
+        }
+      />
+      <ReceiptEditor
+        open={receiptId !== null}
+        receiptId={receiptId}
+        onClose={async (changed) => {
+          setReceiptId(null)
+          if (changed) {
+            await load()
+            await onChanged()
+          }
+        }}
+      />
+    </Drawer>
   )
 }
 

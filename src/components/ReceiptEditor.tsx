@@ -66,6 +66,9 @@ type ClaimDraft = {
   customer_id?: number | null
   amount_orig?: number | null
   report_note?: string
+  /** 大架号未锁定（到账款还不知道是哪台车）：数量与设备型号、哪个业务员的 */
+  model_desc?: string
+  salesperson_id?: number | null
   /** 业务员提交时这一行手填的客户、车型、大架号（车不在系统里时） */
   sub?: SubmissionClaim
 }
@@ -87,7 +90,7 @@ const newKey = () => `k${++keySeq}`
 export default function ReceiptEditor({ open, receiptId, prefill, submission, onClose }: Props) {
   const t = useT()
   const { isStaff, isAdmin } = useAuth()
-  const { accounts, accountById, natures, natureByName, salespersons } = useRefData()
+  const { accounts, accountById, natures, natureByName, salespersons, customers } = useRefData()
   const { message, modal } = App.useApp()
   const [form] = Form.useForm<FormValues>()
 
@@ -162,6 +165,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
         customer_id: x.customer_id,
         amount_orig: x.amount_orig != null ? num(x.amount_orig) : null,
         report_note: x.report_note ?? '',
+        model_desc: x.vehicle_id ? '' : (x.model_desc ?? ''),
+        salesperson_id: x.vehicle_id ? null : x.salesperson_id,
       }))
       setClaims(rows)
       const vids = rows.map((x) => x.vehicle_id).filter((x): x is number => x != null)
@@ -215,6 +220,9 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
               customer_id: c.customer_id ?? null,
               amount_orig: c.amount_orig ?? null,
               report_note: '',
+              // 车不在系统里：先按大架号未锁定记到客户名下（车型照业务员填的），录了车再选上
+              model_desc: c.vehicle_id ? '' : (c.model ?? ''),
+              salesperson_id: c.vehicle_id ? null : submission.salesperson_id,
               sub: c.vehicle_id ? undefined : c,
             }))
           : [{ key: newKey() }],
@@ -287,6 +295,16 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     setClaims((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)))
   }
 
+  /** 不选车时选客户：业务员默认用客户资料上的 */
+  const pickCustomer = (key: string, id: number | null) => {
+    const sp = id ? (customers.find((c) => c.id === id)?.salesperson_id ?? null) : null
+    setDirty(true)
+    // 业务员提交的：业务员就是提交人；财务自己录的：跟着客户走
+    setClaims((rows) =>
+      rows.map((r) => (r.key === key ? { ...r, customer_id: id, salesperson_id: r.sub ? (r.salesperson_id ?? sp) : (sp ?? r.salesperson_id ?? null) } : r)),
+    )
+  }
+
   const pickVehicle = (key: string, id: number | null, v: Vehicle | null) => {
     if (v) rememberVehicles([v])
     setDirty(true)
@@ -320,7 +338,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       const row = i + 1
       if (!n) return t('第 {n} 行：请选款项性质', { n: row })
       if (!(num(r.amount_orig) > 0)) return t('第 {n} 行：请填金额', { n: row })
-      if (n.kind === 'payment' && !r.vehicle_id) return t('第 {n} 行：“{nature}”必须选车', { n: row, nature: t(n.name) })
+      if (n.kind === 'payment' && !r.vehicle_id && !r.customer_id)
+        return t('第 {n} 行：“{nature}”请选车；大架号还没锁定的请选客户', { n: row, nature: t(n.name) })
       if ((n.kind === 'refund' || n.kind === 'parts') && !r.vehicle_id && !r.customer_id) return t('第 {n} 行：请选车或客户', { n: row })
     }
     const total = round2(rows.reduce((s, r) => s + num(r.amount_orig), 0))
@@ -364,6 +383,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       customer_id: r.vehicle_id ? null : (r.customer_id ?? null),
       amount_orig: round2(num(r.amount_orig)),
       report_note: r.report_note ?? '',
+      model_desc: r.vehicle_id ? null : r.model_desc?.trim() || null,
+      salesperson_id: r.vehicle_id ? null : (r.salesperson_id ?? null),
     }))
     setSaving(true)
     const { data, error } = await supabase.rpc('save_receipt', { p_receipt, p_claims: p_claims as Json })
@@ -519,9 +540,40 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                   balance: usd(v.balance_usd),
                 })}
               </div>
+            ) : r.nature && natureByName.get(r.nature)?.kind === 'payment' ? (
+              <div className="unlocked-box">
+                <div className="hint">{t('还不知道是哪台车（大架号未锁定）：先记到客户名下，以后再选车')}</div>
+                <CustomerSelect
+                  value={r.customer_id}
+                  onChange={(id) => pickCustomer(r.key, id)}
+                  placeholder={t('选客户')}
+                  style={{ width: '100%', marginTop: 4 }}
+                />
+                {r.customer_id && (
+                  <Space.Compact style={{ width: '100%', marginTop: 4 }}>
+                    <Input
+                      value={r.model_desc}
+                      disabled={readOnly}
+                      placeholder={t('数量与设备型号，如 1台重汽6X4自卸车')}
+                      onChange={(e) => setRow(r.key, { model_desc: e.target.value })}
+                    />
+                    <Select
+                      allowClear
+                      disabled={readOnly}
+                      style={{ width: 150 }}
+                      placeholder={t('业务员')}
+                      showSearch={{ optionFilterProp: 'label' }}
+                      value={r.salesperson_id ?? undefined}
+                      options={salespersons
+                        .filter((s) => s.active || s.id === r.salesperson_id)
+                        .map((s) => ({ value: s.id, label: s.name }))}
+                      onChange={(x: number | undefined) => setRow(r.key, { salesperson_id: x ?? null })}
+                    />
+                  </Space.Compact>
+                )}
+              </div>
             ) : (
-              r.nature &&
-              natureByName.get(r.nature)?.kind !== 'payment' && (
+              r.nature && (
                 <CustomerSelect
                   value={r.customer_id}
                   onChange={(id) => setRow(r.key, { customer_id: id })}
@@ -781,7 +833,9 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
               {remaining > 0 && claims.some((c) => c.vehicle_id || c.customer_id) && (
                 <Button onClick={refundRemaining}>{t('剩余 {amt} 退还客户', { amt: money(remaining) })}</Button>
               )}
-              <span className="hint">{t('一笔钱付多台车时，每台车一行；金额按业务员通知的原币填写。')}</span>
+              <span className="hint">
+                {t('一笔钱付多台车时，每台车一行；金额按业务员通知的原币填写。还不知道是哪台车的，不选车、选客户。')}
+              </span>
             </Space>
           )}
         </Card>

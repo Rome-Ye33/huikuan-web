@@ -272,6 +272,147 @@ export type Database = {
           },
         ]
       }
+      commission_vouchers: {
+        Row: {
+          charges_note: string | null
+          commission_usd: number | null
+          created_at: string
+          created_by: string | null
+          customer_id: number
+          dept: string
+          discount_usd: number
+          down_payment_usd: number | null
+          finance_at: string | null
+          finance_by: string | null
+          finance_name: string | null
+          full_payment: boolean
+          gm_at: string | null
+          gm_by: string | null
+          gm_name: string | null
+          id: number
+          other_charges_usd: number
+          paid_by: string | null
+          paid_name: string | null
+          paid_on: string | null
+          payments: Json
+          payout_ratio: number | null
+          per_term_usd: number | null
+          prepared_at: string | null
+          prepared_by: string | null
+          prepared_name: string | null
+          qty_model: string | null
+          reject_note: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejected_name: string | null
+          remarks: string | null
+          salesperson_id: number
+          status: string
+          terms_count: number | null
+          updated_at: string
+          vehicles: Json
+          voucher_date: string
+          voucher_no: string | null
+        }
+        Insert: {
+          charges_note?: string | null
+          commission_usd?: number | null
+          created_at?: string
+          created_by?: string | null
+          customer_id: number
+          dept?: string
+          discount_usd?: number
+          down_payment_usd?: number | null
+          finance_at?: string | null
+          finance_by?: string | null
+          finance_name?: string | null
+          full_payment?: boolean
+          gm_at?: string | null
+          gm_by?: string | null
+          gm_name?: string | null
+          id?: never
+          other_charges_usd?: number
+          paid_by?: string | null
+          paid_name?: string | null
+          paid_on?: string | null
+          payments?: Json
+          payout_ratio?: number | null
+          per_term_usd?: number | null
+          prepared_at?: string | null
+          prepared_by?: string | null
+          prepared_name?: string | null
+          qty_model?: string | null
+          reject_note?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejected_name?: string | null
+          remarks?: string | null
+          salesperson_id: number
+          status?: string
+          terms_count?: number | null
+          updated_at?: string
+          vehicles?: Json
+          voucher_date?: string
+          voucher_no?: string | null
+        }
+        Update: {
+          charges_note?: string | null
+          commission_usd?: number | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: number
+          dept?: string
+          discount_usd?: number
+          down_payment_usd?: number | null
+          finance_at?: string | null
+          finance_by?: string | null
+          finance_name?: string | null
+          full_payment?: boolean
+          gm_at?: string | null
+          gm_by?: string | null
+          gm_name?: string | null
+          id?: never
+          other_charges_usd?: number
+          paid_by?: string | null
+          paid_name?: string | null
+          paid_on?: string | null
+          payments?: Json
+          payout_ratio?: number | null
+          per_term_usd?: number | null
+          prepared_at?: string | null
+          prepared_by?: string | null
+          prepared_name?: string | null
+          qty_model?: string | null
+          reject_note?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejected_name?: string | null
+          remarks?: string | null
+          salesperson_id?: number
+          status?: string
+          terms_count?: number | null
+          updated_at?: string
+          vehicles?: Json
+          voucher_date?: string
+          voucher_no?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commission_vouchers_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commission_vouchers_salesperson_id_fkey"
+            columns: ["salesperson_id"]
+            isOneToOne: false
+            referencedRelation: "salespersons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       customers: {
         Row: {
           country: string | null
@@ -466,9 +607,11 @@ export type Database = {
           created_by: string | null
           customer_id: number | null
           id: number
+          model_desc: string | null
           nature: string
           receipt_id: number | null
           report_note: string | null
+          salesperson_id: number | null
           updated_at: string
           vehicle_id: number | null
         }
@@ -481,9 +624,11 @@ export type Database = {
           created_by?: string | null
           customer_id?: number | null
           id?: never
+          model_desc?: string | null
           nature: string
           receipt_id?: number | null
           report_note?: string | null
+          salesperson_id?: number | null
           updated_at?: string
           vehicle_id?: number | null
         }
@@ -496,9 +641,11 @@ export type Database = {
           created_by?: string | null
           customer_id?: number | null
           id?: never
+          model_desc?: string | null
           nature?: string
           receipt_id?: number | null
           report_note?: string | null
+          salesperson_id?: number | null
           updated_at?: string
           vehicle_id?: number | null
         }
@@ -536,6 +683,13 @@ export type Database = {
             columns: ["receipt_id"]
             isOneToOne: false
             referencedRelation: "v_receipt_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "receipt_claims_salesperson_id_fkey"
+            columns: ["salesperson_id"]
+            isOneToOne: false
+            referencedRelation: "salespersons"
             referencedColumns: ["id"]
           },
           {
@@ -878,6 +1032,74 @@ export type Database = {
           },
         ]
       }
+      v_commission_vouchers: {
+        Row: {
+          balance_usd: number | null
+          charges_note: string | null
+          commission_usd: number | null
+          created_at: string | null
+          created_by: string | null
+          customer_id: number | null
+          customer_name: string | null
+          dept: string | null
+          discount_usd: number | null
+          down_payment_usd: number | null
+          finance_at: string | null
+          finance_by: string | null
+          finance_name: string | null
+          full_payment: boolean | null
+          gm_at: string | null
+          gm_by: string | null
+          gm_name: string | null
+          id: number | null
+          other_charges_usd: number | null
+          paid_by: string | null
+          paid_name: string | null
+          paid_on: string | null
+          paid_usd: number | null
+          payments: Json | null
+          payout_ratio: number | null
+          payout_usd: number | null
+          per_term_usd: number | null
+          prepared_at: string | null
+          prepared_by: string | null
+          prepared_name: string | null
+          qty_model: string | null
+          reject_note: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejected_name: string | null
+          remarks: string | null
+          salesperson_id: number | null
+          salesperson_name: string | null
+          status: string | null
+          terms_count: number | null
+          total_sales_usd: number | null
+          updated_at: string | null
+          vehicle_count: number | null
+          vehicles: Json | null
+          vehicles_usd: number | null
+          vins: string | null
+          voucher_date: string | null
+          voucher_no: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commission_vouchers_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commission_vouchers_salesperson_id_fkey"
+            columns: ["salesperson_id"]
+            isOneToOne: false
+            referencedRelation: "salespersons"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_receipt_claims: {
         Row: {
           account_name: string | null
@@ -893,12 +1115,14 @@ export type Database = {
           fx_rate: number | null
           id: number | null
           model: string | null
+          model_desc: string | null
           nature: string | null
           nature_kind: string | null
           receipt_amount_orig: number | null
           receipt_id: number | null
           receipt_no: string | null
           report_note: string | null
+          salesperson_id: number | null
           salesperson_name: string | null
           updated_at: string | null
           vehicle_id: number | null
@@ -1081,6 +1305,15 @@ export type Database = {
     }
     Functions: {
       cn_num: { Args: { n: number }; Returns: string }
+      commission_voucher_action: {
+        Args: {
+          p_action: string
+          p_date?: string
+          p_id: number
+          p_note?: string
+        }
+        Returns: undefined
+      }
       fmt_money: { Args: { decimals?: number; n: number }; Returns: string }
       import_statement: {
         Args: {
@@ -1103,6 +1336,7 @@ export type Database = {
         Args: { p_claims: Json; p_receipt_id: number }
         Returns: undefined
       }
+      save_commission_voucher: { Args: { p: Json }; Returns: number }
       save_receipt: {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number
