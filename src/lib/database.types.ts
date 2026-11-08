@@ -607,6 +607,7 @@ export type Database = {
           created_by: string | null
           customer_id: number | null
           id: number
+          import_key: string | null
           model_desc: string | null
           nature: string
           receipt_id: number | null
@@ -624,6 +625,7 @@ export type Database = {
           created_by?: string | null
           customer_id?: number | null
           id?: never
+          import_key?: string | null
           model_desc?: string | null
           nature: string
           receipt_id?: number | null
@@ -641,6 +643,7 @@ export type Database = {
           created_by?: string | null
           customer_id?: number | null
           id?: never
+          import_key?: string | null
           model_desc?: string | null
           nature?: string
           receipt_id?: number | null
@@ -1315,6 +1318,10 @@ export type Database = {
         Returns: undefined
       }
       fmt_money: { Args: { decimals?: number; n: number }; Returns: string }
+      import_vehicles: {
+        Args: { p_opening_date: string; p_rows: Json; p_update?: boolean }
+        Returns: Json
+      }
       import_statement: {
         Args: {
           p_account_id: number

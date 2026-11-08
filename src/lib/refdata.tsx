@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { supabase } from './supabase'
+import { fetchAll, supabase } from './supabase'
 import type { Account, Customer, Nature, Salesperson } from './supabase'
 import { useAuth } from './auth'
 import { tr } from './i18n'
@@ -32,7 +32,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
       supabase.from('bank_accounts').select('*').order('company').order('short_name'),
       supabase.from('payment_natures').select('*').order('sort_order'),
       supabase.from('salespersons').select('*').order('name'),
-      supabase.from('customers').select('*').order('name').limit(5000),
+      fetchAll<Customer>(() => supabase.from('customers').select('*').order('name').order('id')),
     ])
     setAccounts(a.data ?? [])
     setNatures(n.data ?? [])

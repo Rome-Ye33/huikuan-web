@@ -26,3 +26,21 @@ export type StatementLine = ViewRow<'v_statement_lines'>
 export type ReceiptReport = ViewRow<'v_receipt_reports'>
 
 export const VOUCHER_BUCKET = 'vouchers'
+
+type Page<T> = { data: T[] | null; error: { message: string } | null }
+/**
+ * Supabase 的接口每次最多回 1000 行，超过的分页取完（车、客户导入后都会超过 1000）。
+ * make 每次新建同一个查询；排序要唯一（最后带上 id），翻页才不会重复或漏行。
+ */
+export async function fetchAll<T>(
+  make: () => { range: (from: number, to: number) => PromiseLike<Page<T>> },
+  pageSize = 1000,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const out: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await make().range(from, from + pageSize - 1)
+    if (error) return { data: out, error }
+    out.push(...(data ?? []))
+    if (!data || data.length < pageSize) return { data: out, error: null }
+  }
+}

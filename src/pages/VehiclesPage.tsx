@@ -1,4 +1,4 @@
-import { DownloadOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { DownloadOutlined, EditOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import {
   App,
   Badge,
@@ -23,11 +23,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import ReceiptEditor from '../components/ReceiptEditor'
 import VehicleFormModal from '../components/VehicleFormModal'
+import VehicleImport from '../components/VehicleImport'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { cleanSearch, money, num, todayAccra, usd } from '../lib/format'
 import { useRefData } from '../lib/refdata'
-import { supabase } from '../lib/supabase'
+import { fetchAll, supabase } from '../lib/supabase'
 import type { Claim, Vehicle } from '../lib/supabase'
 import { useT } from '../lib/i18n'
 
@@ -35,7 +36,7 @@ const PAY_COLOR: Record<string, string> = { 已结清: 'green', 部分到账: 'o
 
 export default function VehiclesPage() {
   const t = useT()
-  const { isStaff } = useAuth()
+  const { isStaff, isAdmin } = useAuth()
   const { salespersons } = useRefData()
   const [rows, setRows] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(false)
@@ -45,6 +46,7 @@ export default function VehiclesPage() {
   const [method, setMethod] = useState<string | undefined>()
   const [ship, setShip] = useState<string | undefined>()
   const [form, setForm] = useState<{ open: boolean; vehicle: Vehicle | null }>({ open: false, vehicle: null })
+  const [importOpen, setImportOpen] = useState(false)
   const [detail, setDetail] = useState<Vehicle | null>(null)
   const [unlockedOpen, setUnlockedOpen] = useState(false)
   const [unlockedCount, setUnlockedCount] = useState(0)
@@ -56,15 +58,19 @@ export default function VehiclesPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    let query = supabase.from('v_vehicle_ledger').select('*').order('created_at', { ascending: false }).limit(5000)
     const s = cleanSearch(q)
-    if (s) query = query.or(`vin.ilike.%${s}%,customer_name.ilike.%${s}%,model.ilike.%${s}%`)
-    if (spId) query = query.eq('salesperson_id', spId)
-    if (payStatus) query = query.eq('pay_status', payStatus)
-    if (method) query = query.eq('payment_method', method)
-    if (ship) query = query.eq('ship_status', ship)
-    const { data } = await query
-    setRows(data ?? [])
+    const make = () => {
+      // 批量导入的车 created_at 一样，按 id 再排一次，翻页才不会重复或漏行
+      let query = supabase.from('v_vehicle_ledger').select('*').order('created_at', { ascending: false }).order('id', { ascending: false })
+      if (s) query = query.or(`vin.ilike.%${s}%,customer_name.ilike.%${s}%,model.ilike.%${s}%`)
+      if (spId) query = query.eq('salesperson_id', spId)
+      if (payStatus) query = query.eq('pay_status', payStatus)
+      if (method) query = query.eq('payment_method', method)
+      if (ship) query = query.eq('ship_status', ship)
+      return query
+    }
+    const { data } = await fetchAll<Vehicle>(make)
+    setRows(data)
     setLoading(false)
   }, [q, spId, payStatus, method, ship])
 
@@ -164,6 +170,11 @@ export default function VehiclesPage() {
           <Button icon={<DownloadOutlined />} onClick={exportExcel} disabled={!rows.length}>
             {t('导出 Excel')}
           </Button>
+          {isAdmin && (
+            <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
+              {t('批量导入')}
+            </Button>
+          )}
           {isStaff && (
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setForm({ open: true, vehicle: null })}>
               {t('新增车辆')}
@@ -240,6 +251,13 @@ export default function VehiclesPage() {
             </Table.Summary>
           ) : null
         }
+      />
+      <VehicleImport
+        open={importOpen}
+        onClose={(changed) => {
+          setImportOpen(false)
+          if (changed) void load()
+        }}
       />
       <VehicleFormModal
         open={form.open}
