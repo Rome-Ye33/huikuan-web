@@ -152,6 +152,23 @@ const VALUES: Record<string, string> = {
   "第 {n} 行：期初已到账、期初优惠不能是负数": "Row {n}: opening paid and opening discount can't be negative",
   "第 {n} 行 {vin}：文件里期初已到账是空的，原来导入的那笔没有动": "Row {n} {vin}: opening paid is blank in the file, so the amount imported earlier was left as it was",
   "第 {n} 行 {vin}：文件里期初优惠是空的，原来导入的那笔没有动": "Row {n} {vin}: opening discount is blank in the file, so the amount imported earlier was left as it was",
+  // 工作台：栏目、单据种类、审批记录里的动作（代码里是 t(变量)）
+  "待办": "To do",
+  "已办": "Handled",
+  "已发起": "My requests",
+  "已结束": "Closed",
+  "到账提交": "Payment submission",
+  "提成单": "Commission voucher",
+  "已提交": "Submitted",
+  "已重新提交": "Resubmitted",
+  "审核通过": "Approved",
+  "财务审核已通过": "Approved by finance",
+  "总经理已批准": "Approved by GM",
+  "到账被删除，回到待审核": "Receipt deleted, back to review",
+  "没有待办，都处理完了": "Nothing to do. All caught up.",
+  "没有处理过、还在流程中的单据": "Nothing you handled is still in progress",
+  "还没有发起过": "You haven't submitted anything yet",
+  "还没有结束的单据": "No closed items yet",
 }
 
 // 界面文字（检查脚本从代码里的 t('…') / tr('…') 找）
@@ -892,6 +909,19 @@ const UI: Record<string, string> = {
   "有问题 {n}": "Problems {n}",
   "新增 {n}": "New {n}",
   "已在系统里 {n}": "Already in system {n}",
+
+  // 工作台
+  "工作台": "Workbench",
+  "刷新": "Refresh",
+  "到账提交和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交的，已结束是流程走完的。点开就能处理。":
+    "All payment submissions and commission vouchers in one place. To do: waiting for you. Handled: you acted on it and it is still in progress. My requests: what you submitted. Closed: finished. Tap an item to open it.",
+  "到账 {date}": "Received {date}",
+  "本次发放 {amt}": "Payout {amt}",
+  "我：{action} · {when}": "You: {action} · {when}",
+  "这张单据已经不在了": "This item no longer exists",
+  "审批记录": "Approval history",
+  "系统": "System",
+  "原因：{note}": "Reason: {note}",
 }
 
 export const EN: Record<string, string> = { ...VALUES, ...UI }

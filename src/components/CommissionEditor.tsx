@@ -50,6 +50,7 @@ import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Claim, Vehicle } from '../lib/supabase'
+import ApprovalTrail from './ApprovalTrail'
 import CustomerSelect from './CustomerSelect'
 
 // 提成申请单：按客户开，车从这个客户、这个业务员名下的车里选（大架号必填），
@@ -1231,6 +1232,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
             {t('本次发放提成合计')}：<span className="num">{totals.payout == null ? '—' : usd2(totals.payout)}</span>
           </Typography.Text>
         </Card>
+        {id && <ApprovalTrail docType="voucher" docId={id} version={voucher?.updated_at} />}
       </Spin>
 
       <Drawer

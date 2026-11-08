@@ -1,4 +1,5 @@
 import {
+  AppstoreOutlined,
   AuditOutlined,
   BankOutlined,
   CarOutlined,
@@ -17,6 +18,7 @@ import { ROLE_LABEL, useAuth } from './lib/auth'
 import { todoStatuses, useVoucherCount } from './lib/commission'
 import { useI18n } from './lib/i18n'
 import { useSubmissionCount } from './lib/submissions'
+import { useTodoCount } from './lib/workbench'
 import LoginPage from './pages/LoginPage'
 
 const ReceiptsPage = lazy(() => import('./pages/ReceiptsPage'))
@@ -28,6 +30,7 @@ const UsersPage = lazy(() => import('./pages/UsersPage'))
 const SubmitPage = lazy(() => import('./pages/SubmitPage'))
 const CommissionPage = lazy(() => import('./pages/CommissionPage'))
 const CommissionPrintPage = lazy(() => import('./pages/CommissionPrintPage'))
+const WorkbenchPage = lazy(() => import('./pages/WorkbenchPage'))
 
 const { Sider, Header, Content } = Layout
 
@@ -61,6 +64,8 @@ export default function App() {
   const rejected = useSubmissionCount('rejected', isSales)
   // 提成单待我处理：业务员 = 被退回；财务 = 待审核、待发放；管理员 = 待审核、待总经理审批
   const voucherTodo = useVoucherCount(todoStatuses(auth.role), !!auth.role)
+  // 工作台：到账提交、提成单里等我处理的一共几件
+  const todo = useTodoCount(!!auth.role)
 
   // 登录后换成这个人上次选的语言
   useEffect(() => {
@@ -85,7 +90,7 @@ export default function App() {
     )
   }
 
-  const home = auth.isStaff ? '/receipts' : '/submit'
+  const home = '/workbench'
 
   // 打印页不带菜单
   if (location.pathname.startsWith('/print/')) {
@@ -99,8 +104,10 @@ export default function App() {
     )
   }
 
+  const workbench = { key: '/workbench', icon: <AppstoreOutlined />, label: withCount(t('工作台'), todo) }
   const items = auth.isStaff
     ? [
+        workbench,
         { key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) },
         { key: '/reports', icon: <AuditOutlined />, label: t('报款') },
         { key: '/vehicles', icon: <CarOutlined />, label: t('车辆台账') },
@@ -110,6 +117,7 @@ export default function App() {
         ...(auth.isAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: t('用户与权限') }] : []),
       ]
     : [
+        workbench,
         { key: '/submit', icon: <SendOutlined />, label: withCount(t('提交到账'), rejected) },
         { key: '/vehicles', icon: <CarOutlined />, label: t('我的车辆') },
         { key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) },
@@ -151,6 +159,7 @@ export default function App() {
         <Content className="app-content">
           <Suspense fallback={<FullSpin />}>
             <Routes>
+              <Route path="/workbench" element={<WorkbenchPage />} />
               {auth.isStaff && <Route path="/receipts" element={<ReceiptsPage />} />}
               {auth.isStaff && <Route path="/reports" element={<ReportsPage />} />}
               {isSales && <Route path="/submit" element={<SubmitPage />} />}

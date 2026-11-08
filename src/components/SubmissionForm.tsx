@@ -15,6 +15,7 @@ import type { Vehicle } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
 import VehicleSelect from './VehicleSelect'
 import Vouchers from './Vouchers'
+import ApprovalTrail from './ApprovalTrail'
 
 // 业务员提交到账（手机上也能用）；财务、管理员打开时只读，审核在“到账录入”的待审核里做
 
@@ -606,6 +607,7 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
             <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} placeholder={t('如：客户说剩下的下周付')} />
           </Form.Item>
         </Form>
+        {submission && <ApprovalTrail docType="submission" docId={submission.id} version={submission.updated_at} />}
       </Spin>
     </Drawer>
   )

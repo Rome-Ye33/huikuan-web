@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      approval_logs: {
+        Row: {
+          action: string
+          actor: string | null
+          actor_name: string | null
+          at: string
+          doc_id: number
+          doc_type: string
+          from_status: string | null
+          id: number
+          note: string | null
+          to_status: string
+        }
+        Insert: {
+          action: string
+          actor?: string | null
+          actor_name?: string | null
+          at?: string
+          doc_id: number
+          doc_type: string
+          from_status?: string | null
+          id?: never
+          note?: string | null
+          to_status: string
+        }
+        Update: {
+          action?: string
+          actor?: string | null
+          actor_name?: string | null
+          at?: string
+          doc_id?: number
+          doc_type?: string
+          from_status?: string | null
+          id?: never
+          note?: string | null
+          to_status?: string
+        }
+        Relationships: []
+      }
       bank_accounts: {
         Row: {
           active: boolean
@@ -1305,6 +1344,42 @@ export type Database = {
           },
         ]
       }
+      v_workbench: {
+        Row: {
+          account_id: number | null
+          activity_at: string | null
+          amount: number | null
+          amount_usd: number | null
+          claims: Json | null
+          currency: string | null
+          customer_name: string | null
+          doc_date: string | null
+          doc_id: number | null
+          doc_no: string | null
+          doc_type: string | null
+          in_done: boolean | null
+          in_ended: boolean | null
+          in_mine: boolean | null
+          in_todo: boolean | null
+          initiated_at: string | null
+          is_ended: boolean | null
+          last_action: string | null
+          last_actor_name: string | null
+          last_at: string | null
+          last_note: string | null
+          my_action: string | null
+          my_at: string | null
+          receipt_id: number | null
+          receipt_no: string | null
+          salesperson_id: number | null
+          salesperson_name: string | null
+          status: string | null
+          updated_at: string | null
+          vehicle_count: number | null
+          vins: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       cn_num: { Args: { n: number }; Returns: string }
@@ -1318,10 +1393,6 @@ export type Database = {
         Returns: undefined
       }
       fmt_money: { Args: { decimals?: number; n: number }; Returns: string }
-      import_vehicles: {
-        Args: { p_opening_date: string; p_rows: Json; p_update?: boolean }
-        Returns: Json
-      }
       import_statement: {
         Args: {
           p_account_id: number
@@ -1331,6 +1402,10 @@ export type Database = {
           p_period_to?: string
           p_rows: Json
         }
+        Returns: Json
+      }
+      import_vehicles: {
+        Args: { p_opening_date: string; p_rows: Json; p_update?: boolean }
         Returns: Json
       }
       link_submission: {

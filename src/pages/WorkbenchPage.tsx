@@ -1,0 +1,265 @@
+import { FileDoneOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
+import { App, Badge, Button, Card, Empty, Pagination, Segmented, Space, Spin, Tabs, Tag, Typography } from 'antd'
+import { useCallback, useEffect, useState } from 'react'
+import CommissionEditor from '../components/CommissionEditor'
+import ReceiptEditor from '../components/ReceiptEditor'
+import SubmissionForm from '../components/SubmissionForm'
+import { useAuth } from '../lib/auth'
+import { dateTime, money, usd } from '../lib/format'
+import { useT } from '../lib/i18n'
+import { useRefData } from '../lib/refdata'
+import { claimsSummary } from '../lib/submissions'
+import type { Submission } from '../lib/submissions'
+import { supabase } from '../lib/supabase'
+import {
+  ACTION_LABEL,
+  BOX_LABEL,
+  BOX_ORDER,
+  BOXES,
+  boxQuery,
+  DOC_COLOR,
+  DOC_LABEL,
+  docType,
+  statusColor,
+  statusLabel,
+} from '../lib/workbench'
+import type { Box, DocType, WorkItem } from '../lib/workbench'
+
+// 工作台：到账提交、提成单两种审批，按“待办 / 已办 / 已发起 / 已结束”分栏。点开就是原来的审核、修改页面
+
+const PAGE = 20
+type TypeFilter = DocType | 'all'
+type Counts = Record<Box, number | null>
+const NO_COUNTS: Counts = { todo: null, done: null, mine: null, ended: null }
+
+const EMPTY_TEXT: Record<Box, string> = {
+  todo: '没有待办，都处理完了',
+  done: '没有处理过、还在流程中的单据',
+  mine: '还没有发起过',
+  ended: '还没有结束的单据',
+}
+
+function ItemCard({ it, box, isStaff, onOpen }: { it: WorkItem; box: Box; isStaff: boolean; onOpen: () => void }) {
+  const t = useT()
+  const { accountById } = useRefData()
+  const type = docType(it.doc_type)
+  const isSub = type === 'submission'
+
+  const title = isSub ? (
+    <span className="num">
+      {it.currency} {money(it.amount)}
+      {it.currency !== 'USD' && it.amount_usd != null && <span className="hint"> ≈ {usd(it.amount_usd)}</span>}
+    </span>
+  ) : (
+    <span>
+      <b>{it.doc_no ?? t('草稿 #{id}', { id: it.doc_id ?? '' })}</b>
+      {it.customer_name && <span> · {it.customer_name}</span>}
+    </span>
+  )
+
+  const details: string[] = isSub
+    ? claimsSummary(it, t)
+    : [[t('{n} 台', { n: it.vehicle_count ?? 0 }), it.vins].filter(Boolean).join(' · ')]
+
+  const meta = [
+    isStaff ? it.salesperson_name : null,
+    isSub ? accountById.get(it.account_id ?? 0)?.short_name : null,
+    isSub ? t('到账 {date}', { date: it.doc_date ?? '' }) : it.amount != null ? t('本次发放 {amt}', { amt: '$ ' + money(it.amount) }) : null,
+  ].filter(Boolean)
+
+  const action = (a: string | null | undefined) => (a ? t(ACTION_LABEL[a] ?? a) : '')
+  const progress =
+    box === 'done' && it.my_action
+      ? t('我：{action} · {when}', { action: action(it.my_action), when: dateTime(it.my_at) })
+      : it.last_action
+        ? `${it.last_actor_name || t('系统')} · ${action(it.last_action)} · ${dateTime(it.last_at)}`
+        : t('提交于 {when}', { when: dateTime(it.initiated_at) })
+
+  return (
+    <Card size="small" className="sub-card wb-card" hoverable onClick={onOpen}>
+      <div className="wb-head">
+        <div style={{ minWidth: 0 }}>
+          <Tag color={DOC_COLOR[type]}>{t(DOC_LABEL[type])}</Tag>
+          {title}
+        </div>
+        <Tag color={statusColor(type, it.status)} style={{ marginInlineEnd: 0 }}>
+          {t(statusLabel(type, it.status))}
+        </Tag>
+      </div>
+      {details.map((line, i) => (
+        <div key={i} className="wb-line">
+          {line}
+        </div>
+      ))}
+      {meta.length > 0 && <div className="hint wb-line">{meta.join(' · ')}</div>}
+      {it.status === 'rejected' && it.last_action === 'reject' && it.last_note && (
+        <div className="text-danger wb-line">{t('退回原因：{reason}', { reason: it.last_note })}</div>
+      )}
+      {isSub && it.status === 'approved' && it.receipt_no && <div className="text-ok wb-line">{t('到账编号 {no}', { no: it.receipt_no })}</div>}
+      <div className="hint wb-line" style={{ marginTop: 4 }}>
+        {progress}
+      </div>
+    </Card>
+  )
+}
+
+export default function WorkbenchPage() {
+  const t = useT()
+  const { message } = App.useApp()
+  const { isStaff, role } = useAuth()
+  const isSales = role === 'sales'
+  const [box, setBox] = useState<Box>('todo')
+  const [type, setType] = useState<TypeFilter>('all')
+  const [page, setPage] = useState(1)
+  const [rows, setRows] = useState<WorkItem[]>([])
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState<Counts>(NO_COUNTS)
+  const [loading, setLoading] = useState(false)
+  const [voucher, setVoucher] = useState<{ open: boolean; id: number | null }>({ open: false, id: null })
+  const [subForm, setSubForm] = useState<{ open: boolean; sub: Submission | null }>({ open: false, sub: null })
+  const [review, setReview] = useState<Submission | null>(null)
+  const [receiptId, setReceiptId] = useState<number | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const order = BOX_ORDER[box]
+    const from = (page - 1) * PAGE
+    const [list, ...heads] = await Promise.all([
+      boxQuery(box, type, 'exact')
+        .order(order.column, { ascending: order.ascending, nullsFirst: false })
+        .order('doc_id', { ascending: order.ascending })
+        .range(from, from + PAGE - 1),
+      ...BOXES.map((b) => boxQuery(b, type, 'exact', true)),
+    ])
+    setRows(list.data ?? [])
+    setTotal(list.count ?? 0)
+    setCounts({ todo: heads[0].count, done: heads[1].count, mine: heads[2].count, ended: heads[3].count })
+    setLoading(false)
+    if (list.error) message.error(list.error.message)
+  }, [box, type, page, message])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  // 别处提交、审批了，跟着刷新
+  useEffect(() => {
+    const h = () => void load()
+    const events = ['submissions-changed', 'vouchers-changed']
+    for (const e of events) window.addEventListener(e, h)
+    return () => {
+      for (const e of events) window.removeEventListener(e, h)
+    }
+  }, [load])
+
+  const open = async (it: WorkItem) => {
+    const id = it.doc_id
+    if (id == null) return
+    if (it.doc_type === 'voucher') {
+      setVoucher({ open: true, id })
+      return
+    }
+    const { data } = await supabase.from('receipt_submissions').select('*').eq('id', id).maybeSingle()
+    if (!data) {
+      message.warning(t('这张单据已经不在了'))
+      void load()
+      return
+    }
+    if (isStaff && data.status === 'pending') setReview(data)
+    else if (isStaff && data.status === 'approved' && data.receipt_id) setReceiptId(data.receipt_id)
+    else setSubForm({ open: true, sub: data })
+  }
+
+  const closed = (changed: boolean) => {
+    setVoucher({ open: false, id: null })
+    setSubForm({ open: false, sub: null })
+    setReview(null)
+    setReceiptId(null)
+    if (changed) void load()
+  }
+
+  const tabLabel = (b: Box) => {
+    const n = counts[b]
+    if (b === 'todo')
+      return (
+        <Badge count={n ?? 0} size="small" offset={[8, -2]}>
+          {t(BOX_LABEL[b])}
+        </Badge>
+      )
+    return (
+      <span>
+        {t(BOX_LABEL[b])}
+        {n ? <span className="hint"> {n}</span> : null}
+      </span>
+    )
+  }
+
+  return (
+    <div>
+      <div className="page-title">
+        <h2>{t('工作台')}</h2>
+        <Space wrap>
+          <Button icon={<ReloadOutlined />} onClick={() => void load()} aria-label={t('刷新')} />
+          {isSales && (
+            <Button type="primary" icon={<SendOutlined />} onClick={() => setSubForm({ open: true, sub: null })}>
+              {t('提交到账')}
+            </Button>
+          )}
+          <Button icon={<FileDoneOutlined />} onClick={() => setVoucher({ open: true, id: null })}>
+            {t('新建提成单')}
+          </Button>
+        </Space>
+      </div>
+      <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
+        {t('到账提交和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交的，已结束是流程走完的。点开就能处理。')}
+      </Typography.Paragraph>
+      <Tabs
+        className="wb-tabs"
+        activeKey={box}
+        onChange={(k) => {
+          setBox(k as Box)
+          setPage(1)
+        }}
+        items={BOXES.map((b) => ({ key: b, label: tabLabel(b) }))}
+      />
+      <Segmented
+        value={type}
+        onChange={(v) => {
+          setType(v as TypeFilter)
+          setPage(1)
+        }}
+        options={[
+          { value: 'all', label: t('全部') },
+          { value: 'submission', label: t(DOC_LABEL.submission) },
+          { value: 'voucher', label: t(DOC_LABEL.voucher) },
+        ]}
+        style={{ marginBottom: 12, maxWidth: '100%', overflowX: 'auto' }}
+      />
+      <Spin spinning={loading}>
+        {rows.length === 0 ? (
+          <Empty description={t(EMPTY_TEXT[box])} />
+        ) : (
+          <Space orientation="vertical" style={{ width: '100%' }} size={8}>
+            {rows.map((it) => (
+              <ItemCard key={`${it.doc_type}-${it.doc_id}`} it={it} box={box} isStaff={isStaff} onOpen={() => void open(it)} />
+            ))}
+          </Space>
+        )}
+      </Spin>
+      {total > PAGE && (
+        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end' }}>
+          <Pagination simple current={page} pageSize={PAGE} total={total} onChange={setPage} />
+        </div>
+      )}
+      {total > 0 && (
+        <div className="hint" style={{ marginTop: 8 }}>
+          {t('共 {n} 条', { n: total })}
+        </div>
+      )}
+
+      <CommissionEditor open={voucher.open} voucherId={voucher.id} onClose={closed} />
+      <SubmissionForm open={subForm.open} submission={subForm.sub} onClose={closed} />
+      <ReceiptEditor open={review !== null || receiptId !== null} submission={review} receiptId={receiptId} onClose={closed} />
+    </div>
+  )
+}
