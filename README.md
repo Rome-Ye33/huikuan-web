@@ -33,7 +33,9 @@ npm run build      # 打包到 dist/，是纯静态文件，放到任何静态�
 
 ## 发布
 
-`.github/workflows/deploy.yml` 会在推到 `main` 时自动打包并发布到 GitHub Pages（仓库 Settings → Pages → Source 选 GitHub Actions）。用的是 HashRouter 和相对路径，放在子目录下也能用。
+网址：https://jxbsk.github.io/huikuan-web/
+
+`.github/workflows/deploy.yml` 会在推到 `main` 时自动打包，把 `dist` 推到 `gh-pages` 分支，GitHub Pages 从这个分支发布，一两分钟后生效。用的是 HashRouter 和相对路径，放在子目录下也能用。
 
 ## 技术
 
