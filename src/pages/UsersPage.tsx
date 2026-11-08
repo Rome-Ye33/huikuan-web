@@ -86,7 +86,7 @@ export default function UsersPage() {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        title="新同事：先在下面“邀请名单”加上他的邮箱和角色，再让他打开系统，在登录页点“第一次使用”设置密码。不在名单上的邮箱注册不了。离职的人把“启用”关掉即可。"
+        title="新同事：先在下面“邀请名单”加上对方的邮箱和角色，再让对方打开系统，在登录页点“第一次使用”设置密码。不在名单上的邮箱注册不了。离职的人把“启用”关掉即可。"
       />
       <Typography.Title level={5}>已注册的用户</Typography.Title>
       <Table
@@ -174,7 +174,7 @@ export default function UsersPage() {
             <Select options={ROLE_OPTIONS} />
           </Form.Item>
           {uRole === 'sales' && (
-            <Form.Item name="salesperson_id" label="对应业务员（只看得到他名下的车）" rules={[{ required: true, message: '业务员角色必须选' }]}>
+            <Form.Item name="salesperson_id" label="对应业务员（只看得到这个业务员名下的车）" rules={[{ required: true, message: '业务员角色必须选' }]}>
               <Select showSearch={{ optionFilterProp: 'label' }} options={spOptions} />
             </Form.Item>
           )}
