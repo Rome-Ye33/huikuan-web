@@ -20,7 +20,6 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
-import customParseFormat from 'dayjs/plugin/customParseFormat'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import ReceiptEditor from '../components/ReceiptEditor'
@@ -30,89 +29,10 @@ import { errorText } from '../lib/errors'
 import { money, round2, todayAccra } from '../lib/format'
 import { accountOptions, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
+import { DATE_FORMATS, findHeaderRow, guessMapping, matchAccount, toLines } from '../lib/statement'
+import type { ImportResult, Mapping, ParsedLine } from '../lib/statement'
 import type { ImportFormat, Receipt, StatementLine } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
-
-dayjs.extend(customParseFormat)
-
-// ---------------------------------------------------------------------------
-// 解析银行导出的 CSV / Excel
-// ---------------------------------------------------------------------------
-
-type Mapping = { date?: number; credit?: number; drcr?: number; summary?: number; ref?: number; cheque?: number }
-type ParsedLine = { line_date: string; amount_orig: number; payer_summary: string; bank_ref: string; cheque_no: string }
-
-const DATE_FORMATS = ['DD/MM/YYYY', 'D/M/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD', 'DD-MM-YYYY', 'DD-MMM-YYYY', 'DD-MMM-YY', 'DD MMM YYYY', 'DD.MM.YYYY']
-
-function excelSerialToDate(n: number): string {
-  return new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 86400000).toISOString().slice(0, 10)
-}
-
-function parseDate(v: unknown, fmt: string): string | null {
-  if (v === null || v === undefined || v === '') return null
-  if (typeof v === 'number') return v > 20000 && v < 80000 ? excelSerialToDate(v) : null
-  const s = String(v).trim().split(/\s+\d{1,2}:\d{2}/)[0] // 去掉时间部分
-  for (const f of [fmt, ...DATE_FORMATS]) {
-    const d = dayjs(s, f, true)
-    if (d.isValid()) return d.format('YYYY-MM-DD')
-  }
-  return null
-}
-
-function parseAmount(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null
-  if (typeof v === 'number') return v
-  let s = String(v).trim()
-  const negative = /^\(.*\)$/.test(s) || /^-/.test(s) || /\bDR?\b/i.test(s)
-  s = s.replace(/[^0-9.]/g, '')
-  if (!s) return null
-  const n = Number(s)
-  if (!Number.isFinite(n)) return null
-  return negative ? -n : n
-}
-
-function guessMapping(headers: string[]): Mapping {
-  const find = (re: RegExp) => {
-    const i = headers.findIndex((h) => re.test(h))
-    return i >= 0 ? i : undefined
-  }
-  return {
-    date: find(/value\s*date|trans.*date|posting.*date|^date|日期/i),
-    credit: find(/credit|deposit|贷方|收入|cr\.?\s*amount|money\s*in/i),
-    drcr: find(/^(dr\s*\/\s*cr|cr\s*\/\s*dr|type|借贷)$/i),
-    summary: find(/narration|description|details|remark|particular|摘要|备注/i),
-    ref: find(/reference|ref\.?\s*no|^ref|transaction\s*id|流水号|参考/i),
-    cheque: find(/cheque|check\s*no|支票/i),
-  }
-}
-
-function toLines(rows: unknown[][], headerRow: number, m: Mapping, fmt: string) {
-  const out: ParsedLine[] = []
-  const bad: number[] = []
-  for (let i = headerRow; i < rows.length; i++) {
-    const r = rows[i]
-    if (!r || r.every((c) => c === '' || c === null || c === undefined)) continue
-    if (m.credit === undefined || m.date === undefined) break
-    const amt = parseAmount(r[m.credit])
-    if (amt === null || amt <= 0) continue // 借方或空行
-    if (m.drcr !== undefined && /^d/i.test(String(r[m.drcr] ?? '').trim())) continue
-    const d = parseDate(r[m.date], fmt)
-    if (!d) {
-      bad.push(i + 1)
-      continue
-    }
-    out.push({
-      line_date: d,
-      amount_orig: round2(amt),
-      payer_summary: m.summary !== undefined ? String(r[m.summary] ?? '').trim() : '',
-      bank_ref: m.ref !== undefined ? String(r[m.ref] ?? '').trim() : '',
-      cheque_no: m.cheque !== undefined ? String(r[m.cheque] ?? '').trim() : '',
-    })
-  }
-  return { lines: out, bad }
-}
-
-// ---------------------------------------------------------------------------
 
 export default function ReconcilePage() {
   const [tab, setTab] = useState('unmatched')
@@ -585,7 +505,11 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
 
 // ---------------------------------------------------------------------------
 // 导入银行流水
+// 两种文件：单个账户的网银导出（在上面选账户）；或者月度汇总，一张表里有多个账户、有“账户名称”列（按账户分别导入）
 // ---------------------------------------------------------------------------
+type ImportSummary = ImportResult & { accounts: number; failed: string[]; multi: boolean }
+type AccountGroup = { key: string; rows: number; lines: ParsedLine[]; total: number; auto?: number }
+
 function ImportStatement({
   accountId,
   onAccount,
@@ -601,14 +525,21 @@ function ImportStatement({
   const [formats, setFormats] = useState<ImportFormat[]>([])
   const [formatId, setFormatId] = useState<number | undefined>()
   const [fileName, setFileName] = useState('')
+  const [book, setBook] = useState<XLSX.WorkBook | null>(null)
+  const [sheet, setSheet] = useState('')
   const [sheetRows, setSheetRows] = useState<unknown[][]>([])
   const [headerRow, setHeaderRow] = useState(1)
   const [mapping, setMapping] = useState<Mapping>({})
   const [dateFormat, setDateFormat] = useState('DD/MM/YYYY')
   const [period, setPeriod] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
   const [importing, setImporting] = useState(false)
-  const [result, setResult] = useState<{ inserted: number; skipped: number; matched: number; unmatched: number } | null>(null)
+  const [result, setResult] = useState<ImportSummary | null>(null)
   const [saveName, setSaveName] = useState('')
+  // 用户在“文件里的账户”表里手工改过的对应；null 表示这个账户不导入
+  const [acctPick, setAcctPick] = useState<Record<string, number | null>>({})
+
+  const bankAccounts = useMemo(() => accounts.filter((a) => a.kind !== 'cash'), [accounts])
+  const multi = mapping.account !== undefined
 
   useEffect(() => {
     void supabase
@@ -621,14 +552,26 @@ function ImportStatement({
   const headers = useMemo(() => (sheetRows[headerRow - 1] ?? []).map((h, i) => String(h ?? '').trim() || `第${i + 1}列`), [sheetRows, headerRow])
   const parsed = useMemo(() => toLines(sheetRows, headerRow, mapping, dateFormat), [sheetRows, headerRow, mapping, dateFormat])
 
+  const groups = useMemo<AccountGroup[]>(() => {
+    if (!multi) return []
+    return [...parsed.seen.entries()].map(([key, rows]) => {
+      const lines = parsed.lines.filter((l) => l.account_key === key)
+      return { key, rows, lines, total: lines.reduce((s, l) => s + l.amount_orig, 0), auto: matchAccount(key, bankAccounts) }
+    })
+  }, [multi, parsed, bankAccounts])
+  const targetOf = (g: AccountGroup) => (g.key in acctPick ? (acctPick[g.key] ?? undefined) : g.auto)
+  const readyGroups = groups.filter((g) => targetOf(g) !== undefined)
+
+  // 流水覆盖日期：默认取文件里最早到最晚的日期；月度汇总按整月算（某个账户月初几天没交易也算覆盖了）
   useEffect(() => {
-    if (!parsed.lines.length) {
+    if (!parsed.minDate || !parsed.maxDate) {
       setPeriod(null)
       return
     }
-    const ds = parsed.lines.map((l) => l.line_date).sort()
-    setPeriod([dayjs(ds[0]), dayjs(ds[ds.length - 1])])
-  }, [parsed])
+    const a = dayjs(parsed.minDate)
+    const b = dayjs(parsed.maxDate)
+    setPeriod(multi ? [a.startOf('month'), b.endOf('month')] : [a, b])
+  }, [parsed, multi])
 
   const applyFormat = (f: ImportFormat | undefined, rows: unknown[][]) => {
     if (!f) return
@@ -641,53 +584,99 @@ function ImportStatement({
     }
     setHeaderRow(f.header_row)
     setDateFormat(f.date_format)
-    setMapping({ date: idx(m.date), credit: idx(m.credit), drcr: idx(m.drcr), summary: idx(m.summary), ref: idx(m.ref), cheque: idx(m.cheque) })
+    setMapping({
+      date: idx(m.date),
+      credit: idx(m.credit),
+      drcr: idx(m.drcr),
+      summary: idx(m.summary),
+      ref: idx(m.ref),
+      cheque: idx(m.cheque),
+      account: idx(m.account),
+    })
+  }
+
+  const sheetToRows = (wb: XLSX.WorkBook, name: string) =>
+    XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[name], { header: 1, raw: true, defval: '' })
+
+  const loadSheet = (wb: XLSX.WorkBook, name: string) => {
+    const rows = sheetToRows(wb, name)
+    setSheet(name)
+    setSheetRows(rows)
+    setAcctPick({})
+    setResult(null)
+    const f = formats.find((x) => x.id === formatId)
+    if (f) return applyFormat(f, rows)
+    const hr = findHeaderRow(rows) || 1
+    setHeaderRow(hr)
+    setMapping(guessMapping((rows[hr - 1] ?? []).map((c) => String(c ?? ''))))
   }
 
   const readFile = async (file: File) => {
-    setResult(null)
     const buf = await file.arrayBuffer()
     // raw: true 让 CSV 里的文字原样保留。否则 08/11/2026 会被当成美国格式的 8 月 11 日，
     // 而 13/11/2026 又保持文字，日期就乱了。日期统一交给下面按所选的日期格式解析。
     const wb = XLSX.read(buf, { type: 'array', raw: true, cellDates: false })
-    const ws = wb.Sheets[wb.SheetNames[0]]
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: '' })
+    setBook(wb)
     setFileName(file.name)
-    setSheetRows(rows)
-    const f = formats.find((x) => x.id === formatId)
-    if (f) applyFormat(f, rows)
-    else {
-      // 找表头：前 15 行里第一行同时有“日期”和“贷方/金额”字样的
-      let hr = 1
-      for (let i = 0; i < Math.min(15, rows.length); i++) {
-        const m = guessMapping((rows[i] ?? []).map((c) => String(c ?? '')))
-        if (m.date !== undefined && m.credit !== undefined) {
-          hr = i + 1
-          break
-        }
-      }
-      setHeaderRow(hr)
-      setMapping(guessMapping((rows[hr - 1] ?? []).map((c) => String(c ?? ''))))
-    }
+    // 有多个工作表时，默认用第一个认得出表头的（月度汇总里是“流水明细”）
+    loadSheet(wb, wb.SheetNames.find((n) => findHeaderRow(sheetToRows(wb, n)) > 0) ?? wb.SheetNames[0])
   }
 
-  const doImport = async () => {
-    if (!accountId) return message.error('先在右上角选收款账户')
-    if (!parsed.lines.length) return message.error('没有解析出贷方（入账）记录，请检查列的对应')
-    setImporting(true)
-    const { data, error } = await supabase.rpc('import_statement', {
-      p_account_id: accountId,
+  const rowsForRpc = (lines: ParsedLine[]) =>
+    lines.map((l) => ({ line_date: l.line_date, amount_orig: l.amount_orig, payer_summary: l.payer_summary, bank_ref: l.bank_ref, cheque_no: l.cheque_no })) as unknown as Json
+
+  const runImport = (id: number, lines: ParsedLine[]) =>
+    supabase.rpc('import_statement', {
+      p_account_id: id,
       p_format_id: (formatId ?? null) as number, // 没选格式时传 null
-      p_file_name: fileName,
-      p_rows: parsed.lines as unknown as Json,
+      p_file_name: sheet && book && book.SheetNames.length > 1 ? `${fileName}（${sheet}）` : fileName,
+      p_rows: rowsForRpc(lines),
       p_period_from: period ? period[0].format('YYYY-MM-DD') : undefined,
       p_period_to: period ? period[1].format('YYYY-MM-DD') : undefined,
     })
+
+  const doImport = async () => {
+    setResult(null)
+    if (!multi) {
+      if (!accountId) return message.error('先选收款账户')
+      if (!parsed.lines.length) return message.error('没有解析出贷方（入账）记录，请检查列的对应')
+      setImporting(true)
+      const { data, error } = await runImport(accountId, parsed.lines)
+      setImporting(false)
+      if (error) return message.error('导入失败：' + errorText(error))
+      setResult({ ...(data as ImportResult), accounts: 1, failed: [], multi: false })
+      message.success('导入完成')
+      onDone()
+      return
+    }
+    if (!readyGroups.length) return message.error('文件里的账户都没对上系统账户，请在“文件里的账户”表里选')
+    if (!period) return message.error('请选流水覆盖日期')
+    // 同一个系统账户可能对应文件里的几个名字，合在一起导。
+    // 只有支出或“无交易”的账户也导一次（0 条），记下这段日期已经核对过，录了但银行没有的款才查得出来。
+    const byId = new Map<number, ParsedLine[]>()
+    for (const g of readyGroups) {
+      const id = targetOf(g) as number
+      byId.set(id, [...(byId.get(id) ?? []), ...g.lines])
+    }
+    setImporting(true)
+    const sum: ImportSummary = { inserted: 0, skipped: 0, matched: 0, unmatched: 0, accounts: 0, failed: [], multi: true }
+    for (const [id, lines] of byId) {
+      const { data, error } = await runImport(id, lines)
+      if (error) {
+        sum.failed.push(`${accountById.get(id)?.short_name ?? id}：${errorText(error)}`)
+        continue
+      }
+      const r = data as ImportResult
+      sum.inserted += r.inserted
+      sum.skipped += r.skipped
+      sum.matched += r.matched
+      sum.unmatched += r.unmatched
+      sum.accounts += 1
+    }
     setImporting(false)
-    if (error) return message.error('导入失败：' + errorText(error))
-    const r = data as { inserted: number; skipped: number; matched: number; unmatched: number }
-    setResult(r)
-    message.success('导入完成')
+    setResult(sum)
+    if (sum.failed.length) message.warning(`有 ${sum.failed.length} 个账户没导进去，原因见下方`)
+    else message.success('导入完成')
     onDone()
   }
 
@@ -697,10 +686,18 @@ function ImportStatement({
     const pick = (i?: number) => (i === undefined ? undefined : headers[i])
     const row = {
       name,
-      bank: accountId ? (accountById.get(accountId)?.bank ?? null) : null,
+      bank: !multi && accountId ? (accountById.get(accountId)?.bank ?? null) : null,
       header_row: headerRow,
       date_format: dateFormat,
-      mapping: { date: pick(mapping.date), credit: pick(mapping.credit), drcr: pick(mapping.drcr), summary: pick(mapping.summary), ref: pick(mapping.ref), cheque: pick(mapping.cheque) },
+      mapping: {
+        date: pick(mapping.date),
+        credit: pick(mapping.credit),
+        drcr: pick(mapping.drcr),
+        summary: pick(mapping.summary),
+        ref: pick(mapping.ref),
+        cheque: pick(mapping.cheque),
+        account: pick(mapping.account),
+      },
     }
     const { data, error } = await supabase.from('bank_import_formats').insert(row).select('*').single()
     if (error) return message.error(errorText(error))
@@ -726,22 +723,35 @@ function ImportStatement({
     </Col>
   )
 
-  const bankAccounts = accounts.filter((a) => a.kind !== 'cash')
+  const previewColumns: ColumnsType<ParsedLine> = [
+    ...(multi ? [{ title: '账户', dataIndex: 'account_key', width: 220, ellipsis: true }] : []),
+    { title: '日期', dataIndex: 'line_date', width: 110 },
+    { title: '金额', dataIndex: 'amount_orig', width: 140, align: 'right', render: (v: number) => money(v) },
+    { title: '摘要', dataIndex: 'payer_summary', ellipsis: true },
+    { title: '参考号', dataIndex: 'bank_ref', width: 160, ellipsis: true },
+    { title: '支票号', dataIndex: 'cheque_no', width: 100 },
+  ]
 
   return (
     <div>
       <Card size="small" style={{ marginBottom: 12 }}>
         <Row gutter={[12, 12]}>
           <Col xs={24} md={10}>
-            <div className="hint">收款账户 *</div>
-            <Select
-              style={{ width: '100%' }}
-              showSearch={{ optionFilterProp: 'label' }}
-              options={accountOptions(bankAccounts)}
-              value={accountId}
-              onChange={onAccount}
-              placeholder="这份流水是哪个账户的"
-            />
+            <div className="hint">
+              收款账户{!multi && <span className="text-danger"> *</span>}
+            </div>
+            {multi ? (
+              <div style={{ lineHeight: '32px' }}>文件里有“账户”列，按账户分别导入，不用选</div>
+            ) : (
+              <Select
+                style={{ width: '100%' }}
+                showSearch={{ optionFilterProp: 'label' }}
+                options={accountOptions(bankAccounts)}
+                value={accountId}
+                onChange={onAccount}
+                placeholder="这份流水是哪个账户的"
+              />
+            )}
           </Col>
           <Col xs={24} md={8}>
             <div className="hint">银行导出格式（保存过的）</div>
@@ -773,7 +783,7 @@ function ImportStatement({
           <p className="ant-upload-drag-icon">
             <InboxOutlined />
           </p>
-          <p className="ant-upload-text">{fileName ? `已读取：${fileName}（点这里换一个文件）` : '把网银导出的 Excel / CSV 拖到这里，或点击选择'}</p>
+          <p className="ant-upload-text">{fileName ? `已读取：${fileName}（点这里换一个文件）` : '把网银导出的 Excel / CSV，或每月的流水汇总表拖到这里，或点击选择'}</p>
           <p className="ant-upload-hint">只导入贷方（入账）记录，借方自动跳过；同一份流水重复导入不会重复。</p>
         </Upload.Dragger>
       </Card>
@@ -781,6 +791,17 @@ function ImportStatement({
       {sheetRows.length > 0 && (
         <Card size="small" title="对应列" style={{ marginBottom: 12 }}>
           <Row gutter={[12, 12]}>
+            {book && book.SheetNames.length > 1 && (
+              <Col xs={24} md={8} lg={6}>
+                <div className="hint">工作表</div>
+                <Select
+                  style={{ width: '100%' }}
+                  value={sheet}
+                  onChange={(n: string) => loadSheet(book, n)}
+                  options={book.SheetNames.map((n) => ({ value: n, label: n }))}
+                />
+              </Col>
+            )}
             <Col xs={12} md={8} lg={4}>
               <div className="hint">表头在第几行</div>
               <InputNumber min={1} max={50} value={headerRow} onChange={(v) => setHeaderRow(v ?? 1)} style={{ width: '100%' }} />
@@ -791,6 +812,7 @@ function ImportStatement({
             {colSelect('ref', '参考号列')}
             {colSelect('cheque', '支票号列')}
             {colSelect('drcr', '借贷标志列（有就选）')}
+            {colSelect('account', '账户列（一个文件多个账户时选）')}
             <Col xs={12} md={8} lg={4}>
               <div className="hint">日期格式</div>
               <Select style={{ width: '100%' }} value={dateFormat} onChange={setDateFormat} options={DATE_FORMATS.map((f) => ({ value: f, label: f }))} />
@@ -805,15 +827,64 @@ function ImportStatement({
         </Card>
       )}
 
+      {multi && sheetRows.length > 0 && (
+        <Card
+          size="small"
+          title={`文件里的账户：${groups.length} 个，对上 ${readyGroups.length} 个`}
+          extra={<span className="hint">按账户名自动对上；没对上的请选，留空就不导入</span>}
+          style={{ marginBottom: 12 }}
+        >
+          <Table
+            rowKey="key"
+            size="small"
+            pagination={false}
+            dataSource={groups}
+            scroll={{ y: 360 }}
+            columns={[
+              { title: '文件里的账户', dataIndex: 'key', ellipsis: true },
+              { title: '行数', dataIndex: 'rows', width: 70, align: 'right' },
+              { title: '入账条数', width: 90, align: 'right', render: (_, g) => g.lines.length },
+              { title: '入账合计', width: 150, align: 'right', render: (_, g) => money(g.total) },
+              {
+                title: '对应系统账户',
+                width: 300,
+                render: (_, g) => (
+                  <Select
+                    allowClear
+                    size="small"
+                    style={{ width: '100%' }}
+                    showSearch={{ optionFilterProp: 'label' }}
+                    options={accountOptions(bankAccounts)}
+                    value={targetOf(g)}
+                    status={targetOf(g) === undefined ? 'warning' : undefined}
+                    placeholder="不导入"
+                    onChange={(v: number | undefined) => setAcctPick((p) => ({ ...p, [g.key]: v ?? null }))}
+                  />
+                ),
+              },
+            ]}
+          />
+        </Card>
+      )}
+
       {sheetRows.length > 0 && (
         <Card
           size="small"
-          title={`预览：${parsed.lines.length} 条入账，合计 ${money(parsed.lines.reduce((s, l) => s + l.amount_orig, 0))}`}
+          title={
+            multi
+              ? `预览：${parsed.lines.length} 条入账，${groups.length} 个账户`
+              : `预览：${parsed.lines.length} 条入账，合计 ${money(parsed.lines.reduce((s, l) => s + l.amount_orig, 0))}`
+          }
           extra={
             <Space>
               <span className="hint">流水覆盖日期</span>
               <DatePicker.RangePicker value={period} onChange={(v) => setPeriod(v && v[0] && v[1] ? [v[0], v[1]] : null)} />
-              <Button type="primary" loading={importing} onClick={doImport} disabled={!parsed.lines.length || !accountId}>
+              <Button
+                type="primary"
+                loading={importing}
+                onClick={doImport}
+                disabled={multi ? !readyGroups.length : !parsed.lines.length || !accountId}
+              >
                 导入并自动配对
               </Button>
             </Space>
@@ -827,27 +898,36 @@ function ImportStatement({
               title={`第 ${parsed.bad.slice(0, 10).join('、')} 行的日期认不出来，已跳过。请检查“日期格式”。`}
             />
           )}
-          {result && (
+          {parsed.reversals.some((r) => r.paired) && (
             <Alert
-              type="success"
+              type="info"
               showIcon
               style={{ marginBottom: 8 }}
-              title={`新导入 ${result.inserted} 条（重复跳过 ${result.skipped} 条），自动配对上 ${result.matched} 笔；这个账户还有 ${result.unmatched} 条没人报，请到“银行有、没人报”处理。`}
+              title={`去掉了 ${parsed.reversals.filter((r) => r.paired).length} 对退票或冲回：先入账、后来又被冲掉的同额款，两笔都不导入。`}
             />
           )}
-          <Table
-            rowKey={(_, i) => String(i)}
-            size="small"
-            dataSource={parsed.lines}
-            pagination={{ defaultPageSize: 20 }}
-            columns={[
-              { title: '日期', dataIndex: 'line_date', width: 110 },
-              { title: '金额', dataIndex: 'amount_orig', width: 140, align: 'right', render: (v: number) => money(v) },
-              { title: '摘要', dataIndex: 'payer_summary', ellipsis: true },
-              { title: '参考号', dataIndex: 'bank_ref', width: 160, ellipsis: true },
-              { title: '支票号', dataIndex: 'cheque_no', width: 100 },
-            ]}
-          />
+          {parsed.reversals.some((r) => !r.paired) && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 8 }}
+              title="下面这些冲回在这份文件里找不到原来那笔入账，原入账多半在上个月的流水里。请到“全部流水明细”找到原入账，配过对的先取消配对，再忽略。"
+              description={parsed.reversals
+                .filter((r) => !r.paired)
+                .map((r) => `${r.account_key ? r.account_key + ' ' : ''}${r.line_date ?? ''} 冲回 ${money(r.amount)} ${r.payer_summary}`)
+                .join('；')}
+            />
+          )}
+          {result && (
+            <Alert
+              type={result.failed.length ? 'warning' : 'success'}
+              showIcon
+              style={{ marginBottom: 8 }}
+              title={`${result.multi ? `导入了 ${result.accounts} 个账户：` : ''}新导入 ${result.inserted} 条（重复跳过 ${result.skipped} 条），自动配对上 ${result.matched} 笔；${result.multi ? '这些账户' : '这个账户'}还有 ${result.unmatched} 条没人报，请到“银行有、没人报”处理。`}
+              description={result.failed.length ? `没导进去的账户：${result.failed.join('；')}` : undefined}
+            />
+          )}
+          <Table rowKey={(_, i) => String(i)} size="small" dataSource={parsed.lines} pagination={{ defaultPageSize: 20 }} columns={previewColumns} />
         </Card>
       )}
     </div>
