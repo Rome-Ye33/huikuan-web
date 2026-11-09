@@ -83,6 +83,11 @@ body {
   max-height: 460px;
   overflow: auto;
 }
+.voucher-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .voucher-thumb {
   position: relative;
   width: 88px;
@@ -258,8 +263,8 @@ body {
 }
 .cv-sign {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
   margin-top: 18px;
 }
 .cv-sign-label {
@@ -274,6 +279,11 @@ body {
 .cv-sign-date {
   font-size: 10px;
   margin-top: 2px;
+}
+.cv-sign-note {
+  font-size: 9px;
+  margin-top: 6px;
+  color: #555;
 }
 .cv-paid {
   margin-top: 12px;
@@ -315,4 +325,50 @@ body {
 }
 .wb-tabs .ant-tabs-nav {
   margin-bottom: 10px;
+}
+
+/* 用户与权限：提成单审批流（业务员提交 → 四个岗位 → 财务发放），窄屏时一行一级 */
+.flow-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 0;
+}
+.flow-step {
+  display: flex;
+  align-items: flex-start;
+  flex: 1 1 210px;
+  min-width: 0;
+}
+.flow-step.flow-last {
+  flex: 0 0 auto;
+}
+.flow-box {
+  flex: 1;
+  min-width: 0;
+}
+.flow-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.flow-arrow {
+  margin: 34px 8px 0;
+  color: #999;
+}
+.flow-end {
+  padding-top: 30px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+@media (max-width: 767px) {
+  .flow-step {
+    flex-basis: 100%;
+  }
+  .flow-row > .flow-end,
+  .flow-last .flow-end {
+    padding-top: 0;
+  }
+  .flow-last .flow-arrow {
+    margin-top: 4px;
+  }
 }

@@ -27,9 +27,12 @@ import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import {
+  asPost,
   isEditableStatus,
   notifyVouchersChanged,
   PAY_STATE_ZH,
+  POST_LABEL,
+  POSTS,
   parsePayments,
   parseVehicles,
   paymentDisplay,
@@ -37,12 +40,13 @@ import {
   printVoucher,
   qtyModelText,
   savedTotals,
-  VOUCHER_STATUS_COLOR,
-  VOUCHER_STATUS_LABEL,
+  STAGE_COLOR,
+  STAGE_LABEL,
+  voucherStage,
   voucherStatus,
   voucherTotals,
 } from '../lib/commission'
-import type { CommissionVoucher, VoucherPayment, VoucherStatus, VoucherVehicle } from '../lib/commission'
+import type { CommissionVoucher, Post, VoucherPayment, VoucherStage, VoucherStatus, VoucherVehicle } from '../lib/commission'
 import type { Json } from '../lib/database.types'
 import { errorText } from '../lib/errors'
 import { dateTime, money, num, round2, todayAccra } from '../lib/format'
@@ -52,10 +56,12 @@ import { supabase } from '../lib/supabase'
 import type { Claim, Vehicle } from '../lib/supabase'
 import ApprovalTrail from './ApprovalTrail'
 import CustomerSelect from './CustomerSelect'
+import Vouchers from './Vouchers'
 
 // 提成申请单：按客户开，车从这个客户、这个业务员名下的车里选（大架号必填），
 // 付款从这个客户的到账里勾（这几台车的，或者大架号还没锁定的）。提成金额手填。
-// 流程：草稿 → 提交（待财务审核）→ 财务通过（待总经理审批）→ 总经理批准 → 财务标记已发放。
+// 流程都在线上：草稿 → 提交 → 销售部 → 应收财务 → 财务负责人 → 公司负责人 → 财务标记已发放。
+// 每一级由谁审看审批岗位（用户与权限里指定）；岗位上没人时管理员代办。可以带附件。
 
 type Props = {
   open: boolean
@@ -87,7 +93,7 @@ type VehRow = { vehicle_id: number; note: string }
 type PayRow = { claim_id: number; share_usd: number | null; note: string }
 type Sel = { veh: VehRow[]; pay: PayRow[] }
 /** 同一个客户的其他提成单（提示重复算） */
-type Other = { id: number; no: string; status: VoucherStatus; vehicleIds: Set<number>; shares: Map<number, number> }
+type Other = { id: number; no: string; stage: VoucherStage; vehicleIds: Set<number>; shares: Map<number, number> }
 type Touched = { qty: boolean; discount: boolean; terms: boolean; ratio: boolean }
 
 const EMPTY_SEL: Sel = { veh: [], pay: [] }
@@ -147,7 +153,7 @@ function eligible(c: Claim, vids: Set<number>, spId: number | null, staff: boole
 
 export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const t = useT()
-  const { isStaff, isAdmin, profile, session } = useAuth()
+  const { isStaff, isAdmin, profile, session, posts } = useAuth()
   const { salespersons, customers } = useRefData()
   const { message, modal } = App.useApp()
   const mySp = profile?.salesperson_id ?? null
@@ -159,6 +165,8 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const [ledger, setLedger] = useState<Vehicle[]>([])
   const [claims, setClaims] = useState<Claim[]>([])
   const [others, setOthers] = useState<Other[]>([])
+  /** 附件（凭证 bucket 里的路径）。草稿里随便加减，保存时一起存；提交后只能再加 */
+  const [atts, setAtts] = useState<string[]>([])
   const [spCounts, setSpCounts] = useState<Map<number, number>>(new Map())
   const [candLoading, setCandLoading] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -180,7 +188,12 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   }, [sel])
 
   const status: VoucherStatus = voucher ? voucherStatus(voucher.status) : 'draft'
-  const editable = !voucher || isEditableStatus(status)
+  const stage: VoucherStage = voucher ? voucherStage(voucher.status, voucher.step) : 'draft'
+  /** 审批中走到哪一级 */
+  const step: Post | null = status === 'submitted' ? asPost(voucher?.step) : null
+  /** 能改这张单的人：财务、管理员，或这张单的业务员（有审批岗位的人只能看和审别人的单） */
+  const mine = !voucher || isStaff || (mySp != null && voucher.salesperson_id === mySp)
+  const editable = !voucher || (isEditableStatus(status) && mine)
   const id = voucher?.id ?? null
   const custId = head.customer_id
   const spId = head.salesperson_id
@@ -200,6 +213,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
         veh: parseVehicles(data.vehicles).map((v) => ({ vehicle_id: v.vehicle_id, note: v.note ?? '' })),
         pay: parsePayments(data.payments).map((p) => ({ claim_id: p.claim_id, share_usd: p.share_usd, note: p.note ?? '' })),
       })
+      setAtts(data.attachments ?? [])
       touched.current = { ...ALL_TOUCHED }
       noticePrune.current = true
       setDropped(null)
@@ -227,6 +241,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     setVoucher(null)
     setHead(newHead(isStaff ? null : mySp, t('销售部')))
     setSel(EMPTY_SEL)
+    setAtts([])
     touched.current = { ...NONE_TOUCHED }
     noticePrune.current = false
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在打开时取一次语言
@@ -241,7 +256,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     let alive = true
     void supabase
       .from('v_commission_vouchers')
-      .select('id,voucher_no,status,vehicles,payments')
+      .select('id,voucher_no,status,step,vehicles,payments')
       .eq('customer_id', custId)
       .limit(1000)
       .then(({ data }) => {
@@ -255,7 +270,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               return {
                 id: o.id as number,
                 no: o.voucher_no ?? `#${o.id}`,
-                status: voucherStatus(o.status),
+                stage: voucherStage(o.status, o.step),
                 vehicleIds: new Set(parseVehicles(o.vehicles).map((v) => v.vehicle_id)),
                 shares,
               }
@@ -518,6 +533,17 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       message.error(t('保存失败：') + errorText(error))
       return null
     }
+    // 附件有变化的另存（整份换）
+    const before = voucher?.attachments ?? []
+    if (atts.length !== before.length || atts.some((x, i) => x !== before[i])) {
+      const res = await supabase.rpc('commission_voucher_attach', { p_id: data, p_paths: atts, p_replace: true })
+      if (res.error) {
+        message.error(t('附件没存上：') + errorText(res.error))
+        setChanged(true)
+        await loadVoucher(data)
+        return null
+      }
+    }
     if (!quiet) message.success(t('已保存'))
     setChanged(true)
     notifyVouchersChanged()
@@ -525,11 +551,27 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     return data
   }
 
+  /** 提交以后补附件：马上存，只能加 */
+  const appendAtts = async (paths: string[]) => {
+    if (!id) return
+    const added = paths.filter((x) => !atts.includes(x))
+    if (!added.length) return
+    const { data, error } = await supabase.rpc('commission_voucher_attach', { p_id: id, p_paths: added })
+    if (error) {
+      message.error(t('附件没存上：') + errorText(error))
+      return
+    }
+    setAtts(data ?? [...atts, ...added])
+    setChanged(true)
+  }
+
   const DONE: Record<string, string> = {
-    submit: '已提交，等财务审核',
+    submit: '已提交，等销售部审核',
     withdraw: '已撤回，可以修改后再提交',
-    finance_approve: '财务已通过，等总经理审批',
-    gm_approve: '已批准，等财务发放',
+    approve_sales_dept: '销售部已通过，等应收财务审核',
+    approve_ar: '应收财务已通过，等财务负责人审核',
+    approve_finance_head: '财务负责人已通过，等公司负责人审批',
+    approve_company_head: '已批准，等财务发放',
     reject: '已退回',
     pay: '已标记为已发放',
     unpay: '已取消发放',
@@ -629,13 +671,21 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
 
   // ---------- 显示 ----------
   const spName = salespersons.find((s) => s.id === spId)?.name ?? ''
-  const canWithdraw = !!id && status === 'submitted' && (!isStaff || voucher?.prepared_by === myUid)
-  const canFinance = !!id && status === 'submitted' && isStaff
-  const canGm = !!id && status === 'finance_ok' && isAdmin
-  const canReject = !!id && ((status === 'submitted' && isStaff) || ((status === 'finance_ok' || status === 'approved') && isAdmin))
+  // 销售部还没审之前可以撤回：业务员撤自己名下的，财务撤自己开的
+  const canWithdraw = !!id && step === 'sales_dept' && (isStaff ? voucher?.prepared_by === myUid : mine)
+  // 轮到我这个岗位，或者我是管理员（代办）
+  const holdsStep = !!step && posts.includes(step)
+  const canApprove = !!id && !!step && (holdsStep || isAdmin)
+  const canReject = !!id && (canApprove || (status === 'approved' && (isAdmin || posts.includes('company_head'))))
   const canPay = !!id && status === 'approved' && isStaff
   const canUnpay = !!id && status === 'paid' && isAdmin
   const canDelete = !!id && editable
+  const approveText: Record<Post, string> = {
+    sales_dept: '销售部审核通过',
+    ar: '应收财务审核通过',
+    finance_head: '财务负责人审核通过',
+    company_head: '公司负责人批准',
+  }
 
   const title = !id
     ? t('新建提成单')
@@ -643,9 +693,9 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       ? t('提成单 {no}', { no: voucher.voucher_no })
       : t('提成单草稿 #{id}', { id })
 
-  const othersTags = (list: { no: string; status?: VoucherStatus }[]) =>
+  const othersTags = (list: { no: string; stage?: VoucherStage }[]) =>
     list.map((o) => (
-      <Tooltip key={o.no} title={o.status ? t(VOUCHER_STATUS_LABEL[o.status]) : undefined}>
+      <Tooltip key={o.no} title={o.stage ? t(STAGE_LABEL[o.stage]) : undefined}>
         <Tag color="orange" style={{ marginInlineEnd: 4 }}>
           {o.no}
         </Tag>
@@ -831,9 +881,15 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     claims.filter((c) => c.nature_kind === 'discount' && c.vehicle_id != null && vehIds.has(c.vehicle_id)).reduce((s, c) => s + num(c.amount_usd), 0),
   )
 
-  const stepCurrent = { draft: 0, rejected: 0, submitted: 1, finance_ok: 2, approved: 3, paid: 4 }[status]
+  const stepCurrent = step ? POSTS.indexOf(step) + 1 : { draft: 0, rejected: 0, submitted: 1, approved: 5, paid: 6 }[status]
   const signed = (name: string | null | undefined, at: string | null | undefined, dateOnly = false) =>
     name ? `${name} · ${dateOnly ? (at ?? '') : dateTime(at)}` : ''
+  const signOf: Record<Post, string> = {
+    sales_dept: signed(voucher?.dept_name, voucher?.dept_at),
+    ar: signed(voucher?.ar_name, voucher?.ar_at),
+    finance_head: signed(voucher?.finance_name, voucher?.finance_at),
+    company_head: signed(voucher?.gm_name, voucher?.gm_at),
+  }
 
   return (
     <Drawer
@@ -841,7 +897,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       title={
         <Space wrap>
           <span>{title}</span>
-          {id && <Tag color={VOUCHER_STATUS_COLOR[status]}>{t(VOUCHER_STATUS_LABEL[status])}</Tag>}
+          {id && <Tag color={STAGE_COLOR[stage]}>{t(STAGE_LABEL[stage])}</Tag>}
         </Space>
       }
       size={Math.min(1180, typeof window !== 'undefined' ? window.innerWidth : 1180)}
@@ -886,14 +942,9 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               {t('提交')}
             </Button>
           )}
-          {canFinance && (
-            <Button type="primary" loading={busy === 'finance_approve'} onClick={() => void act(id as number, 'finance_approve')}>
-              {t('财务审核通过')}
-            </Button>
-          )}
-          {canGm && (
-            <Button type="primary" loading={busy === 'gm_approve'} onClick={() => void act(id as number, 'gm_approve')}>
-              {t('总经理批准')}
+          {canApprove && step && (
+            <Button type="primary" loading={busy === `approve_${step}`} onClick={() => void act(id as number, `approve_${step}`)}>
+              {holdsStep ? t(approveText[step]) : t('代{post}通过', { post: t(POST_LABEL[step]) })}
             </Button>
           )}
           {canPay && (
@@ -937,8 +988,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               status={status === 'rejected' ? 'error' : status === 'paid' ? 'finish' : 'process'}
               items={[
                 { title: t('制单'), content: signed(voucher?.prepared_name, voucher?.prepared_at) },
-                { title: t('财务审核'), content: signed(voucher?.finance_name, voucher?.finance_at) },
-                { title: t('总经理审批'), content: signed(voucher?.gm_name, voucher?.gm_at) },
+                ...POSTS.map((p) => ({ title: t(POST_LABEL[p]), content: signOf[p] })),
                 { title: t('发放'), content: signed(voucher?.paid_name, voucher?.paid_on, true) },
               ]}
             />
@@ -1231,6 +1281,29 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
           <Typography.Text strong>
             {t('本次发放提成合计')}：<span className="num">{totals.payout == null ? '—' : usd2(totals.payout)}</span>
           </Typography.Text>
+        </Card>
+        <Card size="small" title={t('附件')} className="cv-attachments" style={{ marginTop: 12 }}>
+          <Vouchers
+            kind="attachment"
+            value={atts}
+            prefix={isStaff ? 'cv' : `sub/${myUid ?? ''}`}
+            readOnly={!editable && !id}
+            canRemove={editable}
+            paste={editable}
+            onChange={
+              editable
+                ? (paths) => {
+                    setAtts(paths)
+                    setDirty(true)
+                  }
+                : (paths) => void appendAtts(paths)
+            }
+          />
+          <div className="hint" style={{ marginTop: 4 }}>
+            {editable
+              ? t('合同、付款凭证、聊天截图等，图片、PDF、Excel、Word 都可以。保存或提交时一起存。')
+              : t('审批的人也可以补附件。提交以后附件只能加，不能去掉。')}
+          </div>
         </Card>
         {id && <ApprovalTrail docType="voucher" docId={id} version={voucher?.updated_at} />}
       </Spin>

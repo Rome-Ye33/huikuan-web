@@ -15,7 +15,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import LangSwitch from './components/LangSwitch'
 import { ROLE_LABEL, useAuth } from './lib/auth'
-import { todoStatuses, useVoucherCount } from './lib/commission'
+import { useVoucherTodo } from './lib/commission'
 import { useI18n } from './lib/i18n'
 import { useSubmissionCount } from './lib/submissions'
 import { useTodoCount } from './lib/workbench'
@@ -62,8 +62,8 @@ export default function App() {
   const isSales = auth.role === 'sales'
   const pending = useSubmissionCount('pending', auth.isStaff)
   const rejected = useSubmissionCount('rejected', isSales)
-  // 提成单待我处理：业务员 = 被退回；财务 = 待审核、待发放；管理员 = 待审核、待总经理审批
-  const voucherTodo = useVoucherCount(todoStatuses(auth.role), !!auth.role)
+  // 提成单待我处理：轮到我这个审批岗位的、被退回要改的、财务待发放的（数据库视图按人算好）
+  const voucherTodo = useVoucherTodo(!!auth.role)
   // 工作台：到账提交、提成单里等我处理的一共几件
   const todo = useTodoCount(!!auth.role)
 

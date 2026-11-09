@@ -25,6 +25,7 @@ export type Database = {
           from_status: string | null
           id: number
           note: string | null
+          step: string | null
           to_status: string
         }
         Insert: {
@@ -37,6 +38,7 @@ export type Database = {
           from_status?: string | null
           id?: never
           note?: string | null
+          step?: string | null
           to_status: string
         }
         Update: {
@@ -49,6 +51,7 @@ export type Database = {
           from_status?: string | null
           id?: never
           note?: string | null
+          step?: string | null
           to_status?: string
         }
         Relationships: []
@@ -313,12 +316,19 @@ export type Database = {
       }
       commission_vouchers: {
         Row: {
+          ar_at: string | null
+          ar_by: string | null
+          ar_name: string | null
+          attachments: string[]
           charges_note: string | null
           commission_usd: number | null
           created_at: string
           created_by: string | null
           customer_id: number
           dept: string
+          dept_at: string | null
+          dept_by: string | null
+          dept_name: string | null
           discount_usd: number
           down_payment_usd: number | null
           finance_at: string | null
@@ -347,6 +357,7 @@ export type Database = {
           remarks: string | null
           salesperson_id: number
           status: string
+          step: string | null
           terms_count: number | null
           updated_at: string
           vehicles: Json
@@ -354,12 +365,19 @@ export type Database = {
           voucher_no: string | null
         }
         Insert: {
+          ar_at?: string | null
+          ar_by?: string | null
+          ar_name?: string | null
+          attachments?: string[]
           charges_note?: string | null
           commission_usd?: number | null
           created_at?: string
           created_by?: string | null
           customer_id: number
           dept?: string
+          dept_at?: string | null
+          dept_by?: string | null
+          dept_name?: string | null
           discount_usd?: number
           down_payment_usd?: number | null
           finance_at?: string | null
@@ -388,6 +406,7 @@ export type Database = {
           remarks?: string | null
           salesperson_id: number
           status?: string
+          step?: string | null
           terms_count?: number | null
           updated_at?: string
           vehicles?: Json
@@ -395,12 +414,19 @@ export type Database = {
           voucher_no?: string | null
         }
         Update: {
+          ar_at?: string | null
+          ar_by?: string | null
+          ar_name?: string | null
+          attachments?: string[]
           charges_note?: string | null
           commission_usd?: number | null
           created_at?: string
           created_by?: string | null
           customer_id?: number
           dept?: string
+          dept_at?: string | null
+          dept_by?: string | null
+          dept_name?: string | null
           discount_usd?: number
           down_payment_usd?: number | null
           finance_at?: string | null
@@ -429,6 +455,7 @@ export type Database = {
           remarks?: string | null
           salesperson_id?: number
           status?: string
+          step?: string | null
           terms_count?: number | null
           updated_at?: string
           vehicles?: Json
@@ -601,6 +628,7 @@ export type Database = {
       profiles: {
         Row: {
           active: boolean
+          approval_posts: string[]
           created_at: string
           email: string | null
           full_name: string | null
@@ -610,6 +638,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          approval_posts?: string[]
           created_at?: string
           email?: string | null
           full_name?: string | null
@@ -619,6 +648,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          approval_posts?: string[]
           created_at?: string
           email?: string | null
           full_name?: string | null
@@ -914,6 +944,7 @@ export type Database = {
       }
       user_invites: {
         Row: {
+          approval_posts: string[]
           created_at: string
           email: string
           full_name: string | null
@@ -922,6 +953,7 @@ export type Database = {
           salesperson_id: number | null
         }
         Insert: {
+          approval_posts?: string[]
           created_at?: string
           email: string
           full_name?: string | null
@@ -930,6 +962,7 @@ export type Database = {
           salesperson_id?: number | null
         }
         Update: {
+          approval_posts?: string[]
           created_at?: string
           email?: string
           full_name?: string | null
@@ -1076,6 +1109,10 @@ export type Database = {
       }
       v_commission_vouchers: {
         Row: {
+          ar_at: string | null
+          ar_by: string | null
+          ar_name: string | null
+          attachments: string[] | null
           balance_usd: number | null
           charges_note: string | null
           commission_usd: number | null
@@ -1084,6 +1121,9 @@ export type Database = {
           customer_id: number | null
           customer_name: string | null
           dept: string | null
+          dept_at: string | null
+          dept_by: string | null
+          dept_name: string | null
           discount_usd: number | null
           down_payment_usd: number | null
           finance_at: string | null
@@ -1115,6 +1155,7 @@ export type Database = {
           salesperson_id: number | null
           salesperson_name: string | null
           status: string | null
+          step: string | null
           terms_count: number | null
           total_sales_usd: number | null
           updated_at: string | null
@@ -1367,13 +1408,16 @@ export type Database = {
           last_actor_name: string | null
           last_at: string | null
           last_note: string | null
+          last_step: string | null
           my_action: string | null
           my_at: string | null
+          my_step: string | null
           receipt_id: number | null
           receipt_no: string | null
           salesperson_id: number | null
           salesperson_name: string | null
           status: string | null
+          step: string | null
           updated_at: string | null
           vehicle_count: number | null
           vins: string | null
@@ -1391,6 +1435,10 @@ export type Database = {
           p_note?: string
         }
         Returns: undefined
+      }
+      commission_voucher_attach: {
+        Args: { p_id: number; p_paths: string[]; p_replace?: boolean }
+        Returns: string[]
       }
       fmt_money: { Args: { decimals?: number; n: number }; Returns: string }
       import_statement: {
