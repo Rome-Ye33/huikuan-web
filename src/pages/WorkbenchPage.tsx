@@ -12,7 +12,7 @@ import { claimsSummary } from '../lib/submissions'
 import type { Submission } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import {
-  ACTION_LABEL,
+  actionLabel,
   BOX_LABEL,
   BOX_ORDER,
   BOXES,
@@ -39,7 +39,7 @@ const EMPTY_TEXT: Record<Box, string> = {
   ended: '还没有结束的单据',
 }
 
-function ItemCard({ it, box, isStaff, onOpen }: { it: WorkItem; box: Box; isStaff: boolean; onOpen: () => void }) {
+function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp: boolean; onOpen: () => void }) {
   const t = useT()
   const { accountById } = useRefData()
   const type = docType(it.doc_type)
@@ -62,17 +62,17 @@ function ItemCard({ it, box, isStaff, onOpen }: { it: WorkItem; box: Box; isStaf
     : [[t('{n} 台', { n: it.vehicle_count ?? 0 }), it.vins].filter(Boolean).join(' · ')]
 
   const meta = [
-    isStaff ? it.salesperson_name : null,
+    showSp ? it.salesperson_name : null,
     isSub ? accountById.get(it.account_id ?? 0)?.short_name : null,
     isSub ? t('到账 {date}', { date: it.doc_date ?? '' }) : it.amount != null ? t('本次发放 {amt}', { amt: '$ ' + money(it.amount) }) : null,
   ].filter(Boolean)
 
-  const action = (a: string | null | undefined) => (a ? t(ACTION_LABEL[a] ?? a) : '')
+  const action = (a: string | null | undefined, step: string | null | undefined) => (a ? t(actionLabel(a, step)) : '')
   const progress =
     box === 'done' && it.my_action
-      ? t('我：{action} · {when}', { action: action(it.my_action), when: dateTime(it.my_at) })
+      ? t('我：{action} · {when}', { action: action(it.my_action, it.my_step), when: dateTime(it.my_at) })
       : it.last_action
-        ? `${it.last_actor_name || t('系统')} · ${action(it.last_action)} · ${dateTime(it.last_at)}`
+        ? `${it.last_actor_name || t('系统')} · ${action(it.last_action, it.last_step)} · ${dateTime(it.last_at)}`
         : t('提交于 {when}', { when: dateTime(it.initiated_at) })
 
   return (
@@ -82,8 +82,8 @@ function ItemCard({ it, box, isStaff, onOpen }: { it: WorkItem; box: Box; isStaf
           <Tag color={DOC_COLOR[type]}>{t(DOC_LABEL[type])}</Tag>
           {title}
         </div>
-        <Tag color={statusColor(type, it.status)} style={{ marginInlineEnd: 0 }}>
-          {t(statusLabel(type, it.status))}
+        <Tag color={statusColor(type, it.status, it.step)} style={{ marginInlineEnd: 0 }}>
+          {t(statusLabel(type, it.status, it.step))}
         </Tag>
       </div>
       {details.map((line, i) => (
@@ -106,7 +106,9 @@ function ItemCard({ it, box, isStaff, onOpen }: { it: WorkItem; box: Box; isStaf
 export default function WorkbenchPage() {
   const t = useT()
   const { message } = App.useApp()
-  const { isStaff, role } = useAuth()
+  const { isStaff, role, posts } = useAuth()
+  // 有审批岗位的人会看到别的业务员的提成单，卡片上要写是谁的
+  const showSp = isStaff || posts.length > 0
   const isSales = role === 'sales'
   const [box, setBox] = useState<Box>('todo')
   const [type, setType] = useState<TypeFilter>('all')
@@ -241,7 +243,7 @@ export default function WorkbenchPage() {
         ) : (
           <Space orientation="vertical" style={{ width: '100%' }} size={8}>
             {rows.map((it) => (
-              <ItemCard key={`${it.doc_type}-${it.doc_id}`} it={it} box={box} isStaff={isStaff} onOpen={() => void open(it)} />
+              <ItemCard key={`${it.doc_type}-${it.doc_id}`} it={it} box={box} showSp={showSp} onOpen={() => void open(it)} />
             ))}
           </Space>
         )}

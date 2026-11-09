@@ -1,4 +1,4 @@
-import { DeleteOutlined, FilePdfOutlined, PaperClipOutlined, UploadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, FileOutlined, FilePdfOutlined, PaperClipOutlined, UploadOutlined } from '@ant-design/icons'
 import { App, Button, Image, Space, Tooltip, Upload } from 'antd'
 import { useEffect, useState } from 'react'
 import { errorText } from '../lib/errors'
@@ -7,6 +7,7 @@ import { supabase, VOUCHER_BUCKET } from '../lib/supabase'
 
 // 凭证（水单、Credit Alert、截图）：存在私有 bucket。财务和管理员能看全部；业务员只能看自己上传的
 // 路径：年/月/随机号-文件名；业务员提交到账时放在 sub/<用户id>/ 下面
+// 提成单的附件也用这个组件（kind="attachment"）：能看到那张提成单的人就能看它的附件
 
 function safeName(name: string): string {
   const dot = name.lastIndexOf('.')
@@ -37,9 +38,24 @@ type Props = {
   readOnly?: boolean
   /** 上传到哪个文件夹下（业务员：sub/<用户id>） */
   prefix?: string
+  /** attachment = 提成单的附件：叫“附件”，除了图片和 PDF 还可以传 Excel、Word */
+  kind?: 'voucher' | 'attachment'
+  /** 能不能去掉已经有的（提交后的提成单只能加） */
+  canRemove?: boolean
+  /** 能不能 Ctrl+V 粘贴截图（加上就去不掉的地方关掉，免得误贴） */
+  paste?: boolean
 }
 
-export default function Vouchers({ value, onChange, readOnly, prefix }: Props) {
+const TEXT = {
+  voucher: { upload: '上传凭证', done: '已上传 {n} 个凭证', none: '没有凭证' },
+  attachment: { upload: '上传附件', done: '已上传 {n} 个附件', none: '没有附件' },
+} as const
+const ACCEPT = {
+  voucher: 'image/*,application/pdf',
+  attachment: 'image/*,application/pdf,.xls,.xlsx,.csv,.doc,.docx',
+} as const
+
+export default function Vouchers({ value, onChange, readOnly, prefix, kind = 'voucher', canRemove = true, paste = true }: Props) {
   const { message } = App.useApp()
   const t = useT()
   const [urls, setUrls] = useState<Record<string, string>>({})
@@ -72,7 +88,7 @@ export default function Vouchers({ value, onChange, readOnly, prefix }: Props) {
       const paths: string[] = []
       for (const f of files) paths.push(await uploadVoucher(f, prefix))
       onChange([...value, ...paths])
-      message.success(t('已上传 {n} 个凭证', { n: paths.length }))
+      message.success(t(TEXT[kind].done, { n: paths.length }))
     } catch (e) {
       message.error(t('上传失败：') + errorText(e))
     } finally {
@@ -82,7 +98,7 @@ export default function Vouchers({ value, onChange, readOnly, prefix }: Props) {
 
   // 直接 Ctrl+V 粘贴截图
   useEffect(() => {
-    if (readOnly || !onChange) return
+    if (readOnly || !onChange || !paste) return
     const onPaste = (ev: ClipboardEvent) => {
       const items = ev.clipboardData?.files
       if (!items || items.length === 0) return
@@ -98,42 +114,46 @@ export default function Vouchers({ value, onChange, readOnly, prefix }: Props) {
   return (
     <div>
       <Space wrap size={8}>
-        <Image.PreviewGroup>
-          {value.map((p) => (
-            <div key={p} className="voucher-thumb">
-              {isImage(p) ? (
-                urls[p] ? (
-                  <Image src={urls[p]} width={88} height={88} style={{ objectFit: 'cover' }} />
-                ) : (
-                  <div className="voucher-file">
-                    <PaperClipOutlined />
-                  </div>
-                )
-              ) : (
-                <a href={urls[p]} target="_blank" rel="noreferrer" className="voucher-file">
-                  <FilePdfOutlined style={{ fontSize: 24 }} />
-                  <span>{p.split('/').pop()?.slice(9, 25)}</span>
-                </a>
-              )}
-              {!readOnly && onChange && (
-                <Tooltip title={t('移除（不会删除已上传的文件）')}>
-                  <Button
-                    size="small"
-                    type="text"
-                    danger
-                    className="voucher-remove"
-                    icon={<DeleteOutlined />}
-                    onClick={() => onChange(value.filter((x) => x !== p))}
-                  />
-                </Tooltip>
-              )}
+        {value.length > 0 && (
+          <Image.PreviewGroup>
+            <div className="voucher-list">
+              {value.map((p) => (
+                <div key={p} className="voucher-thumb">
+                  {isImage(p) ? (
+                    urls[p] ? (
+                      <Image src={urls[p]} width={88} height={88} style={{ objectFit: 'cover' }} />
+                    ) : (
+                      <div className="voucher-file">
+                        <PaperClipOutlined />
+                      </div>
+                    )
+                  ) : (
+                    <a href={urls[p]} target="_blank" rel="noreferrer" className="voucher-file">
+                      {/\.pdf$/i.test(p) ? <FilePdfOutlined style={{ fontSize: 24 }} /> : <FileOutlined style={{ fontSize: 24 }} />}
+                      <span>{p.split('/').pop()?.slice(9, 25)}</span>
+                    </a>
+                  )}
+                  {!readOnly && onChange && canRemove && (
+                    <Tooltip title={t('移除（不会删除已上传的文件）')}>
+                      <Button
+                        size="small"
+                        type="text"
+                        danger
+                        className="voucher-remove"
+                        icon={<DeleteOutlined />}
+                        onClick={() => onChange(value.filter((x) => x !== p))}
+                      />
+                    </Tooltip>
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
-        </Image.PreviewGroup>
+          </Image.PreviewGroup>
+        )}
         {!readOnly && onChange && (
           <Upload
             multiple
-            accept="image/*,application/pdf"
+            accept={ACCEPT[kind]}
             showUploadList={false}
             beforeUpload={(file, list) => {
               if (file === list[list.length - 1]) void addFiles(list as File[])
@@ -141,17 +161,17 @@ export default function Vouchers({ value, onChange, readOnly, prefix }: Props) {
             }}
           >
             <Button icon={<UploadOutlined />} loading={uploading}>
-              {t('上传凭证')}
+              {t(TEXT[kind].upload)}
             </Button>
           </Upload>
         )}
       </Space>
-      {!readOnly && onChange && (
+      {!readOnly && onChange && paste && (
         <div className="hint" style={{ marginTop: 4 }}>
           {t('可以直接 Ctrl+V 粘贴截图')}
         </div>
       )}
-      {readOnly && value.length === 0 && <span className="hint">{t('没有凭证')}</span>}
+      {readOnly && value.length === 0 && <span className="hint">{t(TEXT[kind].none)}</span>}
     </div>
   )
 }

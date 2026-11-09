@@ -1,7 +1,7 @@
 // 工作台：到账提交、提成单两种审批并在一起，按登录的人分成待办 / 已办 / 已发起 / 已结束（数据库视图 v_workbench 算好）。
 // 每一步谁做的、什么时候、退回原因记在 approval_logs（触发器写）。
 import { useEffect, useState } from 'react'
-import { VOUCHER_STATUS_COLOR, VOUCHER_STATUS_LABEL, voucherStatus } from './commission'
+import { asPost, POST_PASSED, STAGE_COLOR, STAGE_LABEL, voucherStage } from './commission'
 import { STATUS_COLOR, STATUS_LABEL } from './submissions'
 import type { SubmissionStatus } from './submissions'
 import { supabase } from './supabase'
@@ -53,11 +53,15 @@ export const ACTION_LABEL: Record<string, string> = {
   withdraw: '已撤回',
   approve: '审核通过',
   reject: '已退回',
-  finance_approve: '财务审核已通过',
-  gm_approve: '总经理已批准',
   pay: '已发放',
   unpay: '已取消发放',
   reopen: '到账被删除，回到待审核',
+}
+/** 一步的说法：提成单每一级通过各有各的（销售部已通过……），其余按动作 */
+export function actionLabel(action: string | null | undefined, step?: string | null): string {
+  const p = action === 'approve' ? asPost(step) : null
+  if (p) return POST_PASSED[p]
+  return ACTION_LABEL[action ?? ''] ?? action ?? ''
 }
 export const ACTION_COLOR: Record<string, string> = {
   submit: 'blue',
@@ -65,8 +69,6 @@ export const ACTION_COLOR: Record<string, string> = {
   withdraw: 'gray',
   approve: 'green',
   reject: 'red',
-  finance_approve: 'green',
-  gm_approve: 'green',
   pay: 'green',
   unpay: 'gray',
   reopen: 'gray',
@@ -76,13 +78,13 @@ export function docType(x: string | null | undefined): DocType {
   return x === 'voucher' ? 'voucher' : 'submission'
 }
 
-/** 状态的中文（界面上再翻译）和颜色，两种单据各用各的 */
-export function statusLabel(type: DocType, status: string | null | undefined): string {
-  if (type === 'voucher') return VOUCHER_STATUS_LABEL[voucherStatus(status)]
+/** 状态的中文（界面上再翻译）和颜色，两种单据各用各的；提成单审批中的按走到哪一级 */
+export function statusLabel(type: DocType, status: string | null | undefined, step?: string | null): string {
+  if (type === 'voucher') return STAGE_LABEL[voucherStage(status, step)]
   return STATUS_LABEL[(status ?? 'pending') as SubmissionStatus] ?? status ?? ''
 }
-export function statusColor(type: DocType, status: string | null | undefined): string {
-  if (type === 'voucher') return VOUCHER_STATUS_COLOR[voucherStatus(status)]
+export function statusColor(type: DocType, status: string | null | undefined, step?: string | null): string {
+  if (type === 'voucher') return STAGE_COLOR[voucherStage(status, step)]
   return STATUS_COLOR[(status ?? 'pending') as SubmissionStatus] ?? 'default'
 }
 

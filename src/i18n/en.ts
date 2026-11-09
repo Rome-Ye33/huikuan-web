@@ -79,24 +79,47 @@ const VALUES: Record<string, string> = {
   "未知操作": "Unknown action",
   // 提成单状态
   "草稿": "Draft",
-  "待财务审核": "Awaiting finance",
-  "待总经理审批": "Awaiting GM",
+  "待销售部审核": "Awaiting Sales Dept",
+  "待应收财务审核": "Awaiting AR Finance",
+  "待财务负责人审核": "Awaiting Head of Finance",
+  "待公司负责人审批": "Awaiting Company Head",
   "已批准待发放": "Approved, to pay out",
   "已发放": "Paid out",
+  // 审批岗位（提成单五级审批：业务员 → 销售部 → 应收财务 → 财务负责人 → 公司负责人）
+  "应收财务": "AR Finance",
+  "财务负责人": "Head of Finance",
+  "公司负责人": "Company Head",
+  "销售部已通过": "Approved by Sales Dept",
+  "应收财务已通过": "Approved by AR Finance",
+  "财务负责人已通过": "Approved by Head of Finance",
+  "公司负责人已批准": "Approved by Company Head",
+  "销售部审核通过": "Approve (Sales Dept)",
+  "应收财务审核通过": "Approve (AR Finance)",
+  "财务负责人审核通过": "Approve (Head of Finance)",
+  "公司负责人批准": "Approve (Company Head)",
+  // 凭证、附件（Vouchers 组件）
+  "上传凭证": "Upload proof",
+  "已上传 {n} 个凭证": "{n} proof(s) uploaded",
+  "没有凭证": "No proof",
+  "上传附件": "Upload attachment",
+  "已上传 {n} 个附件": "{n} attachment(s) uploaded",
+  "没有附件": "No attachments",
   // 提成单分期情况
   "⚠ 已付超过销售额": "⚠ Paid more than total sales",
   "已付清": "Paid off",
   "全款 未付清": "Full payment, not paid off",
   "已还 {paid} 期 / 共 {total} 期": "Paid {paid} of {total} terms",
   // 提成单操作完成的提示
-  "已提交，等财务审核": "Submitted. Waiting for finance review.",
   "已撤回，可以修改后再提交": "Withdrawn. You can edit it and submit again.",
-  "财务已通过，等总经理审批": "Finance approved. Waiting for the GM.",
+  "已提交，等销售部审核": "Submitted. Waiting for Sales Dept.",
+  "销售部已通过，等应收财务审核": "Sales Dept approved. Waiting for AR Finance.",
+  "应收财务已通过，等财务负责人审核": "AR Finance approved. Waiting for the Head of Finance.",
+  "财务负责人已通过，等公司负责人审批": "Head of Finance approved. Waiting for the Company Head.",
   "已批准，等财务发放": "Approved. Waiting for finance to pay out.",
   "已标记为已发放": "Marked as paid out",
   "已取消发放": "Payout undone",
   // 申请部门默认值
-  "销售部": "Sales",
+  "销售部": "Sales Dept",
   // 提成单、大架号未锁定的到账（SQL 09）的报错
   "款项性质“{nature}”请选车；大架号还没锁定的请选客户": "Payment type “{nature}”: choose a vehicle, or the customer if the VIN is not known yet",
   "没有权限": "Not allowed",
@@ -114,14 +137,15 @@ const VALUES: Record<string, string> = {
   "本单金额要大于 0，且不超过这笔付款的金额：{list}": "The amount for this voucher must be above 0 and not more than the payment: {list}",
   "这张提成单已经提交过了，请刷新后再看": "This voucher has already been submitted. Refresh and check again.",
   "每台车都要有大架号": "Every vehicle needs a VIN",
-  "只有待财务审核的提成单可以撤回": "Only vouchers awaiting finance review can be withdrawn",
-  "只有财务可以审核提成单": "Only finance can review vouchers",
-  "这张提成单不在待财务审核，请刷新后再看": "This voucher is not awaiting finance review. Refresh and check again.",
-  "只有总经理（管理员）可以审批提成单": "Only the general manager (admin) can approve vouchers",
-  "这张提成单不在待总经理审批，请刷新后再看": "This voucher is not awaiting GM approval. Refresh and check again.",
   "这张提成单现在不能由你退回": "You can't return this voucher at this stage",
+  "销售部审核之后就不能撤回了，要改请审核人退回": "It can't be withdrawn once Sales Dept has reviewed it. Ask the reviewer to return it.",
+  "这张提成单已经不在这一步了，请刷新后再看": "This voucher has moved on from this step. Refresh and check again.",
+  "这一步要由“{post}”审核，你不在这个岗位上": "This step is reviewed by {post}, and you are not assigned to it",
+  "公司负责人批准后才能发放": "It can only be paid out after the Company Head approves",
+  "只能添加自己上传的附件": "You can only add files you uploaded yourself",
+  "提成单已经提交，附件只能加、不能去掉": "The voucher has been submitted: attachments can be added but not removed",
+  "一张提成单最多 30 个附件": "A voucher can have at most 30 attachments",
   "只有财务可以标记发放": "Only finance can mark it as paid out",
-  "总经理批准后才能发放": "It can only be paid out after GM approval",
   "只有管理员可以取消发放": "Only an admin can undo the payout",
   "这张提成单还没发放": "This voucher has not been paid out yet",
   "未知操作：{action}": "Unknown action: {action}",
@@ -162,8 +186,6 @@ const VALUES: Record<string, string> = {
   "已提交": "Submitted",
   "已重新提交": "Resubmitted",
   "审核通过": "Approved",
-  "财务审核已通过": "Approved by finance",
-  "总经理已批准": "Approved by GM",
   "到账被删除，回到待审核": "Receipt deleted, back to review",
   "没有待办，都处理完了": "Nothing to do. All caught up.",
   "没有处理过、还在流程中的单据": "Nothing you handled is still in progress",
@@ -483,12 +505,9 @@ const UI: Record<string, string> = {
   "没有等审核的提交": "No submissions waiting for review",
 
   // 凭证
-  "已上传 {n} 个凭证": "{n} proof(s) uploaded",
   "上传失败：": "Upload failed: ",
   "移除（不会删除已上传的文件）": "Remove (the uploaded file is kept)",
-  "上传凭证": "Upload proof",
   "可以直接 Ctrl+V 粘贴截图": "You can also paste a screenshot with Ctrl+V",
-  "没有凭证": "No proof",
 
   // 选客户、选车
   "+ 新建客户“{name}”": "+ New customer “{name}”",
@@ -759,11 +778,9 @@ const UI: Record<string, string> = {
   "新建提成单": "New voucher",
   "提成单 {no}": "Commission voucher {no}",
   "提成单草稿 #{id}": "Draft voucher #{id}",
+  "业务员按客户开单（选车、勾客户的付款、填提成金额，可以加附件），提交后在线上逐级审批：销售部 → 应收财务 → 财务负责人 → 公司负责人，批准后财务发放。":
+    "Salespeople open one voucher per customer (choose the vehicles, tick the customer's payments, enter the commission, add attachments if needed). After it is submitted it is approved online, step by step: Sales Dept → AR Finance → Head of Finance → Company Head. Finance then pays out.",
   "草稿 #{id}": "Draft #{id}",
-  "业务员按客户开单，财务审核，总经理（管理员）批准，财务发放后标记已发放。":
-    "Salespeople open one voucher per customer. Finance reviews it, the GM (admin) approves it, and finance marks it as paid out after paying.",
-  "按客户开单：选车（大架号必填）、勾客户的付款、填提成金额，提交后等财务审核和总经理批准。":
-    "One voucher per customer: choose the vehicles (VIN required), tick the customer's payments and enter the commission. After you submit, finance reviews it and the GM approves it.",
   "按客户开单：选好客户和业务员，再选这单的车（大架号必填）。系统会带出这几台车的到账；大架号还没锁定的到账也可以勾上。提成金额手填。":
     "One voucher per customer: choose the customer and salesperson, then the vehicles on this voucher (VIN required). The receipts of these vehicles come in automatically, and you can also tick receipts whose VIN is not set yet. Enter the commission by hand.",
   "编号、客户、业务员、大架号": "No., customer, salesperson, VIN",
@@ -779,8 +796,12 @@ const UI: Record<string, string> = {
   "本次发放": "Payout",
   "打印": "Print",
   "保存草稿": "Save draft",
-  "财务审核通过": "Approve (finance)",
-  "总经理批准": "Approve (GM)",
+  "代{post}通过": "Approve for {post}",
+  "附件": "Attachments",
+  "附件没存上：": "Attachments not saved: ",
+  "合同、付款凭证、聊天截图等，图片、PDF、Excel、Word 都可以。保存或提交时一起存。":
+    "Contracts, proof of payment, chat screenshots and so on. Images, PDF, Excel and Word are fine. They are saved when you save or submit.",
+  "审批的人也可以补附件。提交以后附件只能加，不能去掉。": "Reviewers can add attachments too. After submission, attachments can be added but not removed.",
   "标记已发放": "Mark as paid out",
   "取消发放": "Undo payout",
   "取消发放？": "Undo the payout?",
@@ -794,8 +815,6 @@ const UI: Record<string, string> = {
   "有 {v} 台车、{p} 笔付款已经不符合条件（车或到账改过），已从本单去掉，请核对后保存。":
     "{v} vehicle(s) and {p} payment(s) no longer qualify (the vehicle or receipt was changed) and were removed from this voucher. Please check and save.",
   "制单": "Prepared",
-  "财务审核": "Finance review",
-  "总经理审批": "GM approval",
   "发放": "Payout",
   "一、客户及车辆": "1. Customer & vehicles",
   "申请部门": "Requesting dept",
@@ -922,6 +941,19 @@ const UI: Record<string, string> = {
   "审批记录": "Approval history",
   "系统": "System",
   "原因：{note}": "Reason: {note}",
+
+  // 用户与权限：提成单审批流
+  "提成单审批流": "Commission voucher approval flow",
+  "业务员开单提交": "Salesperson submits",
+  "财务发放": "Finance pays out",
+  "选审核人": "Choose reviewers",
+  "审批岗位": "Approval posts",
+  "{name}（已停用）": "{name} (inactive)",
+  "{name}（等待注册）": "{name} (not signed up yet)",
+  "还没指定人，暂由管理员代办": "No one assigned yet. An admin handles this step for now.",
+  "等对方注册；在这之前由管理员代办": "Waiting for them to sign up. Until then an admin handles this step.",
+  "提成单在线上按这个顺序一级一级审，不用打印签字。一个岗位可以有几个人（谁先审都行），一个人也可以兼几个岗位。岗位和角色是分开的：角色决定能看到、能录什么，岗位决定提成单轮到谁审。管理员任何一级都可以代办。":
+    "Vouchers are approved online in this order, one step at a time. No printing or signing is needed. A post can have several people (any one of them can approve), and one person can hold several posts. Posts are separate from roles: the role decides what someone can see and enter, the post decides whose turn it is to approve. An admin can act on any step.",
 }
 
 export const EN: Record<string, string> = { ...VALUES, ...UI }

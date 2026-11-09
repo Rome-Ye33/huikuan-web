@@ -1,8 +1,10 @@
-import { PlusOutlined } from '@ant-design/icons'
-import { Alert, App, Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
+import { ArrowRightOutlined, PlusOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
 import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
+import { asPosts, POST_LABEL, POSTS } from '../lib/commission'
+import type { Post } from '../lib/commission'
 import { errorText } from '../lib/errors'
 import { dateTime } from '../lib/format'
 import { useRefData } from '../lib/refdata'
@@ -15,7 +17,7 @@ const ROLE_COLOR: Record<AppRole, string> = { admin: 'red', finance: 'blue', sal
 
 export default function UsersPage() {
   const t = useT()
-  const { session } = useAuth()
+  const { session, reloadProfile } = useAuth()
   const { salespersons } = useRefData()
   const { message, modal } = App.useApp()
   const [profiles, setProfiles] = useState<Profile[]>([])
@@ -24,6 +26,7 @@ export default function UsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [pwUser, setPwUser] = useState<Profile | null>(null)
   const [pwBusy, setPwBusy] = useState(false)
+  const [postBusy, setPostBusy] = useState<Post | null>(null)
   const [pform] = Form.useForm<{ password: string }>()
   const [uform] = Form.useForm<{ full_name?: string; role: AppRole | null; salesperson_id?: number | null; active: boolean }>()
   const [iform] = Form.useForm<{ email: string; role: AppRole; salesperson_id?: number | null; full_name?: string }>()
@@ -46,6 +49,54 @@ export default function UsersPage() {
   }, [load])
 
   const registered = new Set(profiles.map((p) => (p.email ?? '').toLowerCase()))
+
+  // ---------- 提成单审批流：每一级由谁审（审批岗位）。已注册的人记在 profiles，还没注册的记在邀请名单、注册时带过去 ----------
+  const waiting = invites.filter((i) => !registered.has(i.email))
+  const usable = (p: Profile) => p.active && !!p.role
+  const postsOf = (x: { approval_posts: string[] | null }) => x.approval_posts ?? []
+  const personName = (p: { full_name: string | null; email: string | null }) => p.full_name || p.email || ''
+  /** 这个岗位上现在有谁：p:<用户id> 或 i:<邀请邮箱> */
+  const postValue = (post: Post): string[] => [
+    ...profiles.filter((p) => postsOf(p).includes(post)).map((p) => 'p:' + p.id),
+    ...waiting.filter((i) => postsOf(i).includes(post)).map((i) => 'i:' + i.email),
+  ]
+  const postOptions = (post: Post) => [
+    ...profiles
+      .filter((p) => usable(p) || postsOf(p).includes(post))
+      .map((p) => ({ value: 'p:' + p.id, label: usable(p) ? personName(p) : t('{name}（已停用）', { name: personName(p) }) })),
+    ...waiting.map((i) => ({ value: 'i:' + i.email, label: t('{name}（等待注册）', { name: personName(i) }) })),
+  ]
+  /** 在岗的人（启用、有角色、已注册）；一个都没有时由管理员代办 */
+  const holders = (post: Post) => profiles.filter((p) => usable(p) && postsOf(p).includes(post))
+
+  const setPost = async (post: Post, next: string[]) => {
+    const cur = postValue(post)
+    const changed = [...next.filter((k) => !cur.includes(k)), ...cur.filter((k) => !next.includes(k))]
+    if (!changed.length) return
+    setPostBusy(post)
+    let failed: string | null = null
+    for (const key of changed) {
+      const on = next.includes(key)
+      const withPost = (list: string[]) => asPosts(on ? [...list, post] : list.filter((x) => x !== post))
+      if (key.startsWith('p:')) {
+        const p = profiles.find((x) => 'p:' + x.id === key)
+        if (!p) continue
+        const { error } = await supabase.from('profiles').update({ approval_posts: withPost(postsOf(p)) }).eq('id', p.id)
+        if (error) failed = errorText(error)
+      } else {
+        const i = invites.find((x) => 'i:' + x.email === key)
+        if (!i) continue
+        const { error } = await supabase.from('user_invites').update({ approval_posts: withPost(postsOf(i)) }).eq('email', i.email)
+        if (error) failed = errorText(error)
+      }
+    }
+    setPostBusy(null)
+    if (failed) message.error(failed)
+    else message.success(t('已保存'))
+    await load()
+    if (changed.includes('p:' + (session?.user.id ?? ''))) await reloadProfile()
+  }
+  const postTags = (list: string[]) => asPosts(list).map((p) => <Tag key={p}>{t(POST_LABEL[p])}</Tag>)
 
   const saveUser = async () => {
     const v = await uform.validateFields()
@@ -129,6 +180,53 @@ export default function UsersPage() {
         style={{ marginBottom: 12 }}
         title={t('新同事：先在下面“邀请名单”加上对方的邮箱和角色，再让对方打开系统，在登录页点“第一次使用”设置密码。不在名单上的邮箱注册不了。忘记密码的用“重设密码”；离职的人把“启用”关掉即可。')}
       />
+      <Card
+        size="small"
+        className="flow-card"
+        title={t('提成单审批流')}
+        style={{ marginBottom: 20 }}
+      >
+        <div className="flow-row">
+          <div className="flow-end">{t('业务员开单提交')}</div>
+          {POSTS.map((post, n) => {
+            const on = holders(post)
+            const pending = waiting.some((i) => postsOf(i).includes(post))
+            return (
+              <div key={post} className="flow-step" data-post={post}>
+                <ArrowRightOutlined className="flow-arrow" />
+                <div className="flow-box">
+                  <div className="flow-name">
+                    {n + 1}. {t(POST_LABEL[post])}
+                  </div>
+                  <Select
+                    mode="multiple"
+                    style={{ width: '100%' }}
+                    placeholder={t('选审核人')}
+                    loading={postBusy === post}
+                    disabled={postBusy !== null}
+                    showSearch={{ optionFilterProp: 'label' }}
+                    value={postValue(post)}
+                    options={postOptions(post)}
+                    onChange={(v: string[]) => void setPost(post, v)}
+                  />
+                  {on.length === 0 && (
+                    <div className="hint text-warn" style={{ marginTop: 2 }}>
+                      {pending ? t('等对方注册；在这之前由管理员代办') : t('还没指定人，暂由管理员代办')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+          <div className="flow-step flow-last">
+            <ArrowRightOutlined className="flow-arrow" />
+            <div className="flow-end">{t('财务发放')}</div>
+          </div>
+        </div>
+        <div className="hint" style={{ marginTop: 8 }}>
+          {t('提成单在线上按这个顺序一级一级审，不用打印签字。一个岗位可以有几个人（谁先审都行），一个人也可以兼几个岗位。岗位和角色是分开的：角色决定能看到、能录什么，岗位决定提成单轮到谁审。管理员任何一级都可以代办。')}
+        </div>
+      </Card>
       <Typography.Title level={5}>{t('已注册的用户')}</Typography.Title>
       <Table
         rowKey="id"
@@ -141,6 +239,7 @@ export default function UsersPage() {
           { title: t('姓名'), dataIndex: 'full_name', width: 160 },
           { title: t('角色'), dataIndex: 'role', width: 90, render: (r: AppRole | null) => (r ? <Tag color={ROLE_COLOR[r]}>{t(ROLE_LABEL[r])}</Tag> : <Tag>{t('未授权')}</Tag>) },
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
+          { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
           { title: t('启用'), dataIndex: 'active', width: 70, render: (v: boolean) => (v ? <Tag color="green">{t('启用')}</Tag> : <Tag>{t('停用')}</Tag>) },
           { title: t('注册时间'), dataIndex: 'created_at', width: 150, render: (v: string) => dateTime(v) },
           {
@@ -208,6 +307,7 @@ export default function UsersPage() {
           { title: t('姓名'), dataIndex: 'full_name', width: 160 },
           { title: t('角色'), dataIndex: 'role', width: 90, render: (r: AppRole) => <Tag color={ROLE_COLOR[r]}>{t(ROLE_LABEL[r])}</Tag> },
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
+          { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
           {
             title: t('状态'),
             width: 90,

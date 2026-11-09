@@ -7,8 +7,9 @@ import {
   payStateEn,
   payStateVars,
   savedTotals,
-  VOUCHER_STATUS_EN,
-  VOUCHER_STATUS_LABEL,
+  STAGE_EN,
+  STAGE_LABEL,
+  voucherStage,
   voucherStatus,
 } from '../lib/commission'
 import type { CommissionVoucher } from '../lib/commission'
@@ -38,6 +39,7 @@ export default function CommissionSheet({ v }: { v: CommissionVoucher }) {
   const payments = parsePayments(v.payments)
   const tt = savedTotals(v)
   const status = voucherStatus(v.status)
+  const stage = voucherStage(v.status, v.step)
   const final = status === 'approved' || status === 'paid'
   const many = vehicles.length > 1
   const st = tt.state
@@ -70,7 +72,7 @@ export default function CommissionSheet({ v }: { v: CommissionVoucher }) {
             <td colSpan={8} className="cv-meta">
               {!final && (
                 <span className="cv-stamp">
-                  {VOUCHER_STATUS_LABEL[status]} {VOUCHER_STATUS_EN[status]}
+                  {STAGE_LABEL[stage]} {STAGE_EN[stage]}
                 </span>
               )}
               编号 NO.&nbsp;{v.voucher_no ?? '—'}
@@ -364,9 +366,12 @@ export default function CommissionSheet({ v }: { v: CommissionVoucher }) {
 
       <div className="cv-sign">
         <Sign zh="制单人" en="PREPARED BY" name={v.prepared_name} at={v.prepared_at} />
+        <Sign zh="销售部" en="SALES DEPT" name={v.dept_name} at={v.dept_at} />
+        <Sign zh="应收财务" en="AR FINANCE" name={v.ar_name} at={v.ar_at} />
         <Sign zh="财务负责人" en="HEAD OF FINANCE" name={v.finance_name} at={v.finance_at} />
-        <Sign zh="公司负责人" en="GENERAL MANAGER" name={v.gm_name} at={v.gm_at} />
+        <Sign zh="公司负责人" en="COMPANY HEAD" name={v.gm_name} at={v.gm_at} />
       </div>
+      <div className="cv-sign-note">以上各级为线上审批，无需签字&nbsp;&nbsp;Approved online in the system; no signature required</div>
       {status === 'paid' && (
         <div className="cv-paid">
           已发放 PAID OUT：{v.paid_on}

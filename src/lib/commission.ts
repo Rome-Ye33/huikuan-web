@@ -6,36 +6,84 @@ import { supabase } from './supabase'
 import type { ViewRow } from './supabase'
 
 export type CommissionVoucher = ViewRow<'v_commission_vouchers'>
-export type VoucherStatus = 'draft' | 'submitted' | 'finance_ok' | 'approved' | 'paid' | 'rejected'
+export type VoucherStatus = 'draft' | 'submitted' | 'approved' | 'paid' | 'rejected'
 
-export const VOUCHER_STATUSES: VoucherStatus[] = ['draft', 'submitted', 'finance_ok', 'approved', 'paid', 'rejected']
+export const VOUCHER_STATUSES: VoucherStatus[] = ['draft', 'submitted', 'approved', 'paid', 'rejected']
 
-export const VOUCHER_STATUS_LABEL: Record<VoucherStatus, string> = {
+/**
+ * 审批岗位（profiles.approval_posts），也是提成单审批中走到的那一级（commission_vouchers.step）。
+ * 流程：业务员提交 → 销售部 → 应收财务 → 财务负责人 → 公司负责人 → 财务发放。每一级由谁审，管理员在“用户与权限”里指定
+ */
+export type Post = 'sales_dept' | 'ar' | 'finance_head' | 'company_head'
+
+export const POSTS: Post[] = ['sales_dept', 'ar', 'finance_head', 'company_head']
+
+export const POST_LABEL: Record<Post, string> = {
+  sales_dept: '销售部',
+  ar: '应收财务',
+  finance_head: '财务负责人',
+  company_head: '公司负责人',
+}
+
+export function asPost(x: string | null | undefined): Post | null {
+  return (POSTS as string[]).includes(x ?? '') ? (x as Post) : null
+}
+
+/** 一个人的岗位（数据库里是文字数组） */
+export function asPosts(list: string[] | null | undefined): Post[] {
+  return POSTS.filter((p) => (list ?? []).includes(p))
+}
+
+/** 提成单走到哪一步：审批中（submitted）的按走到的那一级分开，其余就是状态 */
+export type VoucherStage = Exclude<VoucherStatus, 'submitted'> | Post
+
+export const VOUCHER_STAGES: VoucherStage[] = ['draft', ...POSTS, 'approved', 'paid', 'rejected']
+
+export const STAGE_LABEL: Record<VoucherStage, string> = {
   draft: '草稿',
-  submitted: '待财务审核',
-  finance_ok: '待总经理审批',
+  sales_dept: '待销售部审核',
+  ar: '待应收财务审核',
+  finance_head: '待财务负责人审核',
+  company_head: '待公司负责人审批',
   approved: '已批准待发放',
   paid: '已发放',
   rejected: '已退回',
 }
 
 /** 打印的提成单上用（中英都印） */
-export const VOUCHER_STATUS_EN: Record<VoucherStatus, string> = {
+export const STAGE_EN: Record<VoucherStage, string> = {
   draft: 'DRAFT',
-  submitted: 'PENDING FINANCE',
-  finance_ok: 'PENDING GM',
+  sales_dept: 'PENDING SALES DEPT',
+  ar: 'PENDING AR FINANCE',
+  finance_head: 'PENDING HEAD OF FINANCE',
+  company_head: 'PENDING COMPANY HEAD',
   approved: 'APPROVED',
   paid: 'PAID',
   rejected: 'RETURNED',
 }
 
-export const VOUCHER_STATUS_COLOR: Record<VoucherStatus, string> = {
+export const STAGE_COLOR: Record<VoucherStage, string> = {
   draft: 'default',
-  submitted: 'blue',
-  finance_ok: 'gold',
+  sales_dept: 'blue',
+  ar: 'blue',
+  finance_head: 'geekblue',
+  company_head: 'gold',
   approved: 'cyan',
   paid: 'green',
   rejected: 'red',
+}
+
+/** 每一级通过之后的说法（审批记录、工作台上的进展） */
+export const POST_PASSED: Record<Post, string> = {
+  sales_dept: '销售部已通过',
+  ar: '应收财务已通过',
+  finance_head: '财务负责人已通过',
+  company_head: '公司负责人已批准',
+}
+
+export function voucherStage(status: string | null | undefined, step: string | null | undefined): VoucherStage {
+  const s = voucherStatus(status)
+  return s === 'submitted' ? (asPost(step) ?? 'sales_dept') : s
 }
 
 export function voucherStatus(s: string | null | undefined): VoucherStatus {
@@ -278,15 +326,18 @@ export function notifyVouchersChanged() {
   window.dispatchEvent(new Event(EVENT))
 }
 
-/** 几种状态的提成单一共几张（业务员只算自己的）。statuses 用逗号隔开，如 'submitted,finance_ok' */
-export function useVoucherCount(statuses: string, enabled: boolean): number {
+/** 等我处理的提成单有几张（数据库视图 v_workbench 按岗位算好）。每分钟、切回窗口、提交或审批之后刷新 */
+export function useVoucherTodo(enabled: boolean): number {
   const [n, setN] = useState(0)
   useEffect(() => {
-    if (!enabled || !statuses) return
+    if (!enabled) return
     let alive = true
-    const list = statuses.split(',')
     const load = async () => {
-      const { count } = await supabase.from('commission_vouchers').select('id', { count: 'exact', head: true }).in('status', list)
+      const { count } = await supabase
+        .from('v_workbench')
+        .select('doc_id', { count: 'exact', head: true })
+        .eq('doc_type', 'voucher')
+        .eq('in_todo', true)
       if (alive) setN(count ?? 0)
     }
     void load()
@@ -299,16 +350,14 @@ export function useVoucherCount(statuses: string, enabled: boolean): number {
       window.removeEventListener(EVENT, load)
       window.removeEventListener('focus', load)
     }
-  }, [statuses, enabled])
+  }, [enabled])
   return enabled ? n : 0
 }
 
-/** 各角色“待我处理”的状态：业务员 = 被退回；财务 = 待审核、待发放；管理员（总经理）= 待审核、待总经理审批 */
-export function todoStatuses(role: 'admin' | 'finance' | 'sales' | null): string {
-  if (role === 'admin') return 'submitted,finance_ok'
-  if (role === 'finance') return 'submitted,approved'
-  if (role === 'sales') return 'rejected'
-  return ''
+/** 等我处理的提成单的 id（列表里“待我处理”用） */
+export async function voucherTodoIds(): Promise<number[]> {
+  const { data } = await supabase.from('v_workbench').select('doc_id').eq('doc_type', 'voucher').eq('in_todo', true).limit(2000)
+  return (data ?? []).map((r) => r.doc_id).filter((x): x is number => x != null)
 }
 
 /** 把提成单打开成可以打印的页面（新窗口） */
