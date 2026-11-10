@@ -195,7 +195,7 @@ const VALUES: Record<string, string> = {
 // 界面文字（检查脚本从代码里的 t('…') / tr('…') 找）
 const UI: Record<string, string> = {
   // 菜单、页头
-  "回款管理": "Collections",
+  "销售管理": "Sales Management",
   "到账录入": "Receipts",
   "报款": "Reports",
   "车辆台账": "Vehicle ledger",
@@ -256,7 +256,15 @@ const UI: Record<string, string> = {
   "操作失败，请稍后再试": "Something went wrong. Please try again later.",
 
   // 登录
-  "到账录入 · 拆分到车 · 报款 · 车辆台账": "Receipts · Allocation · Reports · Vehicle ledger",
+  "欢迎使用": "Welcome",
+  "请用管理员邀请的邮箱登录": "Sign in with the email your admin invited",
+  "车辆销售、回款和提成": "Vehicle sales, collections and commissions,",
+  "一个系统管起来": "all in one place",
+  "每台车的合同价、已到账和余额，一目了然": "Contract price, received and balance for every vehicle at a glance",
+  "到账与报款": "Receipts & reports",
+  "业务员提交，财务审核，自动生成报款文字": "Sales submit, finance approves, and the report text is written for you",
+  "多级线上审批，不用打印签字": "Multi-level online approval, no printing or signing",
+  "导入银行流水，自动配对到账": "Import bank statements and match receipts automatically",
   "登录": "Sign in",
   "邮箱": "Email",
   "请填邮箱": "Enter your email",

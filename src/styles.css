@@ -1,3 +1,4 @@
+/* 配色和 main.tsx 里的 antd 主题是同一套：深蓝侧边栏 #0c1733、主色 #2563eb、底色 #f3f5f9 */
 html,
 body,
 #root {
@@ -5,38 +6,322 @@ body,
   margin: 0;
 }
 body {
-  background: #f5f6f8;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  background: #f3f5f9;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
-.login-wrap {
-  min-height: 100vh;
+
+/* ---------- 系统图标 + 名字（侧边栏、登录页，都在深色底上） ---------- */
+.logo {
   display: flex;
   align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.logo-mark {
+  flex: none;
+  display: block;
+  filter: drop-shadow(0 4px 10px rgba(37, 99, 235, 0.45));
+}
+.logo-text {
+  min-width: 0;
+  line-height: 1.2;
+}
+.logo-name {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+html[lang='en'] .logo-name {
+  letter-spacing: 0;
+}
+.logo-sub {
+  margin-top: 3px;
+  color: rgba(191, 219, 254, 0.7);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.logo-lg {
+  gap: 12px;
+}
+.logo-lg .logo-name {
+  font-size: 20px;
+}
+.logo-lg .logo-sub {
+  font-size: 11px;
+  letter-spacing: 2px;
+}
+
+/* ---------- 登录页：宽屏左边深蓝一栏放系统名和主要功能，右边登录框；窄屏只有登录框 ---------- */
+.login-wrap {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  background: #fff;
+}
+.login-brand {
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 44px 56px;
+  color: #fff;
+  background:
+    radial-gradient(900px 500px at -10% -20%, rgba(96, 165, 250, 0.3), transparent 60%),
+    linear-gradient(155deg, #0f1d40 0%, #102a63 58%, #1d4ed8 125%);
+}
+/* 右下角两个淡淡的圆，只是装饰 */
+.login-brand::before,
+.login-brand::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  pointer-events: none;
+}
+.login-brand::before {
+  width: 560px;
+  height: 560px;
+  right: -200px;
+  bottom: -240px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.login-brand::after {
+  width: 340px;
+  height: 340px;
+  right: -90px;
+  bottom: -130px;
+}
+.login-brand-body {
+  position: relative;
+  z-index: 1;
+  max-width: 470px;
+  margin: auto 0;
+  padding: 40px 0;
+}
+.login-brand h1 {
+  margin: 0 0 32px;
+  color: #fff;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.5px;
+}
+.login-features {
+  display: grid;
+  gap: 22px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.login-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.login-feature-icon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  padding: 24px;
+  border-radius: 10px;
+  font-size: 17px;
+  color: #bfdbfe;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.login-features b {
+  display: block;
+  margin-bottom: 2px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.login-features li span span {
+  color: rgba(226, 232, 240, 0.75);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.login-main {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 24px 48px;
+}
+.login-lang {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+}
+.login-top-logo {
+  display: none !important;
 }
 .login-card {
+  box-sizing: border-box;
   width: 380px;
   max-width: 100%;
 }
+.login-card .login-title {
+  margin: 0 0 4px;
+  color: #0f172a;
+}
+@media (max-width: 899px) {
+  .login-wrap {
+    display: block;
+    background: linear-gradient(180deg, #0f1d40 0, #17337d 250px, #f3f5f9 250px);
+  }
+  .login-brand {
+    display: none;
+  }
+  .login-main {
+    min-height: 100vh;
+    justify-content: flex-start;
+    padding: 72px 16px 32px;
+  }
+  .login-top-logo {
+    display: flex !important;
+    margin-bottom: 28px;
+  }
+  .login-card {
+    width: 420px;
+    padding: 24px 20px 12px;
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  }
+}
+
+/* ---------- 侧边栏 ---------- */
+.app-sider {
+  background: linear-gradient(180deg, #0f1d40 0%, #0b1530 100%) !important;
+}
+.app-sider .ant-layout-sider-children {
+  overflow-y: auto;
+}
+.app-logo {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px 0 22px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+/* 菜单文字 + 数字 */
+.menu-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.menu-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-label .ant-badge {
+  flex: none;
+}
+.app-sider .ant-menu-dark .ant-menu-item-selected {
+  background: linear-gradient(90deg, #2563eb, #3b82f6);
+  box-shadow: 0 6px 16px -6px rgba(37, 99, 235, 0.8);
+}
+/* 宽屏：页面往下滚时菜单不动 */
+@media (min-width: 992px) {
+  .app-sider {
+    position: sticky !important;
+    top: 0;
+    height: 100vh;
+    align-self: flex-start;
+  }
+}
+/* 窄屏：菜单盖在页面上面，旁边一层灰，点灰的地方收起（不再把页面挤到右边） */
+@media (max-width: 991.98px) {
+  .app-sider {
+    position: fixed !important;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 100;
+  }
+  .app-sider-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: rgba(15, 23, 42, 0.45);
+  }
+}
+/* 窄屏收起菜单时，展开按钮放在页头左边，不挡页面标题；打开菜单时跟在菜单右边 */
+.ant-layout-sider-zero-width-trigger {
+  top: 10px !important;
+  inset-inline-end: -40px !important;
+  z-index: 20;
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: #0f172a !important;
+  font-size: 18px !important;
+}
+.ant-layout-sider-zero-width-trigger::after {
+  border-radius: inherit;
+}
+.ant-layout-sider-zero-width-trigger:hover {
+  background: #eef2f7 !important;
+}
+.app-sider:not(.ant-layout-sider-collapsed) .ant-layout-sider-zero-width-trigger {
+  background: #0f1d40 !important;
+  color: #fff !important;
+}
+
+/* ---------- 页头 ---------- */
 .app-header {
   background: #fff !important;
-  padding: 0 16px !important;
+  padding: 0 20px !important;
   line-height: normal !important;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #eef0f3;
+  border-bottom: 1px solid #e9edf3;
 }
-.app-logo {
-  color: #fff;
+.header-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.header-avatar.ant-avatar {
+  flex: none;
+  background: #e0e9ff;
+  color: #1d4ed8;
   font-weight: 600;
-  font-size: 16px;
-  padding: 18px 20px;
-  white-space: nowrap;
 }
+.header-name {
+  max-width: 180px;
+}
+
+/* ---------- 内容：浅灰底上一张白色的页面 ---------- */
 .app-content {
   padding: 16px;
+}
+.app-page {
+  box-sizing: border-box;
+  min-height: calc(100vh - 56px - 32px);
+  padding: 20px 20px 24px;
+  background: #fff;
+  border: 1px solid #e9edf3;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
 }
 .page-title {
   display: flex;
@@ -44,11 +329,13 @@ body {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 .page-title h2 {
   margin: 0;
-  font-size: 18px;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 600;
 }
 .filters {
   margin-bottom: 12px;
@@ -131,20 +418,12 @@ body {
 .sub-card .ant-card-body {
   padding: 12px 14px;
 }
-.header-name {
-  max-width: 180px;
-}
 /* 宽表格在自己的框里左右滑，不把整页撑宽（手机上整页变宽会让弹窗超出屏幕） */
 .ant-table-content {
   overflow-x: auto;
 }
 #root {
   overflow-x: clip;
-}
-/* 窄屏收起菜单时，展开按钮放在页头左边，不挡页面标题 */
-.ant-layout-sider-zero-width-trigger {
-  top: 12px !important;
-  z-index: 20;
 }
 /* 页头的“修改密码”：窄屏只留钥匙图标 */
 @media (max-width: 768px) {
@@ -159,8 +438,28 @@ body {
   .header-logout {
     display: none;
   }
+  .header-avatar.ant-avatar {
+    display: none;
+  }
+  .app-header {
+    padding: 0 8px 0 10px !important;
+  }
+  /* 手机上页头放得下：间距和按钮左右留白收紧一点 */
+  .app-header .ant-space {
+    column-gap: 4px !important;
+  }
+  .app-header .ant-btn {
+    padding-inline: 8px;
+  }
   .app-content {
-    padding: 10px;
+    padding: 0;
+  }
+  .app-page {
+    min-height: calc(100vh - 56px);
+    padding: 12px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 }
 
