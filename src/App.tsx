@@ -10,11 +10,12 @@ import {
   SendOutlined,
   TeamOutlined,
 } from '@ant-design/icons'
-import { Badge, Button, Layout, Menu, Result, Space, Spin, Tag, Typography } from 'antd'
+import { Avatar, Badge, Button, Layout, Menu, Result, Space, Spin, Tag, Typography } from 'antd'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import ChangePassword from './components/ChangePassword'
 import LangSwitch from './components/LangSwitch'
+import Logo from './components/Logo'
 import { ROLE_LABEL, useAuth } from './lib/auth'
 import { useVoucherTodo } from './lib/commission'
 import { useI18n } from './lib/i18n'
@@ -43,11 +44,11 @@ function FullSpin() {
   )
 }
 
-/** 菜单文字 + 右边的数字（待审核 / 被退回） */
+/** 菜单文字 + 右边的数字（待审核 / 被退回）。地方不够时文字出省略号，数字总是看得见 */
 function withCount(label: string, n: number) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      {label}
+    <span className="menu-label">
+      <span className="menu-label-text">{label}</span>
       {n > 0 && <Badge count={n} size="small" />}
     </span>
   )
@@ -55,10 +56,12 @@ function withCount(label: string, n: number) {
 
 export default function App() {
   const auth = useAuth()
-  const { t, bindUser } = useI18n()
+  const { t, lang, bindUser } = useI18n()
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  // 窄屏（手机、平板竖着）时菜单盖在页面上面，点旁边的灰色区域收起
+  const [narrow, setNarrow] = useState(false)
   const uid = auth.session?.user.id ?? null
   const isSales = auth.role === 'sales'
   const pending = useSubmissionCount('pending', auth.isStaff)
@@ -125,14 +128,28 @@ export default function App() {
       ]
 
   const selected = items.find((i) => location.pathname.startsWith(i.key))?.key ?? home
+  const me = auth.profile?.full_name || auth.session.user.email || ''
+  const initial = ([...me][0] ?? '').toUpperCase()
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider breakpoint="lg" collapsedWidth={0} collapsed={collapsed} onCollapse={setCollapsed} width={180}>
-        <div className="app-logo">{t('回款管理')}</div>
+      {/* 英文菜单字长一些，侧边栏放宽，“Commission vouchers”带上两位数也放得下 */}
+      <Sider
+        className="app-sider"
+        breakpoint="lg"
+        collapsedWidth={0}
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
+        onBreakpoint={setNarrow}
+        width={lang === 'en' ? 248 : 216}
+      >
+        <div className="app-logo">
+          <Logo />
+        </div>
         <Menu
           theme="dark"
           mode="inline"
+          inlineIndent={16}
           selectedKeys={[selected]}
           items={items}
           onClick={(e) => {
@@ -141,14 +158,20 @@ export default function App() {
           }}
         />
       </Sider>
+      {narrow && !collapsed && <div className="app-sider-mask" onClick={() => setCollapsed(true)} />}
       <Layout>
         <Header className="app-header">
           <span />
           <Space size={8} wrap={false}>
             <LangSwitch />
-            <Typography.Text className="header-name" ellipsis>
-              {auth.profile?.full_name || auth.session.user.email}
-            </Typography.Text>
+            <span className="header-user">
+              <Avatar size={28} className="header-avatar">
+                {initial}
+              </Avatar>
+              <Typography.Text className="header-name" ellipsis>
+                {me}
+              </Typography.Text>
+            </span>
             <Tag color={auth.isAdmin ? 'red' : auth.isStaff ? 'blue' : 'green'} style={{ marginInlineEnd: 0 }}>
               {t(ROLE_LABEL[auth.role])}
             </Tag>
@@ -159,20 +182,22 @@ export default function App() {
           </Space>
         </Header>
         <Content className="app-content">
-          <Suspense fallback={<FullSpin />}>
-            <Routes>
-              <Route path="/workbench" element={<WorkbenchPage />} />
-              {auth.isStaff && <Route path="/receipts" element={<ReceiptsPage />} />}
-              {auth.isStaff && <Route path="/reports" element={<ReportsPage />} />}
-              {isSales && <Route path="/submit" element={<SubmitPage />} />}
-              <Route path="/vehicles" element={<VehiclesPage />} />
-              <Route path="/commission" element={<CommissionPage />} />
-              {auth.isStaff && <Route path="/reconcile" element={<ReconcilePage />} />}
-              {auth.isStaff && <Route path="/base" element={<BaseDataPage />} />}
-              {auth.isAdmin && <Route path="/users" element={<UsersPage />} />}
-              <Route path="*" element={<Navigate to={home} replace />} />
-            </Routes>
-          </Suspense>
+          <div className="app-page">
+            <Suspense fallback={<FullSpin />}>
+              <Routes>
+                <Route path="/workbench" element={<WorkbenchPage />} />
+                {auth.isStaff && <Route path="/receipts" element={<ReceiptsPage />} />}
+                {auth.isStaff && <Route path="/reports" element={<ReportsPage />} />}
+                {isSales && <Route path="/submit" element={<SubmitPage />} />}
+                <Route path="/vehicles" element={<VehiclesPage />} />
+                <Route path="/commission" element={<CommissionPage />} />
+                {auth.isStaff && <Route path="/reconcile" element={<ReconcilePage />} />}
+                {auth.isStaff && <Route path="/base" element={<BaseDataPage />} />}
+                {auth.isAdmin && <Route path="/users" element={<UsersPage />} />}
+                <Route path="*" element={<Navigate to={home} replace />} />
+              </Routes>
+            </Suspense>
+          </div>
         </Content>
       </Layout>
     </Layout>
