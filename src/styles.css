@@ -146,6 +146,12 @@ body {
   top: 12px !important;
   z-index: 20;
 }
+/* 页头的“修改密码”：窄屏只留钥匙图标 */
+@media (max-width: 768px) {
+  .header-password-text {
+    display: none;
+  }
+}
 @media (max-width: 600px) {
   .header-name {
     max-width: 90px;

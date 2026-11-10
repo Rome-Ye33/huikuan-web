@@ -32,6 +32,8 @@ export function errorText(e: unknown): string {
   if (/Email not confirmed/i.test(msg)) return tr('邮箱还没有确认，请先点确认邮件里的链接，或请管理员处理')
   if (/User already registered/i.test(msg)) return tr('这个邮箱已经注册过了，请直接登录')
   if (/Password should be at least/i.test(msg)) return tr('密码至少 6 位')
+  if (code === 'same_password' || /^New password should be different/i.test(msg)) return tr('新密码不能和当前密码一样')
+  if (code === 'weak_password' || /^Password .*(weak|easy to guess)/i.test(msg)) return tr('这个密码太简单，请换一个')
   if (/Database error saving new user/i.test(msg)) return tr('这个邮箱不在邀请名单上，请联系管理员')
   if (/Failed to fetch|NetworkError/i.test(msg)) return tr('网络连接失败，请检查网络后重试')
   return trServer(msg)

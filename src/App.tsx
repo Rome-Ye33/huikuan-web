@@ -13,6 +13,7 @@ import {
 import { Badge, Button, Layout, Menu, Result, Space, Spin, Tag, Typography } from 'antd'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import ChangePassword from './components/ChangePassword'
 import LangSwitch from './components/LangSwitch'
 import { ROLE_LABEL, useAuth } from './lib/auth'
 import { useVoucherTodo } from './lib/commission'
@@ -151,6 +152,7 @@ export default function App() {
             <Tag color={auth.isAdmin ? 'red' : auth.isStaff ? 'blue' : 'green'} style={{ marginInlineEnd: 0 }}>
               {t(ROLE_LABEL[auth.role])}
             </Tag>
+            <ChangePassword />
             <Button type="text" icon={<LogoutOutlined />} onClick={auth.signOut}>
               <span className="header-logout">{t('退出')}</span>
             </Button>

@@ -211,6 +211,18 @@ const UI: Record<string, string> = {
   "{email} 已登录，但还没有分配角色或已停用，请联系管理员。":
     "{email} is signed in, but has no role yet or has been deactivated. Please contact an admin.",
 
+  // 修改自己的密码
+  "修改密码": "Change password",
+  "保存新密码": "Save new password",
+  "当前密码": "Current password",
+  "请填当前密码": "Enter your current password",
+  "当前密码不对": "Current password is wrong",
+  "新密码": "New password",
+  "再输一次新密码": "New password again",
+  "请再输一次新密码": "Enter the new password again",
+  "两次输入的新密码不一样": "The two new passwords don't match",
+  "密码已修改，下次登录请用新密码": "Password changed. Use the new one next time you sign in.",
+
   // 通用
   "保存": "Save",
   "已保存": "Saved",
@@ -281,6 +293,8 @@ const UI: Record<string, string> = {
     "This email isn't confirmed yet. Click the link in the confirmation email, or ask an admin.",
   "这个邮箱已经注册过了，请直接登录": "This email is already registered. Please sign in.",
   "密码至少 6 位": "Password must be at least 6 characters",
+  "新密码不能和当前密码一样": "The new password must be different from the current one",
+  "这个密码太简单，请换一个": "This password is too easy to guess. Choose another one.",
   "这个邮箱不在邀请名单上，请联系管理员": "This email is not on the invite list. Please contact an admin.",
 
   // 到账列表
