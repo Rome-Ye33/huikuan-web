@@ -170,7 +170,7 @@ export default function VehicleFormModal({ open, vehicle, initial, onClose }: Pr
           </Col>
           <Col span={12}>
             {method === '分期' && (
-              <Form.Item name="down_payment_usd" label={t('首付（USD）')} rules={[{ required: true, message: t('分期必须填首付') }]}>
+              <Form.Item name="down_payment_usd" label={t('首付（USD）')} extra={t('可以先空着，补上以前不能发车')}>
                 <InputNumber min={0} precision={2} style={{ width: '100%' }} prefix="$" />
               </Form.Item>
             )}
