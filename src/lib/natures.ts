@@ -6,7 +6,7 @@ import type { Nature, Vehicle } from './supabase'
 export function defaultNature(v: Pick<Vehicle, 'payment_method' | 'received_usd' | 'down_payment_usd'>): string {
   const received = num(v.received_usd)
   if (v.payment_method === '预付') return '预付款'
-  if (v.payment_method === '分期') return received < num(v.down_payment_usd) ? '首付款' : '分期款'
+  if (v.payment_method === '分期') return v.down_payment_usd == null ? (received > 0 ? '分期款' : '首付款') : received < num(v.down_payment_usd) ? '首付款' : '分期款'
   return received > 0 ? '全款尾款' : '全款'
 }
 

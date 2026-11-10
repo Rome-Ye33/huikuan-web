@@ -156,8 +156,8 @@ export default function VehicleImport({ open, onClose }: { open: boolean; onClos
       parsed.map((r) => {
         const exists = !!existing?.has(r.vin)
         const extra: Issue[] = []
-        if (!exists && r.payment_method === '分期' && r.down_payment_usd === null) extra.push({ key: '分期的车要填首付' })
-        const status: Status = r.errors.length || extra.length ? 'error' : exists ? (update ? 'update' : 'skip') : 'new'
+        if (!exists && r.payment_method === '分期' && r.down_payment_usd === null) extra.push({ key: '分期没填首付：先不能发车，补上首付后再判断' })
+        const status: Status = r.errors.length ? 'error' : exists ? (update ? 'update' : 'skip') : 'new'
         return { ...r, status, extra }
       }),
     [parsed, existing, update],
@@ -238,12 +238,12 @@ export default function VehicleImport({ open, onClose }: { open: boolean; onClos
       render: (_, r) => (
         <div>
           <Tag color={STATUS[r.status][0]}>{STATUS[r.status][1]}</Tag>
-          {[...r.errors, ...r.extra].map((e, i) => (
+          {r.errors.map((e, i) => (
             <div key={`e${i}`} className="text-danger">
               {issueText(e)}
             </div>
           ))}
-          {r.warnings.map((w, i) => (
+          {[...r.warnings, ...r.extra].map((w, i) => (
             <div key={`w${i}`} className="text-warn">
               {issueText(w)}
             </div>
@@ -295,7 +295,7 @@ export default function VehicleImport({ open, onClose }: { open: boolean; onClos
     >
       <Card size="small" title={t('1. 选文件')} style={{ marginBottom: 12 }} extra={<Button icon={<DownloadOutlined />} onClick={downloadTemplate}>{t('下载模板')}</Button>}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-          {t('一行一台车。必填：大架号、车型、客户、合同价USD；分期的车要填首付。期初已到账USD 是系统上线前这台车已经收到的钱，期初优惠USD 是已经给的优惠。客户、业务员系统里没有的会新建；已在系统里的车默认跳过，可以多次导入。')}
+          {t('一行一台车。必填：大架号、车型、客户、合同价USD；分期的车首付可以先空着（补上以前不能发车）。期初已到账USD 是系统上线前这台车已经收到的钱，期初优惠USD 是已经给的优惠。客户、业务员系统里没有的会新建；已在系统里的车默认跳过，可以多次导入。')}
         </Typography.Paragraph>
         <Upload.Dragger
           accept=".xlsx,.xls,.csv"
