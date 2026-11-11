@@ -72,6 +72,7 @@ const VALUES: Record<string, string> = {
   "这条提交刚被业务员改过或撤回，或者已经审核过了，请关掉后重新打开":
     "The salesperson has just changed or withdrawn this submission, or it has already been reviewed. Close it and open it again.",
   "这条银行流水已经配对过了，请刷新后再试": "This bank line is already matched. Refresh and try again.",
+  "这笔到账已和银行流水配对，账户、日期、金额不能改；要改请先在银行对账页取消配对": "This receipt is matched to a bank statement line, so its account, date and amount can't be changed. Unmatch it on the Bank reconciliation page first.",
   "邮箱 {email} 不在邀请名单上，请联系管理员": "{email} is not on the invite list. Please contact an admin.",
   // 账号服务（Edge Function account）的报错
   "请先登录": "Please sign in first",
@@ -459,8 +460,10 @@ const UI: Record<string, string> = {
   "系统里已经有同账户、同金额、日期相近的到账，可能已经录过了":
     "There is already a receipt with the same account and amount on a nearby date. It may have been entered already.",
   "就是这笔，关联": "That's it, link it",
-  "这笔是从银行对账单生成的，保存后会自动和那条流水配对。":
-    "This receipt comes from a bank line and will be matched to it when you save.",
+  "这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。":
+    "This receipt comes from a bank statement line: account, date and amount follow the bank and can't be changed. After saving it is matched to that line.",
+  "这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。":
+    "This receipt is matched to a bank statement line ({date} · {cur} {amt}): account, date, amount and the summary, reference and cheque number given by the bank can't be changed. If it really is wrong, unmatch it first under Bank reconciliation → All bank lines.",
   "到账信息": "Receipt details",
   "请选收款账户": "Choose the receiving account",
   "搜索账户，如 ECO 8651": "Search accounts, e.g. ECO 8651",

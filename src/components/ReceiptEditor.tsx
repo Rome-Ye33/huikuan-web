@@ -56,6 +56,25 @@ export type ReceiptPrefill = {
   line_id?: number
 }
 
+/** 配对的银行流水里，按银行为准的几项 */
+type BankFacts = {
+  line_date: string | null
+  amount_orig: number | null
+  currency?: string | null
+  payer_summary?: string | null
+  bank_ref?: string | null
+  cheque_no?: string | null
+}
+type BankSource = { line_date?: string | null; amount_orig?: number | string | null; currency?: string | null; payer_summary?: string | null; bank_ref?: string | null; cheque_no?: string | null }
+const bankFacts = (l: BankSource): BankFacts => ({
+  line_date: l.line_date ?? null,
+  amount_orig: l.amount_orig != null ? num(l.amount_orig) : null,
+  currency: l.currency ?? null,
+  payer_summary: l.payer_summary ?? null,
+  bank_ref: l.bank_ref ?? null,
+  cheque_no: l.cheque_no ?? null,
+})
+
 type Props = {
   open: boolean
   receiptId?: number | null
@@ -132,6 +151,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const [reqNote, setReqNote] = useState('')
   /** 表里的内容是智能填表认出来的第几笔（保存后记成已录） */
   const [aiIndex, setAiIndex] = useState<number | null>(null)
+  /** 配对上的银行流水（由流水生成的新到账按预填算）：账户、日期、金额和银行给的摘要、参考号、支票号按银行为准，锁住不能改 */
+  const [bankLine, setBankLine] = useState<BankFacts | null>(null)
   const rateTouched = useRef(false)
 
   const accountId = Form.useWatch('account_id', form)
@@ -141,6 +162,9 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const currency = account?.currency ?? ''
   const isUsd = currency === 'USD'
   const readOnly = !isStaff
+  const bankLocked = !!bankLine
+  /** 银行流水里有这一项（非空）就不让改；银行没给的可以补 */
+  const bankGave = (k: 'payer_summary' | 'bank_ref' | 'cheque_no') => !!bankLine?.[k]?.trim()
   // 到账自己的审批：录入后按录入时的审批流一级一级审，批完才算到账（才进余额、报表，才能报款）
   const rStatus = receiptStatus(receipt?.status)
   const rStep = receipt?.step ?? null
@@ -191,6 +215,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       const rec = r.data
       setReceipt(rec)
       setCurrentId(id)
+      if (rec.bank_line_id) {
+        const l = await supabase.from('v_statement_lines').select('*').eq('id', rec.bank_line_id).maybeSingle()
+        setBankLine(l.data ? bankFacts(l.data) : { line_date: null, amount_orig: null })
+      } else setBankLine(null)
       setReportText(tx.data ?? '')
       setAttachments(rec.attachments ?? [])
       rateTouched.current = true
@@ -248,6 +276,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     setReportText('')
     setVehicles(new Map())
     form.resetFields()
+    setBankLine(prefill?.line_id ? bankFacts({ ...prefill, line_date: prefill.receipt_date ?? null }) : null)
     if (submission) {
       setReview(submission)
       rateTouched.current = submission.fx_rate != null
@@ -1160,8 +1189,21 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             }
           />
         )}
-        {prefill?.line_id && !currentId && !review && (
-          <Alert type="info" showIcon style={{ marginBottom: 12 }} title={t('这笔是从银行对账单生成的，保存后会自动和那条流水配对。')} />
+        {bankLine && !review && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={
+              currentId
+                ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。', {
+                    date: bankLine.line_date ?? '',
+                    cur: bankLine.currency ?? currency,
+                    amt: money(bankLine.amount_orig ?? 0),
+                  })
+                : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
+            }
+          />
         )}
         {isAdmin && !currentId && !receiptId && !review && !submission && (
           <AiFill
@@ -1179,12 +1221,17 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             <Row gutter={12}>
               <Col xs={24} md={10}>
                 <Form.Item name="account_id" label={t('收款账户')} rules={[{ required: true, message: t('请选收款账户') }]}>
-                  <Select showSearch={{ optionFilterProp: 'label' }} options={accountOptions(accounts)} placeholder={t('搜索账户，如 ECO 8651')} />
+                  <Select
+                    showSearch={{ optionFilterProp: 'label' }}
+                    options={accountOptions(accounts)}
+                    placeholder={t('搜索账户，如 ECO 8651')}
+                    disabled={bankLocked || readOnly}
+                  />
                 </Form.Item>
               </Col>
               <Col xs={12} md={6}>
                 <Form.Item name="receipt_date" label={t('到账日期')} rules={[{ required: true, message: t('请选日期') }]}>
-                  <DatePicker style={{ width: '100%' }} allowClear={false} />
+                  <DatePicker style={{ width: '100%' }} allowClear={false} disabled={bankLocked || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={12} md={8}>
@@ -1193,7 +1240,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                   label={currency ? t('到账金额（{cur}）', { cur: currency }) : t('到账金额')}
                   rules={[{ required: true, message: t('请填金额') }]}
                 >
-                  <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
+                  <InputNumber min={0.01} precision={2} style={{ width: '100%' }} disabled={bankLocked || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={12} md={6}>
@@ -1216,17 +1263,17 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
               </Col>
               <Col xs={12} md={6}>
                 <Form.Item name="cheque_no" label={t('支票号')}>
-                  <Input />
+                  <Input disabled={bankGave('cheque_no') || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
                 <Form.Item name="payer_summary" label={t('付款方 / 银行摘要')}>
-                  <Input placeholder={t('如 TRF FROM ABC LTD')} />
+                  <Input placeholder={t('如 TRF FROM ABC LTD')} disabled={bankGave('payer_summary') || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={8}>
                 <Form.Item name="bank_ref" label={t('银行参考号（有就填）')}>
-                  <Input />
+                  <Input disabled={bankGave('bank_ref') || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={16}>
