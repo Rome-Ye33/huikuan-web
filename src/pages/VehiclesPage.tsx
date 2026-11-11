@@ -26,6 +26,7 @@ import VehicleFormModal from '../components/VehicleFormModal'
 import VehicleImport from '../components/VehicleImport'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
+import { RECEIPT_STATUS_COLOR, RECEIPT_STATUS_LABEL, receiptStatus } from '../lib/flow'
 import { cleanSearch, money, num, todayAccra, usd } from '../lib/format'
 import { useRefData } from '../lib/refdata'
 import { fetchAll, supabase } from '../lib/supabase'
@@ -141,6 +142,7 @@ export default function VehiclesPage() {
       .select('id', { count: 'exact', head: true })
       .is('vehicle_id', null)
       .in('nature_kind', ['payment', 'opening'])
+      .or('receipt_status.is.null,receipt_status.eq.approved') // 审批中、退回的到账还不算
     setUnlockedCount(count ?? 0)
   }, [])
 
@@ -385,6 +387,7 @@ function UnlockedDrawer({ open, onClose, onChanged }: { open: boolean; onClose: 
       .select('*')
       .is('vehicle_id', null)
       .in('nature_kind', ['payment', 'opening'])
+      .or('receipt_status.is.null,receipt_status.eq.approved') // 审批中、退回的到账还不算
       .order('claim_date', { ascending: false })
       .order('id', { ascending: false })
       .limit(2000)
@@ -619,11 +622,12 @@ function VehicleDrawer({
                 width: 150,
                 render: (no: string | null, c) =>
                   no ? (
-                    isStaff ? (
-                      <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a>
-                    ) : (
-                      no
-                    )
+                    <Space size={4}>
+                      {isStaff ? <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a> : no}
+                      {receiptStatus(c.receipt_status) !== 'approved' && (
+                        <Tag color={RECEIPT_STATUS_COLOR[receiptStatus(c.receipt_status)]}>{t(RECEIPT_STATUS_LABEL[receiptStatus(c.receipt_status)])}</Tag>
+                      )}
+                    </Space>
                   ) : isStaff ? (
                     <Popconfirm title={t('删除这条记录？')} onConfirm={() => removeManual(c.id as number)} disabled={!isStaff}>
                       <a className="text-danger">{t('删除')}</a>

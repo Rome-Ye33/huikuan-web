@@ -60,6 +60,7 @@ export type Database = {
         Row: {
           active: boolean
           created_at: string
+          doc_type: string
           key: string
           name: string
           name_en: string | null
@@ -68,6 +69,7 @@ export type Database = {
         Insert: {
           active?: boolean
           created_at?: string
+          doc_type?: string
           key: string
           name: string
           name_en?: string | null
@@ -76,6 +78,7 @@ export type Database = {
         Update: {
           active?: boolean
           created_at?: string
+          doc_type?: string
           key?: string
           name?: string
           name_en?: string | null
@@ -166,12 +169,14 @@ export type Database = {
           account_id: number
           amount_orig: number
           amount_usd: number | null
+          approved_at: string | null
           attachments: string[]
           bank_ref: string | null
           cheque_no: string | null
           created_at: string
           created_by: string | null
           currency: string
+          flow: Json
           fx_rate: number
           id: number
           import_batch_id: number | null
@@ -181,22 +186,30 @@ export type Database = {
           payer_summary: string | null
           receipt_date: string
           receipt_no: string
+          reject_note: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejected_name: string | null
           report_date: string | null
           report_override: string | null
           reported_at: string | null
           reported_by: string | null
+          status: string
+          step: string | null
           updated_at: string
         }
         Insert: {
           account_id: number
           amount_orig: number
           amount_usd?: number | null
+          approved_at?: string | null
           attachments?: string[]
           bank_ref?: string | null
           cheque_no?: string | null
           created_at?: string
           created_by?: string | null
           currency: string
+          flow?: Json
           fx_rate: number
           id?: never
           import_batch_id?: number | null
@@ -206,22 +219,30 @@ export type Database = {
           payer_summary?: string | null
           receipt_date: string
           receipt_no: string
+          reject_note?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejected_name?: string | null
           report_date?: string | null
           report_override?: string | null
           reported_at?: string | null
           reported_by?: string | null
+          status?: string
+          step?: string | null
           updated_at?: string
         }
         Update: {
           account_id?: number
           amount_orig?: number
           amount_usd?: number | null
+          approved_at?: string | null
           attachments?: string[]
           bank_ref?: string | null
           cheque_no?: string | null
           created_at?: string
           created_by?: string | null
           currency?: string
+          flow?: Json
           fx_rate?: number
           id?: never
           import_batch_id?: number | null
@@ -231,10 +252,16 @@ export type Database = {
           payer_summary?: string | null
           receipt_date?: string
           receipt_no?: string
+          reject_note?: string | null
+          rejected_at?: string | null
+          rejected_by?: string | null
+          rejected_name?: string | null
           report_date?: string | null
           report_override?: string | null
           reported_at?: string | null
           reported_by?: string | null
+          status?: string
+          step?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -1166,6 +1193,7 @@ export type Database = {
           account_name: string | null
           amount_orig: number | null
           amount_usd: number | null
+          approved_at: string | null
           attachments: string[] | null
           bank_line_id: number | null
           bank_ref: string | null
@@ -1179,6 +1207,7 @@ export type Database = {
           created_at: string | null
           created_by: string | null
           currency: string | null
+          flow: Json | null
           fx_rate: number | null
           id: number | null
           import_batch_id: number | null
@@ -1192,10 +1221,16 @@ export type Database = {
           pending_usd: number | null
           receipt_date: string | null
           receipt_no: string | null
+          reject_note: string | null
+          rejected_at: string | null
+          rejected_by: string | null
+          rejected_name: string | null
           report_date: string | null
           report_override: string | null
           reported_at: string | null
           reported_by: string | null
+          status: string | null
+          step: string | null
           updated_at: string | null
         }
         Relationships: [
@@ -1320,6 +1355,7 @@ export type Database = {
           receipt_amount_orig: number | null
           receipt_id: number | null
           receipt_no: string | null
+          receipt_status: string | null
           report_note: string | null
           salesperson_id: number | null
           salesperson_name: string | null
@@ -1626,7 +1662,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      receipt_action: {
+        Args: { p_action: string; p_id: number; p_note?: string }
+        Returns: undefined
+      }
       receipt_report_text: { Args: { p_receipt_id: number }; Returns: string }
+      save_approval_flow: {
+        Args: { p_doc_type: string; p_steps: Json }
+        Returns: undefined
+      }
       save_claims: {
         Args: { p_claims: Json; p_receipt_id: number }
         Returns: undefined
