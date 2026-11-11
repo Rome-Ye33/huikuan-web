@@ -1,6 +1,5 @@
 import {
   AppstoreOutlined,
-  AuditOutlined,
   BankOutlined,
   CarOutlined,
   DatabaseOutlined,
@@ -26,7 +25,6 @@ import { useTodoCount } from './lib/workbench'
 import LoginPage from './pages/LoginPage'
 
 const ReceiptsPage = lazy(() => import('./pages/ReceiptsPage'))
-const ReportsPage = lazy(() => import('./pages/ReportsPage'))
 const VehiclesPage = lazy(() => import('./pages/VehiclesPage'))
 const ReconcilePage = lazy(() => import('./pages/ReconcilePage'))
 const BaseDataPage = lazy(() => import('./pages/BaseDataPage'))
@@ -123,7 +121,6 @@ export default function App() {
     ? [
         workbench,
         { key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) },
-        { key: '/reports', icon: <AuditOutlined />, label: t('报款') },
         { key: '/vehicles', icon: <CarOutlined />, label: t('车辆台账') },
         { key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) },
         { key: '/reconcile', icon: <BankOutlined />, label: t('银行对账') },
@@ -198,7 +195,6 @@ export default function App() {
               <Routes>
                 <Route path="/workbench" element={<WorkbenchPage />} />
                 {auth.isStaff && <Route path="/receipts" element={<ReceiptsPage />} />}
-                {auth.isStaff && <Route path="/reports" element={<ReportsPage />} />}
                 {isSales && <Route path="/submit" element={<SubmitPage />} />}
                 <Route path="/vehicles" element={<VehiclesPage />} />
                 <Route path="/commission" element={<CommissionPage />} />

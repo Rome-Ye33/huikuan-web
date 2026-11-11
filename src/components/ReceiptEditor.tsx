@@ -21,6 +21,8 @@ import {
 } from 'antd'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { aiSession } from '../lib/aiFill'
+import type { AiFilled } from '../lib/aiFill'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { dateTime, money, num, round2, todayAccra, usd } from '../lib/format'
@@ -32,6 +34,7 @@ import type { Submission, SubmissionClaim } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import type { Receipt, Vehicle } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
+import AiFill from './AiFill'
 import CustomerSelect from './CustomerSelect'
 import ReportBox from './ReportBox'
 import VehicleFormModal from './VehicleFormModal'
@@ -70,8 +73,10 @@ type ClaimDraft = {
   /** 大架号未锁定（到账款还不知道是哪台车）：数量与设备型号、哪个业务员的 */
   model_desc?: string
   salesperson_id?: number | null
-  /** 业务员提交时这一行手填的客户、车型、大架号（车不在系统里时） */
+  /** 业务员提交时这一行手填的客户、车型、大架号（车不在系统里时）；智能填表没对上车时也放在这里 */
   sub?: SubmissionClaim
+  /** 这一行是智能填表填的 */
+  ai?: boolean
 }
 
 type FormValues = {
@@ -111,6 +116,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const [dupes, setDupes] = useState<Receipt[]>([])
   const [rejecting, setRejecting] = useState(false)
   const [rejectReason, setRejectReason] = useState('')
+  /** 表里的内容是智能填表认出来的第几笔（保存后记成已录） */
+  const [aiIndex, setAiIndex] = useState<number | null>(null)
   const rateTouched = useRef(false)
 
   const accountId = Form.useWatch('account_id', form)
@@ -188,6 +195,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     setDirty(false)
     setDupes([])
     setReview(null)
+    setAiIndex(null)
     if (receiptId) {
       void load(receiptId)
       return
@@ -321,6 +329,63 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     })
   }
 
+  /** 智能填表：把认出来的一笔填进表里。手工填过内容的先问一句再盖掉 */
+  const applyAi = async (f: AiFilled, index: number, files: string[]): Promise<boolean> => {
+    // 从银行对账单生成的：账户、日期、金额按银行流水，不改
+    const locked = !!prefill?.line_id
+    const typed =
+      aiIndex === null &&
+      (claims.some((c) => c.nature || c.vehicle_id || c.customer_id || num(c.amount_orig) > 0) ||
+        (!locked && (form.getFieldValue('account_id') != null || num(form.getFieldValue('amount_orig')) > 0)))
+    if (typed) {
+      const ok = await new Promise<boolean>((resolve) =>
+        modal.confirm({
+          title: t('表里已经填的内容会换成识别结果，继续？'),
+          okText: t('继续'),
+          cancelText: t('取消'),
+          onOk: () => resolve(true),
+          onCancel: () => resolve(false),
+        }),
+      )
+      if (!ok) return false
+    }
+    const h = f.header
+    const keep = (name: 'payer_summary' | 'cheque_no' | 'bank_ref', v?: string) =>
+      locked && form.getFieldValue(name) ? form.getFieldValue(name) : (v ?? '')
+    const patch: FormValues = {
+      payer_summary: keep('payer_summary', h.payer_summary),
+      cheque_no: keep('cheque_no', h.cheque_no),
+      bank_ref: keep('bank_ref', h.bank_ref),
+    }
+    if (!locked) {
+      patch.account_id = h.account_id
+      patch.receipt_date = dayjs(h.receipt_date ?? todayAccra())
+      patch.amount_orig = h.amount_orig ?? null
+    }
+    const acc = accountById.get(locked ? form.getFieldValue('account_id') : h.account_id)
+    if (acc?.currency === 'USD') patch.fx_rate = 1
+    else if (h.fx_rate) {
+      patch.fx_rate = h.fx_rate
+      rateTouched.current = true
+    } else {
+      // 材料里没写汇率：按汇率表带
+      rateTouched.current = false
+      patch.fx_rate = null
+      const d = (locked ? form.getFieldValue('receipt_date') : patch.receipt_date)?.format('YYYY-MM-DD') ?? todayAccra()
+      if (acc)
+        void lookupRate(acc.currency, d).then((r) => {
+          if (!rateTouched.current) form.setFieldValue('fx_rate', r)
+        })
+    }
+    form.setFieldsValue(patch)
+    rememberVehicles(f.vehicles)
+    setClaims(f.claims.length ? f.claims.map((c) => ({ ...c, key: newKey(), ai: true })) : [{ key: newKey() }])
+    if (files.length) setAttachments((a) => (a.length ? a : files))
+    setAiIndex(index)
+    setDirty(true)
+    return true
+  }
+
   const addRow = () => {
     setDirty(true)
     setClaims((rows) => [...rows, { key: newKey(), amount_orig: remaining > 0 ? remaining : null }])
@@ -399,6 +464,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       setReview(null)
       notifySubmissionsChanged()
     } else message.success(currentId ? t('已保存') : t('已保存，报款文字在下面'))
+    if (aiIndex !== null) {
+      aiSession.markSaved(aiIndex)
+      setAiIndex(null)
+    }
     setChanged(true)
     await load(data)
   }
@@ -524,11 +593,12 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             </Space.Compact>
             {!v && r.sub && (
               <div className="text-warn" style={{ fontSize: 12 }}>
-                {t('业务员填的：{info}', {
-                  info: [r.sub.customer_name, r.sub.model, r.sub.vin ? t('大架号 {vin}', { vin: r.sub.vin }) : t('大架号未定')]
+                {(() => {
+                  const info = [r.sub.customer_name, r.sub.model, r.sub.vin ? t('大架号 {vin}', { vin: r.sub.vin }) : t('大架号未定')]
                     .filter(Boolean)
-                    .join(' · '),
-                })}
+                    .join(' · ')
+                  return r.ai ? t('识别到的：{info}', { info }) : t('业务员填的：{info}', { info })
+                })()}
               </div>
             )}
             {v ? (
@@ -722,6 +792,17 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
         {prefill?.line_id && !currentId && !review && (
           <Alert type="info" showIcon style={{ marginBottom: 12 }} title={t('这笔是从银行对账单生成的，保存后会自动和那条流水配对。')} />
         )}
+        {isStaff && !currentId && !receiptId && !review && !submission && (
+          <AiFill
+            attachments={attachments}
+            lockedAmount={prefill?.line_id ? (prefill.amount_orig ?? null) : null}
+            onAttach={(p) => {
+              setAttachments((a) => [...a, ...p])
+              setDirty(true)
+            }}
+            onFill={applyAi}
+          />
+        )}
         <Card size="small" title={t('到账信息')} style={{ marginBottom: 12 }}>
           <Form form={form} layout="vertical" disabled={readOnly} onValuesChange={() => setDirty(true)}>
             <Row gutter={12}>
@@ -861,7 +942,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                 vin: newVehicleRow.sub.vin,
                 model: newVehicleRow.sub.model,
                 customer_id: newVehicleRow.sub.customer_id,
-                salesperson_id: review?.salesperson_id,
+                salesperson_id: review?.salesperson_id ?? newVehicleRow.salesperson_id,
               }
             : review
               ? { salesperson_id: review.salesperson_id }

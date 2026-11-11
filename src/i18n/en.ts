@@ -85,6 +85,31 @@ const VALUES: Record<string, string> = {
     "Could not sign in to the sending mailbox. Ask an admin to check the sending address and its app password: {reason}",
   "连不上发信服务器：{reason}": "Could not reach the mail server: {reason}",
   "邮件没有发出去：{reason}": "The email was not sent: {reason}",
+  // 智能填表（Edge Function receipt-ai）的报错
+  "只有财务和管理员能用智能填表": "Only finance and admins can use Smart fill",
+  "智能填表还没开通：请管理员先在 Supabase 的密钥设置里加上 ANTHROPIC_API_KEY":
+    "Smart fill is not set up yet. An admin needs to add ANTHROPIC_API_KEY to the Supabase secrets first.",
+  "文字太长了（最多 {n} 字），请分几次贴": "The text is too long (max {n} characters). Paste it in parts.",
+  "一次最多识别 {n} 个图片或 PDF": "At most {n} images or PDFs can be read at a time",
+  "只能识别图片（JPG、PNG、WebP、GIF）和 PDF": "Only images (JPG, PNG, WebP, GIF) and PDFs can be read",
+  "有一个文件太大了（最多 5 MB），请截小一点再传": "One file is too large (max 5 MB). Crop it smaller and upload again.",
+  "文件加起来太大了（最多 8 MB），请少传几个": "The files are too large in total (max 8 MB). Upload fewer.",
+  "Claude 不肯处理这段内容，请手工录入": "Claude declined to process this content. Please enter it by hand.",
+  "内容太多，一次认不完，请分几次贴": "Too much content to read in one go. Paste it in parts.",
+  "Claude 返回的内容看不懂，请再试一次": "Claude's reply could not be read. Please try again.",
+  "Claude 识别超时了，请再试一次": "Claude took too long. Please try again.",
+  "连不上 Claude，请稍后再试": "Could not reach Claude. Try again later.",
+  "Claude API 密钥不对或已经失效，请管理员检查 ANTHROPIC_API_KEY":
+    "The Claude API key is wrong or no longer valid. Ask an admin to check ANTHROPIC_API_KEY.",
+  "Claude API 密钥没有权限用这个模型，请管理员检查": "The Claude API key is not allowed to use this model. Ask an admin to check.",
+  "Claude 没有这个模型：{model}，请管理员检查 CLAUDE_MODEL": "Claude has no model named {model}. Ask an admin to check CLAUDE_MODEL.",
+  "Claude 这会儿请求太多，请过一分钟再试": "Claude is getting too many requests right now. Try again in a minute.",
+  "Claude 那边暂时出了问题，请稍后再试": "Claude is having a temporary problem. Try again later.",
+  "Claude API 账户余额不足，请管理员到 Claude 后台充值":
+    "The Claude API account is out of credit. Ask an admin to top it up in the Claude Console.",
+  "内容太大，Claude 收不下，请少传几张图": "The content is too large for Claude. Upload fewer images.",
+  "Claude 没法处理这次请求：{reason}": "Claude could not process this request: {reason}",
+  "只接受 POST": "POST only",
   // 提成单状态
   "草稿": "Draft",
   "待销售部审核": "Awaiting Sales Dept",
@@ -171,7 +196,7 @@ const VALUES: Record<string, string> = {
   "期初已到账、期初优惠不能是负数": "Opening paid and opening discount can't be negative",
   "期初已到账加优惠超过合同价": "Opening paid plus discount is more than the contract price",
   "分期没填首付：先不能发车，补上首付后再判断": "No down payment given: cannot ship until one is entered",
-  "只有管理员可以批量导入": "Only an admin can bulk import",
+  "只有管理员和财务可以批量导入": "Only admins and finance can bulk import",
   "请选期初日期": "Pick the opening date",
   "第 {n} 行：大架号不能为空": "Row {n}: VIN is required",
   "第 {n} 行：大架号 {vin} 在文件里重复": "Row {n}: VIN {vin} appears twice in the file",
@@ -255,11 +280,17 @@ const UI: Record<string, string> = {
   "保存": "Save",
   "已保存": "Saved",
   "删除": "Delete",
+  "删除选中 {n} 台": "Delete {n} selected",
+  "删除选中的 {n} 台车？有到账记录、在提成单上的不会删。": "Delete the {n} selected vehicles? Vehicles with receipts or on a commission voucher are kept.",
+  "已删除 {n} 台": "Deleted {n} vehicles",
+  "已删除 {n} 台；{m} 台没删：{list}": "Deleted {n} vehicles; {m} kept: {list}",
+  "有到账记录": "has receipts",
+  "在提成单上": "on a commission voucher",
+  "有待审核的到账提交": "has a pending receipt submission",
   "已删除": "Deleted",
   "修改": "Edit",
   "取消": "Cancel",
   "关联": "Link",
-  "打开": "Open",
   "选择": "Select",
   "全部": "All",
   "状态": "Status",
@@ -439,6 +470,74 @@ const UI: Record<string, string> = {
     "Say what is wrong and how to fix it. The salesperson will see this and resubmit after fixing it.",
   "如：凭证看不清，请重新拍；金额和银行对不上": "e.g. The proof is unclear, please take a new photo; the amount doesn't match the bank",
 
+  // 到账编辑：智能填表（贴群消息、水单截图，Claude 识别后自动填表）
+  "智能填表": "Smart fill",
+  "智能填表还没开通": "Smart fill is not set up yet",
+  "到 Supabase 后台的 Edge Functions → Secrets，加一条 ANTHROPIC_API_KEY（Claude 的 API 密钥），加好就能用。":
+    "In the Supabase dashboard, open Edge Functions → Secrets and add ANTHROPIC_API_KEY (a Claude API key). It works as soon as the key is added.",
+  "请管理员开通后再用，现在先手工录入。": "Ask an admin to set it up. For now, enter the receipt by hand.",
+  "把业务员在群里发的回款消息、银行的 Credit Alert 贴在下面，水单截图传上来，点“识别并填表”，下面的表会自动填好。":
+    "Paste the salesperson's payment message or the bank's credit alert below, upload the bank slip screenshots, then click “Read and fill”. The form below is filled in for you.",
+  "例如：WELL MOTORS 付了一台比亚迪秦预付款全款，汇率：12，业务：BOSS，编号：LC0C76C48S4120785":
+    "e.g. WELL MOTORS paid in full for one BYD Qin, rate: 12, salesperson: BOSS, VIN: LC0C76C48S4120785",
+  "识别并填表": "Read and fill",
+  "上传水单截图": "Upload bank slip",
+  "正在识别，一般要十几秒到一分钟…": "Reading… this usually takes 10 to 60 seconds",
+  "会连同“凭证”里的 {n} 个图片、PDF 一起识别": "The {n} image(s) / PDF(s) under Proof will be read as well",
+  "截图也可以直接 Ctrl+V 粘贴": "You can also paste a screenshot with Ctrl+V",
+  "请贴上回款消息，或者传水单截图": "Paste the payment message, or upload a bank slip screenshot",
+  "没认出到账，请手工录入": "No receipt was found. Please enter it by hand.",
+  "上次识别到 {n} 笔到账，还有 {m} 笔没保存": "The last read found {n} receipt(s); {m} not saved yet",
+  "已按识别结果填好，请逐项核对后再保存": "The form is filled in. Check every field before you save.",
+  "识别到 {n} 笔到账，一张表录一笔：这一笔保存后，再点“新建到账”接着录下一笔":
+    "{n} receipts were found. One form holds one receipt: save this one, then click “New receipt” to enter the next.",
+  "日期没认出": "Date not found",
+  "金额没认出": "Amount not found",
+  "已填在下面": "Filled in below",
+  "填这一笔": "Fill this one",
+  "识别可能有错：金额、账户、大架号请对着凭证核对后再保存。":
+    "The reading can be wrong: check the amount, account and VIN against the proof before saving.",
+  "清掉识别结果": "Clear the result",
+  "表里已经填的内容会换成识别结果，继续？": "What you've entered will be replaced by the result. Continue?",
+  "继续": "Continue",
+  "识别到的：{info}": "Read from the material: {info}",
+  "识别到的金额 {a} 和银行流水的 {b} 不一样，表里按银行流水的":
+    "The amount read ({a}) differs from the bank line ({b}). The form keeps the bank line's amount.",
+  "凭证超过 {n} 个，只识别了前 {n} 个": "More than {n} proofs; only the first {n} were read",
+  "凭证 {name} 读不出来，没有识别": "Proof {name} could not be opened, so it was not read",
+  "凭证 {name} 太大（PDF 最多 4 MB），没有识别": "Proof {name} is too large (PDF max 4 MB), so it was not read",
+  "凭证 {name} 这种图片浏览器打不开，没有识别，请换成截图或 JPG":
+    "The browser can't open proof {name}, so it was not read. Use a screenshot or JPG instead.",
+  "凭证加起来太大，{name} 没有识别": "The proofs are too large in total, so {name} was not read",
+  "没认出收款账户（材料里写的是“{text}”），请手选": "The receiving account was not recognised (the material says “{text}”). Choose it yourself.",
+  "没认出收款账户，请手选": "The receiving account was not recognised. Choose it yourself.",
+  "收款账户是 {a} 账户，识别到的币种是 {b}，请核对": "The receiving account is in {a} but the currency read is {b}. Please check.",
+  "没认出到账日期，先按今天，请核对": "The receipt date was not found. Today is used for now; please check.",
+  "没认出到账金额，请手填": "The amount received was not found. Enter it yourself.",
+  "材料里没写汇率，请核对汇率": "The material gives no exchange rate. Please check the rate.",
+  "第 {n} 行起：{amt} 付 {k} 台车，材料里没写每台多少，按各台的余额分的，请核对":
+    "From line {n}: {amt} pays for {k} vehicles and the material doesn't say how much each. Split by each vehicle's balance; please check.",
+  "第 {n} 行起：{amt} 付 {k} 台车，材料里没写每台多少，先平均分了，请改成实际金额":
+    "From line {n}: {amt} pays for {k} vehicles and the material doesn't say how much each. Split evenly for now; change to the real amounts.",
+  "第 {n} 行没认出金额，请填": "Line {n}: the amount was not found. Enter it.",
+  "大架号 {a} 按后几位对上了系统里的 {b}，请核对": "VIN {a} was matched by its last digits to {b}. Please check.",
+  "大架号 {a} 系统里没有，对上了相近的 {b}（字母 O、I 当成了数字），请核对":
+    "VIN {a} is not in the system; matched the similar {b} (letters O and I read as digits). Please check.",
+  "大架号 {vin} 在系统里是“{a}”的车，材料里写的客户是“{b}”，请核对":
+    "VIN {vin} belongs to “{a}” in the system, but the material says the customer is “{b}”. Please check.",
+  "大架号 {vin} 在系统里的业务员是 {a}，材料里写的是 {b}，请核对":
+    "VIN {vin} has salesperson {a} in the system, but the material says {b}. Please check.",
+  "大架号 {vin} 系统里没找到：可以点 + 新增这台车，或者先记到客户名下以后再选车":
+    "VIN {vin} is not in the system. Click + to add the vehicle, or record it under the customer and choose the vehicle later.",
+  "第 {n} 行没认出客户，请手选": "Line {n}: the customer was not found. Choose it yourself.",
+  "客户“{name}”系统里没找到，或者有几个相近的，请手选或新建":
+    "Customer “{name}” was not found, or several look alike. Choose it yourself or create it.",
+  "客户“{a}”对上了系统里的“{b}”，请核对": "Customer “{a}” was matched to “{b}” in the system. Please check.",
+  "第 {n} 行没认出款项性质，请选": "Line {n}: the payment type was not found. Choose it.",
+  "没认出这笔钱是哪台车、哪个客户的，请自己拆分": "Could not tell which vehicle or customer this money is for. Allocate it yourself.",
+  "拆分加起来 {a}，比到账金额 {b} 多，请核对": "The lines add up to {a}, more than the amount received {b}. Please check.",
+  "拆分加起来 {a}，比到账金额 {b} 少，剩下的还没分到车上":
+    "The lines add up to {a}, less than the amount received {b}. The rest is not allocated yet.",
   // 报款文字框
   "已复制，可以粘贴到群里": "Copied. You can paste it into the group.",
   "复制失败，请手动选中文字复制": "Copy failed. Select the text and copy it by hand.",
@@ -467,18 +566,6 @@ const UI: Record<string, string> = {
     "For special cases the automatic text can't handle (payment by a third party, a vehicle swap difference, etc.). Once saved, this receipt keeps this text until you click “Use automatic text”.",
 
   // 报款页
-  "已复制 {n} 条，可以一起粘贴到群里": "Copied {n}. You can paste them into the group together.",
-  "复制失败": "Copy failed",
-  "已标记 {n} 条为已发群": "Marked {n} as posted",
-  "待发群": "To post",
-  "最近已发": "Recently posted",
-  "全选": "Select all",
-  "复制选中（{n}）": "Copy selected ({n})",
-  "选中的都标记已发群": "Mark selected as posted",
-  "建议先复制、发到群里，再标记已发。": "Copy and post to the group first, then mark as posted.",
-  "没有待发的报款": "Nothing to post",
-  "还没有已发的报款": "Nothing posted yet",
-  "补": "Late",
 
   // 业务员提交到账
   "提交新的到账": "Submit a new payment",
