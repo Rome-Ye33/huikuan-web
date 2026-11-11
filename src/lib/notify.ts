@@ -1,4 +1,4 @@
-// 待办提醒：有新的待办时，系统发一封邮件给该处理的人（数据库 17_todo_notify.sql、18_todo_email.sql + Edge Function notify）。
+// 待办提醒：有新的待办时，系统在工作日上午 10 点、下午 4 点（加纳时间）把每个人的新待办合成一封邮件发给他（数据库 17、18、20 + Edge Function notify）。
 // 这里是网页这边用的：开关自己的邮件提醒、把网站的语言记成提醒邮件的语言、给自己发测试邮件、邮件里的按钮打开哪张单。
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { tr } from './i18n'

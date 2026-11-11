@@ -1,7 +1,8 @@
-// 待办提醒（Supabase Edge Function “notify”）：有新的待办时，发一封邮件给该处理的人
-// - flush：数据库有新提醒时、以及每分钟定时（pg_cron）调用，请求头带 x-notify-secret
+// 待办提醒（Supabase Edge Function “notify”）：工作日上午 10 点、下午 4 点（加纳时间），把每个人攒下的新待办合成一封邮件发给他
+// - flush：数据库每分钟的定时任务（pg_cron）在有到时间的提醒时调用，请求头带 x-notify-secret
 //          （口令上线时由数据库随机生成、存在 Vault，这里请数据库 notify_check_secret 核对，谁都不用经手）。
-//          从数据库取待发的提醒（notify_claim_email），一封封发出去，再把结果报回去（notify_done）。
+//          从数据库按人取到时间的提醒（notify_claim_digest：一人一组），一人一封发出去，再把这一组的结果一起报回去（notify_done_many）。
+//          发送时间在数据库里定（20_todo_digest.sql 的 notify_next_slot）；这里邮件结尾写的“工作日上午 10 点、下午 4 点”要和它一致。
 // - test：登录的人给自己发一封测试邮件，看收不收得到（页头“邮件提醒”里的“发一封测试邮件”）。
 // - check：也要带口令。只连一下发信服务器、试试发信邮箱能不能登录，不发邮件（排查用，从数据库里叫）。
 //
@@ -55,13 +56,16 @@ const SMTP_USER = (Deno.env.get('SMTP_USER') ?? '').trim()
 const SMTP_PASS = (Deno.env.get('SMTP_PASS') ?? '').replace(/\s+/g, '') // Gmail 显示的应用专用密码中间有空格
 const FROM_NAME = (Deno.env.get('MAIL_FROM_NAME') || '销售管理 Sales Management').trim()
 const SITE = (Deno.env.get('SITE_URL') || 'https://rome-ye33.github.io/huikuan-web/').trim().replace(/\/*$/, '/')
-const BATCH = 20
+const BATCH = 20 // 一批 20 个人（一人一封）
 const MAX_ROUNDS = 3 // 一次最多 3 批（60 封），剩下的等下一分钟的定时任务
 const TIME_BUDGET = 60_000 // 发了一分钟还没发完的，也等下一分钟
 
 const configured = () => SMTP_USER !== '' && SMTP_PASS !== ''
 
-type Claim = { id: number; to_email: string | null; to_name: string | null; lang: string | null; body: string | null; go: string | null }
+// 数据库给的：一个人攒下的待办（items 按记下的先后）
+type Item = { id: number; body: string | null; go: string | null }
+type Digest = { to_email: string | null; to_name: string | null; lang: string | null; items: Item[] | null }
+type Todo = { text: string; go: string }
 // 发送结果。没发出去的：kind = auth 发信邮箱登录不上 / net 连不上发信服务器 / quota 今天发太多了；stop = 这一批剩下的也发不出去，先停下
 type Failure = { status: 'retry' | 'failed' | 'skipped'; error: string; detail?: string; kind?: 'auth' | 'net' | 'quota'; stop?: boolean }
 type Result = { status: 'sent'; id: string } | Failure
@@ -104,32 +108,60 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 type Mail = { subject: string; text: string; html: string }
 
-/** 一封提醒邮件。text = 提醒的文字（数据库 notify_text 写好的那一段）；空的 = 测试邮件。name 空的就不称呼名字 */
-function compose(lang: string | null, name: string | null, text: string | null, go: string): Mail {
+/** 一封提醒邮件。todos = 这个人攒下的待办（数据库 notify_text 写好的文字 + 按钮参数）；空的 = 测试邮件。name 空的就不称呼名字 */
+function compose(lang: string | null, name: string | null, todos: Todo[] | null): Mail {
   const en = lang === 'en'
-  const test = text === null
-  const what = test ? '' : oneLine(text)
+  const test = todos === null
+  const list = (todos ?? []).map((t) => ({ text: oneLine(t.text), link: `${SITE}?go=${encodeURIComponent(t.go)}` }))
+  const n = list.length
+  const one = list[0]
   const who = name ? oneLine(name) : ''
-  const link = `${SITE}?go=${encodeURIComponent(go)}`
-  const subject = test
-    ? en ? '[Sales Management] Test email' : '【销售管理】测试邮件'
-    : en ? `[Sales Management] ${cut(cap(what), 150)}` : `【销售管理】${cut(what, 100)}`
+  const wb = `${SITE}?go=wb`
   const greeting = en ? (who ? `Hello ${who},` : 'Hello,') : who ? `${who}，你好：` : '你好：'
-  const line = test
-    ? en
+  // 标题、正文第一句、按钮、按钮打开什么
+  let subject: string
+  let line: string
+  let button: string
+  let link: string
+  let opens: string
+  if (test) {
+    subject = en ? '[Sales Management] Test email' : '【销售管理】测试邮件'
+    line = en
       ? 'This is a test email. When something is waiting for you, you will get an email like this.'
       : '这是一封测试邮件。以后有待办，会像这样发到这个邮箱。'
-    : en
-      ? `You have a new to-do in Sales Management: ${what}.`
-      : `你在销售管理系统有一项新的待办：${what}。`
-  const button = test ? (en ? 'Open the workbench' : '打开工作台') : en ? 'Open it' : '打开处理'
-  const opens = test
-    ? en ? 'The button opens the website. After you sign in, it goes to the workbench.' : '点按钮会打开网站，登录后到工作台。'
-    : en ? 'The button opens the website. After you sign in, it goes straight to this item.' : '点按钮会打开网站，登录后直接到这张单。'
+    button = en ? 'Open the workbench' : '打开工作台'
+    link = wb
+    opens = en ? 'The button opens the website. After you sign in, it goes to the workbench.' : '点按钮会打开网站，登录后到工作台。'
+  } else if (n === 1) {
+    subject = en ? `[Sales Management] ${cut(cap(one.text), 150)}` : `【销售管理】${cut(one.text, 100)}`
+    line = en ? `You have a new to-do in Sales Management: ${one.text}.` : `你在销售管理系统有一项新的待办：${one.text}。`
+    button = en ? 'Open it' : '打开处理'
+    link = one.link
+    opens = en ? 'The button opens the website. After you sign in, it goes straight to this item.' : '点按钮会打开网站，登录后直接到这张单。'
+  } else {
+    subject = en ? `[Sales Management] You have ${n} new to-dos` : `【销售管理】你有 ${n} 项新的待办`
+    line = en ? `You have ${n} new to-dos in Sales Management:` : `你在销售管理系统有 ${n} 项新的待办：`
+    button = en ? 'Open the workbench' : '打开工作台'
+    link = wb
+    opens = en
+      ? '“Open it” under each item opens the website and, after you sign in, goes straight to that item.'
+      : '每项下面的“打开处理”会打开网站，登录后直接到那张单。'
+  }
+  const when = en
+    ? 'Reminders go out on weekdays at 10:00 and 16:00 (Ghana time), with all new to-dos in one email.'
+    : '提醒邮件在工作日上午 10 点、下午 4 点（加纳时间）各发一次，新的待办合在一封里。'
   const foot = en
-    ? `${opens} To stop these emails, turn them off under “Email reminders” at the top right of the website. This email was sent automatically. Please do not reply.`
-    : `${opens}不想收到这类邮件，可以在网站右上角“邮件提醒”里关掉。这封邮件由系统自动发出，请不要回复。`
+    ? `${opens} ${when} To stop these emails, turn them off under “Email reminders” at the top right of the website. This email was sent automatically. Please do not reply.`
+    : `${opens}${when}不想收到这类邮件，可以在网站右上角“邮件提醒”里关掉。这封邮件由系统自动发出，请不要回复。`
+  const each = en ? 'Open it' : '打开处理'
   const font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',Arial,sans-serif"
+  // 几项待办：一项一段，每段自己的“打开处理”
+  const itemsHtml = n > 1
+    ? `<ol style="margin:0 0 20px;padding-left:22px">${list
+        .map((t) => `<li style="margin:0 0 12px">${esc(t.text)}${en ? '.' : '。'}<br><a href="${esc(t.link)}" style="color:#1d4ed8;font-weight:600">${esc(each)}</a></li>`)
+        .join('')}</ol>\n`
+    : ''
+  const itemsText = n > 1 ? list.map((t, i) => `${i + 1}. ${t.text}${en ? '.' : '。'}\n   ${each}${en ? ': ' : '：'}${t.link}`).join('\n') + '\n\n' : ''
   const html = `<!doctype html>
 <html lang="${en ? 'en' : 'zh-CN'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title></head>
 <body style="margin:0;padding:0;background:#f3f6fb">
@@ -137,13 +169,13 @@ function compose(lang: string | null, name: string | null, text: string | null, 
 <div style="margin:0 0 12px;font-size:16px;font-weight:600;color:#1d4ed8">${en ? 'Sales Management' : '销售管理'}</div>
 <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px">
 <p style="margin:0 0 12px">${esc(greeting)}</p>
-<p style="margin:0 0 20px">${esc(line)}</p>
-<a href="${esc(link)}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:6px">${esc(button)}</a>
+<p style="margin:0 0 ${n > 1 ? 12 : 20}px">${esc(line)}</p>
+${itemsHtml}<a href="${esc(link)}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:6px">${esc(button)}</a>
 </div>
 <p style="margin:16px 0 0;font-size:12px;color:#6b7280">${esc(foot)}</p>
 </div>
 </body></html>`
-  const textBody = `${greeting}\n\n${line}\n\n${button}${en ? ': ' : '：'}${link}\n\n${foot}\n`
+  const textBody = `${greeting}\n\n${line}\n${n > 1 ? '' : '\n'}${itemsText}${button}${en ? ': ' : '：'}${link}\n\n${foot}\n`
   return { subject, text: textBody, html }
 }
 
@@ -183,38 +215,50 @@ async function sendMail(t: Transport, to: string, mail: Mail): Promise<Result> {
   }
 }
 
-async function report(id: number, res: Result) {
-  const done = await db.rpc('notify_done', {
-    p_id: id,
+// 一封邮件里的几条一起报结果
+async function report(ids: number[], res: Result) {
+  if (!ids.length) return
+  const done = await db.rpc('notify_done_many', {
+    p_ids: ids,
     p_status: res.status,
     p_wa_id: res.status === 'sent' ? res.id : null, // 邮件的 Message-ID
     p_error: res.status === 'sent' ? null : res.error,
   })
-  if (done.error) console.error('notify_done', id, done.error.message)
+  if (done.error) console.error('notify_done_many', ids.join(','), done.error.message)
 }
 
 async function flush(): Promise<Response> {
-  const count = { sent: 0, retry: 0, failed: 0, skipped: 0 }
+  // mails = 发出去几封；其余按条数（一封里有几条待办算几条）
+  const count = { mails: 0, sent: 0, retry: 0, failed: 0, skipped: 0 }
   const started = Date.now()
   let t: Transport | null = null
   try {
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      const { data, error } = await db.rpc('notify_claim_email', { p_limit: BATCH })
+      const { data, error } = await db.rpc('notify_claim_digest', { p_limit: BATCH })
       if (error) return reply(500, { error: error.message })
-      const rows = (data ?? []) as Claim[]
+      const rows = (data ?? []) as Digest[]
       let stopped: Failure | null = null
       for (const r of rows) {
+        const items = r.items ?? []
+        const good = items.filter((i) => !!i.body && !!i.go)
+        const bad = items.filter((i) => !i.body || !i.go) // 单据没了、文字写不出来：这一条不发，别的照发
+        if (bad.length) {
+          await report(bad.map((i) => i.id), { status: 'skipped', error: '没有内容' })
+          count.skipped += bad.length
+        }
+        if (!good.length) continue
         let res: Result
         if (stopped) res = stopped // 登录不上、连不上：这一批剩下的不去试，一起等下次
         else if (!configured()) res = { status: 'skipped', error: '邮件提醒还没配置好' }
-        else if (!r.to_email || !r.body || !r.go) res = { status: 'skipped', error: '没有邮箱或内容' }
+        else if (!r.to_email) res = { status: 'skipped', error: '没有邮箱' }
         else {
           t ??= transport(true)
-          res = await sendMail(t, r.to_email, compose(r.lang, r.to_name, r.body, r.go))
-          if (res.status !== 'sent' && res.stop) stopped = res
+          res = await sendMail(t, r.to_email, compose(r.lang, r.to_name, good.map((i) => ({ text: i.body as string, go: i.go as string }))))
+          if (res.status === 'sent') count.mails++
+          else if (res.stop) stopped = res
         }
-        await report(r.id, res)
-        count[res.status]++
+        await report(good.map((i) => i.id), res)
+        count[res.status] += good.length
       }
       if (stopped || rows.length < BATCH || Date.now() - started > TIME_BUDGET) break
     }
@@ -240,7 +284,7 @@ async function test(req: Request): Promise<Response> {
   const t = transport(false)
   let res: Result
   try {
-    res = await sendMail(t, to, compose(prof.notify_lang, name, null, 'wb'))
+    res = await sendMail(t, to, compose(prof.notify_lang, name, null))
   } finally {
     t.close()
   }
