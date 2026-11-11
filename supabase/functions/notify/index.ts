@@ -250,14 +250,17 @@ async function test(req: Request): Promise<Response> {
   return reply(502, { error: '邮件没有发出去：' + (res.detail ?? res.error) })
 }
 
+// 排查时报一下配置：发信邮箱、应用专用密码的位数（Gmail 的是 16 位；不是 16 位多半是填了登录密码、或带了引号）。密码本身不报
+const setup = () => ({ configured: configured(), host: SMTP_HOST, port: SMTP_PORT, user: SMTP_USER, passLength: SMTP_PASS.length })
+
 // 排查：连一下发信服务器、试试发信邮箱能不能登录（不发邮件）。没配发信邮箱时只看连不连得上
 async function check(): Promise<Response> {
   const t = transport(false)
   try {
     await t.verify()
-    return reply(200, { ok: true, configured: configured(), host: SMTP_HOST, port: SMTP_PORT })
+    return reply(200, { ok: true, ...setup() })
   } catch (e) {
-    return reply(200, { ok: false, configured: configured(), host: SMTP_HOST, port: SMTP_PORT, error: mailError(e).error })
+    return reply(200, { ok: false, ...setup(), error: mailError(e).error })
   } finally {
     t.close()
   }
