@@ -9,7 +9,7 @@ import { saveMyNotify, sendTestEmail } from '../lib/notify'
 type Values = { on: boolean }
 
 /**
- * 页头的“邮件提醒”：有新的待办时发邮件到自己登录用的邮箱（默认开着）。可以关掉、给自己发一封测试邮件。
+ * 页头的“邮件提醒”：有新的待办时，工作日上午 10 点、下午 4 点（加纳时间）汇总发一封邮件到自己登录用的邮箱（默认开着）。可以关掉、给自己发一封测试邮件。
  * 提醒邮件和网站用同一种语言：网站的语言和存着的不一样时（登录、切换中文 / EN）就记下来，不用另外设。
  */
 export default function NotifySettings() {
@@ -97,7 +97,7 @@ export default function NotifySettings() {
         }
       >
         <Typography.Paragraph type="secondary">
-          {t('有新的待办时（到账要审核、提成单轮到你审批、单据被退回、提成要发放），系统会发一封邮件到你登录用的邮箱，点邮件里的“打开处理”就能直接打开那张单，不用一直开着网站。')}
+          {t('有新的待办时（到账要审核、提成单轮到你审批、单据被退回、提成要发放），系统会在工作日上午 10 点、下午 4 点（加纳时间）把新的待办合成一封邮件，发到你登录用的邮箱，点邮件里的“打开处理”就能直接打开那张单，不用一直开着网站。')}
         </Typography.Paragraph>
         <div style={{ marginBottom: 16 }}>
           {on ? <Tag color="green">{t('已开启：发到 {email}', { email })}</Tag> : <Tag>{t('已关闭')}</Tag>}

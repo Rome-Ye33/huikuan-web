@@ -642,6 +642,7 @@ export type Database = {
           created_at: string
           doc_id: number
           doc_type: string
+          due_at: string | null
           error: string | null
           id: number
           kind: string
@@ -658,6 +659,7 @@ export type Database = {
           created_at?: string
           doc_id: number
           doc_type: string
+          due_at?: string | null
           error?: string | null
           id?: never
           kind: string
@@ -674,6 +676,7 @@ export type Database = {
           created_at?: string
           doc_id?: number
           doc_type?: string
+          due_at?: string | null
           error?: string | null
           id?: never
           kind?: string
@@ -1585,6 +1588,15 @@ export type Database = {
           to_number: string
         }[]
       }
+      notify_claim_digest: {
+        Args: { p_limit?: number }
+        Returns: {
+          items: Json
+          lang: string
+          to_email: string
+          to_name: string
+        }[]
+      }
       notify_claim_email: {
         Args: { p_limit?: number }
         Returns: {
@@ -1600,6 +1612,15 @@ export type Database = {
         Args: {
           p_error?: string
           p_id: number
+          p_status: string
+          p_wa_id?: string
+        }
+        Returns: undefined
+      }
+      notify_done_many: {
+        Args: {
+          p_error?: string
+          p_ids: number[]
           p_status: string
           p_wa_id?: string
         }

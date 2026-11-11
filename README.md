@@ -25,7 +25,7 @@
 
 ## 外观
 
-- 系统名“销售管理 / Sales Management”：中文界面在名字下面带一行英文，英文界面只写英文；浏览器标签也跟着语言（`销售管理 · Sales Management` / `Sales Management`）。图标是 `src/components/Logo.tsx`，浏览器标签上的 `public/favicon.svg` 和手机主屏幕的 `public/apple-touch-icon.png` 是同一个图。
+- 系统名“销售管理 / Sales Management”：中文界面在名字下面带一行英文，英文界面只写英文；浏览器标签也跟着语言（`销售管理 · Sales Management` / `Sales Management`）。图标用 FET AUTO 的圆环标志（Rome 2026-11-11 给的公司 logo，`src/assets/fet-mark.jpg`，放在白色圆角方块里），浏览器标签上的 `public/favicon.png` 和手机主屏幕的 `public/apple-touch-icon.png` 是同一个图；登录页左边放完整的 FET AUTO logo，下面只列模块名，不写说明。
 - 配色：深蓝侧边栏、主色 `#2563eb`、浅灰底上一张白色的页面。antd 主题在 `src/main.tsx`，其余在 `src/styles.css`，两边用同一套颜色。
 - 登录页：宽屏左边是系统名和主要功能，右边登录；窄屏只有登录框，系统名在上面。
 - 侧边栏：中文 216 宽，英文 248 宽（英文菜单字长）；菜单上的数字总是看得见，地方不够时文字出省略号。宽屏往下滚时菜单不动；窄屏（992 以下）菜单收起，点左上角按钮打开，盖在页面上面，点旁边灰色的地方或点菜单项收起。
@@ -50,9 +50,9 @@
 
 ## 智能填表
 
-到账录入点“新建到账”，最上面有“智能填表”：把业务员在群里发的回款消息、银行的 Credit Alert 贴进去，水单截图传上来（或者 Ctrl+V 粘贴），点“识别并填表”，账户、日期、金额、汇率、付款方和拆分到车都会填好，财务核对后再保存。只有管理员和财务能用。
+到账录入点“新建到账”，最上面有“智能填表”：把业务员在群里发的回款消息、银行的 Credit Alert 贴进去，水单截图传上来（或者 Ctrl+V 粘贴），点“识别并填表”，账户、日期、金额、汇率、付款方和拆分到车都会填好，核对后再保存。只有管理员能用（识别要花 Claude API 的钱），财务账号看不到这张卡片。
 
-- 识别由 Claude 的 API 来做，走 Supabase Edge Function `receipt-ai`（源码在 `supabase/functions/receipt-ai/`，部署时关掉 verify_jwt，函数里自己校验是不是财务或管理员）。它只负责看懂内容，不写数据库；保存还是走原来的 `save_receipt`。
+- 识别由 Claude 的 API 来做，走 Supabase Edge Function `receipt-ai`（源码在 `supabase/functions/receipt-ai/`，部署时关掉 verify_jwt，函数里自己校验是不是管理员）。它只负责看懂内容，不写数据库；保存还是走原来的 `save_receipt`。
 - 开通：在 Supabase 后台 Edge Functions → Secrets 加 `ANTHROPIC_API_KEY`（在 Claude 的开发者后台 platform.claude.com 创建，账户里要有余额）。密钥只放在 Supabase 服务器上，不进浏览器、不进仓库。
 - 可选的两个密钥：`CLAUDE_MODEL`（默认 `claude-opus-5-5`，想省钱可以换便宜的型号）、`CLAUDE_EFFORT`（`low` / `medium` / `high`，默认 `medium`）。
 - 对不上的地方（账户没认出、大架号系统里没有、客户名有出入、一笔钱付几台车没写每台多少）会列在黄色提示里；没对上车的行先按“大架号未锁定”记到客户名下，点 + 可以直接新增那台车。

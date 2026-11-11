@@ -397,7 +397,7 @@ export default function UsersPage() {
           <Form.Item
             name="notify_email"
             label={t('邮件提醒（有新的待办时发到他的登录邮箱）')}
-            extra={t('本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。')}
+            extra={t('工作日上午 10 点、下午 4 点（加纳时间）汇总发。本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。')}
             valuePropName="checked"
           >
             <Switch />
