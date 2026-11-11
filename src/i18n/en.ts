@@ -255,11 +255,11 @@ const UI: Record<string, string> = {
   "两次输入的新密码不一样": "The two new passwords don't match",
   "密码已修改，下次登录请用新密码": "Password changed. Use the new one next time you sign in.",
 
-  // 页头：邮件提醒（有新的待办时发邮件到登录用的邮箱）
+  // 页头：邮件提醒（有新的待办时，工作日 10 点、16 点汇总发邮件到登录用的邮箱）
   "邮件提醒": "Email reminders",
   "发一封测试邮件": "Send a test email",
-  "有新的待办时（到账要审核、提成单轮到你审批、单据被退回、提成要发放），系统会发一封邮件到你登录用的邮箱，点邮件里的“打开处理”就能直接打开那张单，不用一直开着网站。":
-    "When something new is waiting for you (a receipt to review, a commission voucher to approve, something returned to you, a commission to pay), the system emails the address you sign in with. Click “Open it” in the email to go straight to it. You don't need to keep the website open.",
+  "有新的待办时（到账要审核、提成单轮到你审批、单据被退回、提成要发放），系统会在工作日上午 10 点、下午 4 点（加纳时间）把新的待办合成一封邮件，发到你登录用的邮箱，点邮件里的“打开处理”就能直接打开那张单，不用一直开着网站。":
+    "When something new is waiting for you (a receipt to review, a commission voucher to approve, something returned to you, a commission to pay), the system emails the address you sign in with on weekdays at 10:00 and 16:00 (Ghana time), with all new to-dos in one email. Click “Open it” in the email to go straight to that item. You don't need to keep the website open.",
   "已开启：发到 {email}": "On: sent to {email}",
   "已关闭": "Off",
   "有新的待办时发邮件提醒我": "Email me when something new is waiting for me",
@@ -273,8 +273,8 @@ const UI: Record<string, string> = {
   "开": "On",
   "关": "Off",
   "邮件提醒（有新的待办时发到他的登录邮箱）": "Email reminders (new to-dos are sent to the address this person signs in with)",
-  "本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。":
-    "People can also change this themselves under “Email reminders” at the top of the page. Reminder emails use the language each person uses on this website.",
+  "工作日上午 10 点、下午 4 点（加纳时间）汇总发。本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。":
+    "Sent on weekdays at 10:00 and 16:00 (Ghana time), all new to-dos in one email. People can also change this themselves under “Email reminders” at the top of the page. Reminder emails use the language each person uses on this website.",
 
   // 通用
   "保存": "Save",
@@ -320,11 +320,6 @@ const UI: Record<string, string> = {
   "请用管理员邀请的邮箱登录": "Sign in with the email your admin invited",
   "车辆销售、回款和提成": "Vehicle sales, collections and commissions,",
   "一个系统管起来": "all in one place",
-  "每台车的合同价、已到账和余额，一目了然": "Contract price, received and balance for every vehicle at a glance",
-  "到账与报款": "Receipts & reports",
-  "业务员提交，财务审核，自动生成报款文字": "Sales submit, finance approves, and the report text is written for you",
-  "多级线上审批，不用打印签字": "Multi-level online approval, no printing or signing",
-  "导入银行流水，自动配对到账": "Import bank statements and match receipts automatically",
   "登录": "Sign in",
   "邮箱": "Email",
   "请填邮箱": "Enter your email",
