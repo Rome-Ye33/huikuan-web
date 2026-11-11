@@ -158,6 +158,17 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const { message, modal } = App.useApp()
   const mySp = profile?.salesperson_id ?? null
   const myUid = session?.user.id ?? null
+  const [spCustomers, setSpCustomers] = useState<Set<number> | null>(null)
+  const customersOf = useCallback(
+    async (sp: number | null): Promise<Set<number> | null> => {
+      if (sp == null) return null
+      const ids = new Set(customers.filter((c) => c.salesperson_id === sp).map((c) => c.id))
+      const { data } = await supabase.from('v_vehicle_ledger').select('customer_id').eq('salesperson_id', sp).limit(5000)
+      for (const r of data ?? []) if (r.customer_id != null) ids.add(r.customer_id)
+      return ids
+    },
+    [customers],
+  )
 
   const [voucher, setVoucher] = useState<CommissionVoucher | null>(null)
   const [head, setHead] = useState<Head>(() => newHead(null, '销售部'))
@@ -197,6 +208,15 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const id = voucher?.id ?? null
   const custId = head.customer_id
   const spId = head.salesperson_id
+  useEffect(() => {
+    let on = true
+    void customersOf(spId).then((ids) => {
+      if (on) setSpCustomers(ids)
+    })
+    return () => {
+      on = false
+    }
+  }, [spId, customersOf])
 
   const loadVoucher = useCallback(
     async (vid: number) => {
@@ -433,10 +453,13 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     setHead(withAuto({ ...head, customer_id: cid, salesperson_id: isStaff ? sp : mySp }, []))
   }
 
-  const pickSalesperson = (sp: number | null) => {
+  // 选了业务员后只能选他名下的客户：客户资料上记的是他的，或者有车在他名下的（Rome 2026-11-11）
+  const pickSalesperson = async (sp: number | null) => {
     setDirty(true)
     setSel(EMPTY_SEL)
-    setHead(withAuto({ ...head, salesperson_id: sp }, []))
+    const ids = await customersOf(sp)
+    const keep = head.customer_id != null && (ids == null || ids.has(head.customer_id))
+    setHead(withAuto({ ...head, salesperson_id: sp, customer_id: keep ? head.customer_id : null }, []))
   }
 
   /**
@@ -1023,7 +1046,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
                       value={spId ?? undefined}
                       placeholder={t('选择业务员')}
                       options={spOptions}
-                      onChange={(x: number | undefined) => pickSalesperson(x ?? null)}
+                      onChange={(x: number | undefined) => void pickSalesperson(x ?? null)}
                     />
                   ) : (
                     <Input value={spName} disabled />
@@ -1032,7 +1055,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               </Col>
               <Col xs={24} md={8}>
                 <Form.Item label={t('客户')} required>
-                  <CustomerSelect value={custId} onChange={(c) => void pickCustomer(c)} />
+                  <CustomerSelect value={custId} only={spCustomers} onChange={(c) => void pickCustomer(c)} />
                 </Form.Item>
               </Col>
               <Col xs={24}>
