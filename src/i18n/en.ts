@@ -180,6 +180,14 @@ const VALUES: Record<string, string> = {
   "英文名最多 40 个字母：{name}": "An English name can be at most 40 characters: {name}",
   "有两级都叫“{name}”，请改成不一样的名字": "Two levels are both called “{name}”. Give them different names.",
   "审批流刚被别人改过，请刷新后再改": "Someone else has just changed the approval flow. Refresh and try again.",
+  // 到账审批（SQL 21 receipt_action）：到账的状态和报错
+  "已生效": "In effect",
+  "找不到这笔到账，或没有权限": "Receipt not found, or you don't have permission",
+  "这笔到账已经不在这一步了，请刷新后再看": "This receipt has moved on from this step. Refresh and check again.",
+  "这笔到账现在不能退回，请刷新后再看": "This receipt can't be returned right now. Refresh and check again.",
+  "只有财务可以重新提交": "Only finance can resubmit it",
+  "只有被退回的到账才能重新提交": "Only a returned receipt can be resubmitted",
+  "到账审批通过后才能报款": "A receipt can only be reported after its approval is complete",
   // 批量导入车辆和期初
   "{field}不是数字": "{field} is not a number",
   "{field}认不出来，按空的导入": "Couldn't read {field}; imported as blank",
@@ -385,7 +393,9 @@ const UI: Record<string, string> = {
   "拆分状态": "Allocation status",
   "报款状态": "Report status",
   "编号、摘要、参考号、支票号": "No., narration, reference, cheque no.",
-  "共 {n} 笔，合计 {usd}": "{n} receipts, total {usd}",
+  "共 {n} 笔，已生效合计 {usd}": "{n} receipts, total in effect {usd}",
+  "审批": "Approval",
+  "审批状态": "Approval status",
   "新建到账": "New receipt",
   "业务员提交": "Salesperson submissions",
 
@@ -1077,8 +1087,10 @@ const UI: Record<string, string> = {
   // 工作台
   "工作台": "Workbench",
   "刷新": "Refresh",
-  "到账提交和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交的，已结束是流程走完的。点开就能处理。":
-    "All payment submissions and commission vouchers in one place. To do: waiting for you. Handled: you acted on it and it is still in progress. My requests: what you submitted. Closed: finished. Tap an item to open it.",
+  "到账提交、到账和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交（录入）的，已结束是流程走完的。点开就能处理。":
+    "All payment submissions, receipts and commission vouchers in one place. To do: waiting for you. Handled: you acted on it and it is still in progress. My requests: what you submitted or entered. Closed: finished. Tap an item to open it.",
+  "已录入，开始审批": "Entered, approval started",
+  "已重新提交审批": "Resubmitted for approval",
   "到账 {date}": "Received {date}",
   "本次发放 {amt}": "Payout {amt}",
   "我：{action} · {when}": "You: {action} · {when}",
@@ -1164,6 +1176,47 @@ const UI: Record<string, string> = {
   "类型只能填 银行、momo、现金": "Type must be Bank, momo or Cash",
   "在用只能填 是 或 否": "In use must be Yes or No",
   "批量导入收款账户": "Bulk import receiving accounts",
+
+  // 到账审批流（用户与权限卡片、调整审批流）
+  "还没有审批级别，提成单提交不了。点“调整审批流”加级别。": "No approval levels yet, so vouchers can't be submitted. Click “Edit flow” to add some.",
+  "到账审批流": "Receipt approval flow",
+  "财务录入到账": "Finance enters receipt",
+  "生效（算到账、可报款）": "Takes effect (counts as received)",
+  "财务录的到账、业务员提交经财务审核转成的到账，录入后都按这个顺序一级一级审，全部通过才算到账（才进余额和报表、才能报款）。一个岗位可以有几个人（谁先审都行），管理员任何一级都可以代办；审批人可以是业务员账号，他只看得到走审批的到账。":
+    "Every receipt, whether entered by finance or created from a salesperson's submission after finance review, is approved in this order, one level at a time. It only counts as received (goes into balances and reports, and can be reported to the group) once every level has approved. A post can have several people (any one of them can approve), and an admin can act on any level. An approver can also be a sales account; they only see receipts that go through approval.",
+  "要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后录入的到账。":
+    " To add or remove a level, rename one or change the order, click “Edit flow” at the top right. Changes only apply to receipts entered afterwards.",
+  "还没有审批级别：现在到账录入后直接生效。点“调整审批流”加级别。": "No approval levels yet: receipts take effect as soon as they are entered. Click “Edit flow” to add some.",
+  "调整到账审批流": "Edit the receipt approval flow",
+  "开头“财务录入到账”和最后“生效”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后录入（包括重新提交、重审）的到账，已经在审批中的按记下的流程走完。一级都不留就是到账录入后直接生效。每一级由谁审，保存后在审批流卡片上选。":
+    "“Finance enters receipt” at the start and “Takes effect” at the end stay as they are. Here you change the approval levels in between: add a level, remove one, rename one or change the order. Changes only apply to receipts entered after saving (including ones resubmitted or sent back into approval); receipts already in approval finish under the flow recorded for them. With no levels at all, a receipt takes effect as soon as it is entered. After saving, choose who approves each level on the approval flow card.",
+  "审批中的 {n} 笔到账还要经过“{name}”，到这一级时由管理员代办": "{n} receipt(s) in approval still have to pass “{name}”. When they get there, an admin approves on its behalf.",
+  "一级都不留？": "Remove every level?",
+  "到账录入后就直接生效，不再审批。": "Receipts will take effect as soon as they are entered, with no approval.",
+  "之后录入的到账不再走删掉的级别。": "Receipts entered from now on skip the removed levels.",
+
+  // 到账录入页：到账自己的审批
+  "已通过，生成了到账，等{name}审批": "Approved. The receipt was created and is waiting for {name}.",
+  "已保存，等{name}审批，批完才算到账": "Saved. Waiting for {name}; it counts as received once approval is complete.",
+  "已保存，这笔到账回到审批中，等{name}审批": "Saved. This receipt is back in approval, waiting for {name}.",
+  "已保存，等{name}审批": "Saved. Waiting for {name}.",
+  "已通过，这笔到账生效了": "Approved. This receipt is now in effect.",
+  "已重新提交，等{name}审批": "Resubmitted. Waiting for {name}.",
+  "已重新提交，这笔到账生效了": "Resubmitted. This receipt is now in effect.",
+  "请写退回原因，录入的人会看到": "Please give a reason. The person who entered it will see it.",
+  "{name} 于 {when} 退回。改好后点“重新提交”。": "Returned by {name} on {when}. Fix it and click “Submit again”.",
+  "{name} 于 {when} 退回，等财务改好后重新提交。": "Returned by {name} on {when}. Waiting for finance to fix it and submit it again.",
+  "轮到你审批了：这一级是{name}": "Your turn to approve: this level is {name}",
+  "核对凭证、金额和拆分，没问题点“通过”，不对点“退回”写明原因。": "Check the proof, the amount and the allocation. If it's fine click “Approve”; if not click “Return” and say why.",
+  "审批中，等{name}审批": "In approval, waiting for {name}",
+  "批完才算到账（才进余额和报表、才能报款）。改了日期、账户、金额或汇率会从第一级重新审批。":
+    "It counts as received only once approval is complete (then it goes into balances and reports and can be reported). Changing the date, account, amount or rate restarts approval from the first level.",
+  "录入": "Entered",
+  "生效": "In effect",
+  "已生效。改了日期、账户、金额或汇率会回到审批中，重新批完才再算到账。": "In effect. Changing the date, account, amount or rate sends it back into approval; it counts as received again once re-approved.",
+  "审批通过（生效）后才能报款。": "It can be reported once approval is complete (in effect).",
+  "退回这笔到账": "Return this receipt",
+  "写清楚哪里不对、要怎么改，录入的人会看到，改好后重新提交。": "Say what is wrong and how to fix it. The person who entered it will see it and submit it again.",
 }
 
 export const EN: Record<string, string> = { ...VALUES, ...UI }

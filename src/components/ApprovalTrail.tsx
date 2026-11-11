@@ -50,7 +50,7 @@ export default function ApprovalTrail({ docType, docId, version }: Props) {
             content: (
               <div>
                 <div>
-                  <b>{labels.action(r.action, r.step)}</b>
+                  <b>{labels.action(r.action, r.step, docType)}</b>
                   <span className="hint" style={{ marginInlineStart: 8 }}>
                     {r.actor_name || t('系统')} · {dateTime(r.at)}
                   </span>

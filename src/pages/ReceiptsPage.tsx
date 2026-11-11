@@ -5,6 +5,8 @@ import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
 import ReceiptEditor from '../components/ReceiptEditor'
 import SubmissionList from '../components/SubmissionList'
+import { RECEIPT_STATUS_LABEL, receiptStatus, useFlow } from '../lib/flow'
+import type { ReceiptStatus } from '../lib/flow'
 import { cleanSearch, money, todayAccra, usd } from '../lib/format'
 import { tr, useT } from '../lib/i18n'
 import { accountOptions, useRefData } from '../lib/refdata'
@@ -24,10 +26,12 @@ export function reportTag(r: Receipt) {
 function ReceiptList() {
   const t = useT()
   const { accounts } = useRefData()
+  const rflow = useFlow('receipt')
   const [rows, setRows] = useState<Receipt[]>([])
   const [loading, setLoading] = useState(false)
   const [range, setRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([dayjs(todayAccra()).subtract(30, 'day'), dayjs(todayAccra())])
   const [accountId, setAccountId] = useState<number | undefined>()
+  const [approval, setApproval] = useState<ReceiptStatus | undefined>()
   const [claimStatus, setClaimStatus] = useState<string | undefined>()
   const [reportStatus, setReportStatus] = useState<string | undefined>()
   const [bankStatus, setBankStatus] = useState<string | undefined>()
@@ -45,6 +49,7 @@ function ReceiptList() {
       .order('id', { ascending: false })
       .limit(2000)
     if (accountId) query = query.eq('account_id', accountId)
+    if (approval) query = query.eq('status', approval)
     if (claimStatus) query = query.eq('claim_status', claimStatus)
     if (bankStatus) query = query.eq('bank_status', bankStatus)
     if (reportStatus === '未报') query = query.eq('is_reported', false)
@@ -55,7 +60,7 @@ function ReceiptList() {
     const { data } = await query
     setRows(data ?? [])
     setLoading(false)
-  }, [range, accountId, claimStatus, reportStatus, bankStatus, q])
+  }, [range, accountId, approval, claimStatus, reportStatus, bankStatus, q])
 
   useEffect(() => {
     void load()
@@ -70,6 +75,11 @@ function ReceiptList() {
 
   const columns: ColumnsType<Receipt> = [
     { title: t('编号'), dataIndex: 'receipt_no', width: 150 },
+    {
+      title: t('审批'),
+      width: 120,
+      render: (_, r) => <Tag color={rflow.stageColor(r.status, r.step)}>{rflow.stageLabel(r.status, r.step)}</Tag>,
+    },
     { title: t('到账日期'), dataIndex: 'receipt_date', width: 104 },
     { title: t('收款账户'), dataIndex: 'account_name', width: 210, ellipsis: true },
     {
@@ -114,7 +124,8 @@ function ReceiptList() {
     },
   ]
 
-  const total = rows.reduce((s, r) => s + Number(r.amount_usd ?? 0), 0)
+  // 合计只算已生效的（审批中、退回的还不算到账）
+  const total = rows.filter((r) => receiptStatus(r.status) === 'approved').reduce((s, r) => s + Number(r.amount_usd ?? 0), 0)
   const opts = (list: string[]) => list.map((x) => ({ value: x, label: t(x) }))
 
   return (
@@ -140,6 +151,14 @@ function ReceiptList() {
           value={accountId}
           onChange={setAccountId}
         />
+        <Select
+          allowClear
+          placeholder={t('审批状态')}
+          style={{ width: 120 }}
+          value={approval}
+          onChange={setApproval}
+          options={(['pending', 'approved', 'rejected'] as ReceiptStatus[]).map((x) => ({ value: x, label: t(RECEIPT_STATUS_LABEL[x]) }))}
+        />
         <Select allowClear placeholder={t('拆分状态')} style={{ width: 120 }} value={claimStatus} onChange={setClaimStatus} options={opts(['未认领', '部分认领', '已认领'])} />
         <Select allowClear placeholder={t('报款状态')} style={{ width: 120 }} value={reportStatus} onChange={setReportStatus} options={opts(['未报', '已报', '需发修改'])} />
         <Select
@@ -163,7 +182,7 @@ function ReceiptList() {
         columns={columns}
         dataSource={rows}
         scroll={{ x: 1300 }}
-        pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 笔，合计 {usd}', { n, usd: usd(total) }) }}
+        pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 笔，已生效合计 {usd}', { n, usd: usd(total) }) }}
         rowClassName={() => 'clickable-row'}
         onRow={(r) => ({ onClick: () => setEditor({ open: true, id: r.id }) })}
       />

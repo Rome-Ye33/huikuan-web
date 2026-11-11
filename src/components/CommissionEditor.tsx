@@ -318,6 +318,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
           .select('*')
           .eq('customer_id', custId)
           .in('nature_kind', ['payment', 'opening', 'discount'])
+          .or('receipt_status.is.null,receipt_status.eq.approved') // 审批中、退回的到账还不算
           .order('claim_date')
           .order('id')
           .limit(5000),

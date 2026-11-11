@@ -3,16 +3,18 @@ import { Alert, App, Button, Input, Modal, Tooltip } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { errorText } from '../lib/errors'
 import { parseFlow, useFlow } from '../lib/flow'
+import type { FlowDocType } from '../lib/flow'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 
-// 调整提成单审批流（管理员）：加一级、删一级、改名字（中文、英文）、调顺序，一次保存（save_voucher_flow）。
-// 开头“业务员开单提交”、最后“财务发放”不变。改了只影响之后提交的提成单；审批中的按提交时的流程走完。
-// 每一级由谁审不在这里改，在“用户与权限”的审批流卡片上选人。
+// 调整审批流（管理员）：提成单的或到账的，加一级、删一级、改名字（中文、英文）、调顺序，一次保存（save_approval_flow）。
+// 提成单：开头“业务员开单提交”、最后“财务发放”不变，至少一级。到账：开头“财务录入”、最后“生效”不变，可以一级都不留（录入就生效）。
+// 改了只影响之后提交（录入）的单据；审批中的按记下的流程走完。每一级由谁审不在这里改，在“用户与权限”的审批流卡片上选人。
 
 type Props = {
   open: boolean
+  docType: FlowDocType
   /** 这一级上现在有几个人（已注册的和邀请名单上的）：删的时候提醒会去掉他们的岗位 */
   peopleOn: (key: string) => number
   onClose: (saved: boolean) => void
@@ -32,10 +34,11 @@ const chars = (s: string) => [...s].length
 /** 一行的问题：哪个框（名字 / 英文名）、怎么了 */
 type Problem = { field: 'name' | 'en'; text: string } | null
 
-export default function FlowEditor({ open, peopleOn, onClose }: Props) {
+export default function FlowEditor({ open, docType, peopleOn, onClose }: Props) {
   const t = useT()
   const { message, modal } = App.useApp()
-  const flow = useFlow()
+  const flow = useFlow(docType)
+  const isReceipt = docType === 'receipt'
   const { reloadSteps } = useRefData()
   const [rows, setRows] = useState<Row[]>([])
   const [tried, setTried] = useState(false)
@@ -78,7 +81,8 @@ export default function FlowEditor({ open, peopleOn, onClose }: Props) {
 
   const doSave = async () => {
     setBusy(true)
-    const { error } = await supabase.rpc('save_voucher_flow', {
+    const { error } = await supabase.rpc('save_approval_flow', {
+      p_doc_type: docType,
       p_steps: rows.map((r) => ({ key: r.key, name: clean(r.name), name_en: clean(r.name_en) })),
     })
     if (error) {
@@ -94,7 +98,7 @@ export default function FlowEditor({ open, peopleOn, onClose }: Props) {
 
   const save = async () => {
     setTried(true)
-    if (!rows.length) {
+    if (!rows.length && !isReceipt) {
       message.error(t('审批流至少要有一级'))
       return
     }
@@ -106,27 +110,35 @@ export default function FlowEditor({ open, peopleOn, onClose }: Props) {
       return
     }
     setBusy(true)
-    const { data } = await supabase.from('commission_vouchers').select('step,flow').eq('status', 'submitted').limit(2000)
+    const { data } = isReceipt
+      ? await supabase.from('bank_receipts').select('step,flow').eq('status', 'pending').limit(2000)
+      : await supabase.from('commission_vouchers').select('step,flow').eq('status', 'submitted').limit(2000)
     setBusy(false)
     const lines: string[] = []
     for (const s of removed) {
       const people = peopleOn(s.key)
-      if (people) lines.push(t('“{name}”上的 {n} 个人会去掉这个审批岗位', { name: s.name, n: people }))
+      if (people) lines.push(t('“{name}”上的 {n} 个人会去掉这个审批岗位', { name: flow.name(s.key), n: people }))
       const waiting = (data ?? []).filter((v) => {
         const keys = parseFlow(v.flow).map((f) => f.step)
         const here = keys.indexOf(v.step ?? '')
         return here >= 0 && keys.indexOf(s.key) >= here
       }).length
-      if (waiting) lines.push(t('审批中的 {n} 张提成单还要经过“{name}”，到这一级时由管理员代办', { name: s.name, n: waiting }))
+      if (waiting)
+        lines.push(
+          isReceipt
+            ? t('审批中的 {n} 笔到账还要经过“{name}”，到这一级时由管理员代办', { name: flow.name(s.key), n: waiting })
+            : t('审批中的 {n} 张提成单还要经过“{name}”，到这一级时由管理员代办', { name: flow.name(s.key), n: waiting }),
+        )
     }
+    const none = isReceipt && !rows.length
     modal.confirm({
-      title: t('删掉 {names}？', { names: removed.map((s) => `“${s.name}”`).join('、') }),
+      title: none ? t('一级都不留？') : t('删掉 {names}？', { names: removed.map((s) => `“${flow.name(s.key)}”`).join('、') }),
       content: (
         <div>
           {lines.map((l) => (
             <div key={l}>{l}</div>
           ))}
-          <div>{t('之后提交的提成单不再走删掉的级别。')}</div>
+          <div>{none ? t('到账录入后就直接生效，不再审批。') : isReceipt ? t('之后录入的到账不再走删掉的级别。') : t('之后提交的提成单不再走删掉的级别。')}</div>
         </div>
       ),
       okText: t('删掉并保存'),
@@ -139,7 +151,8 @@ export default function FlowEditor({ open, peopleOn, onClose }: Props) {
   return (
     <Modal
       open={open}
-      title={t('调整提成单审批流')}
+      rootClassName={`flow-editor flow-editor-${docType}`}
+      title={isReceipt ? t('调整到账审批流') : t('调整提成单审批流')}
       okText={t('保存')}
       cancelText={t('取消')}
       confirmLoading={busy}
@@ -152,7 +165,11 @@ export default function FlowEditor({ open, peopleOn, onClose }: Props) {
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
-        title={t('开头“业务员开单提交”和最后“财务发放”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后提交（包括退回后重新提交）的提成单，已经在审批中的按提交时的流程走完。每一级由谁审，保存后在审批流卡片上选。')}
+        title={
+          isReceipt
+            ? t('开头“财务录入到账”和最后“生效”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后录入（包括重新提交、重审）的到账，已经在审批中的按记下的流程走完。一级都不留就是到账录入后直接生效。每一级由谁审，保存后在审批流卡片上选。')
+            : t('开头“业务员开单提交”和最后“财务发放”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后提交（包括退回后重新提交）的提成单，已经在审批中的按提交时的流程走完。每一级由谁审，保存后在审批流卡片上选。')
+        }
       />
       <div className="flow-edit-head">
         <span />
@@ -194,12 +211,12 @@ export default function FlowEditor({ open, peopleOn, onClose }: Props) {
                   onClick={() => move(i, 1)}
                 />
               </Tooltip>
-              <Tooltip title={rows.length === 1 ? t('至少要留一级') : t('删掉这一级')}>
+              <Tooltip title={rows.length === 1 && !isReceipt ? t('至少要留一级') : t('删掉这一级')}>
                 <Button
                   size="small"
                   danger
                   icon={<DeleteOutlined />}
-                  disabled={rows.length === 1}
+                  disabled={rows.length === 1 && !isReceipt}
                   aria-label={t('删掉这一级')}
                   onClick={() => remove(i)}
                 />
