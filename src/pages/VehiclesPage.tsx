@@ -1,4 +1,4 @@
-import { DownloadOutlined, EditOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { DeleteOutlined, DownloadOutlined, EditOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import {
   App,
   Badge,
@@ -36,7 +36,8 @@ const PAY_COLOR: Record<string, string> = { 已结清: 'green', 部分到账: 'o
 
 export default function VehiclesPage() {
   const t = useT()
-  const { isStaff, isAdmin } = useAuth()
+  const { message } = App.useApp()
+  const { isStaff } = useAuth()
   const { salespersons } = useRefData()
   const [rows, setRows] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(false)
@@ -47,6 +48,8 @@ export default function VehiclesPage() {
   const [ship, setShip] = useState<string | undefined>()
   const [form, setForm] = useState<{ open: boolean; vehicle: Vehicle | null }>({ open: false, vehicle: null })
   const [importOpen, setImportOpen] = useState(false)
+  const [selected, setSelected] = useState<number[]>([])
+  const [deleting, setDeleting] = useState(false)
   const [detail, setDetail] = useState<Vehicle | null>(null)
   const [unlockedOpen, setUnlockedOpen] = useState(false)
   const [unlockedCount, setUnlockedCount] = useState(0)
@@ -71,8 +74,61 @@ export default function VehiclesPage() {
     }
     const { data } = await fetchAll<Vehicle>(make)
     setRows(data)
+    setSelected([])
     setLoading(false)
   }, [q, spId, payStatus, method, ship])
+
+  // 批量删除（财务、管理员）：有到账记录、在提成单上、有待审核到账提交的车不删，其余连同导入时记的期初一起删
+  const removeSelected = async () => {
+    const ids = selected
+    if (!ids.length) return
+    setDeleting(true)
+    try {
+      const refused = new Map<number, string>()
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data, error } = await supabase.from('receipt_claims').select('vehicle_id').in('vehicle_id', ids.slice(i, i + 150)).is('import_key', null)
+        if (error) throw error
+        for (const c of data ?? []) if (c.vehicle_id) refused.set(c.vehicle_id, t('有到账记录'))
+      }
+      const [{ data: vouchers, error: e1 }, { data: subs, error: e2 }] = await Promise.all([
+        supabase.from('commission_vouchers').select('vehicles'),
+        supabase.from('receipt_submissions').select('claims').eq('status', 'pending'),
+      ])
+      if (e1) throw e1
+      if (e2) throw e2
+      const onVoucher = new Set<number>()
+      for (const v of vouchers ?? []) for (const x of (v.vehicles as { vehicle_id?: number }[]) ?? []) if (x.vehicle_id) onVoucher.add(x.vehicle_id)
+      const onSub = new Set<number>()
+      for (const s of subs ?? []) for (const x of (s.claims as { vehicle_id?: number }[]) ?? []) if (x.vehicle_id) onSub.add(x.vehicle_id)
+      for (const id of ids) {
+        if (onVoucher.has(id)) refused.set(id, t('在提成单上'))
+        else if (onSub.has(id) && !refused.has(id)) refused.set(id, t('有待审核的到账提交'))
+      }
+      const ok = ids.filter((id) => !refused.has(id))
+      let deleted = 0
+      for (let i = 0; i < ok.length; i += 150) {
+        const chunk = ok.slice(i, i + 150)
+        const r1 = await supabase.from('receipt_claims').delete().in('vehicle_id', chunk).not('import_key', 'is', null)
+        if (r1.error) throw r1.error
+        const r2 = await supabase.from('vehicles').delete().in('id', chunk).select('id')
+        if (r2.error) throw r2.error
+        deleted += r2.data?.length ?? 0
+      }
+      if (refused.size) {
+        const byId = new Map(rows.map((r) => [r.id as number, r.vin]))
+        const list = [...refused.entries()].slice(0, 10).map(([id, why]) => `${byId.get(id) ?? id}（${why}）`).join('、')
+        message.warning(t('已删除 {n} 台；{m} 台没删：{list}', { n: deleted, m: refused.size, list: list + (refused.size > 10 ? '…' : '') }), 8)
+      } else {
+        message.success(t('已删除 {n} 台', { n: deleted }))
+      }
+    } catch (e) {
+      message.error(errorText(e))
+    } finally {
+      setDeleting(false)
+      await load()
+      void loadUnlocked()
+    }
+  }
 
   useEffect(() => {
     void load()
@@ -170,10 +226,22 @@ export default function VehiclesPage() {
           <Button icon={<DownloadOutlined />} onClick={exportExcel} disabled={!rows.length}>
             {t('导出 Excel')}
           </Button>
-          {isAdmin && (
+          {isStaff && (
             <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
               {t('批量导入')}
             </Button>
+          )}
+          {isStaff && selected.length > 0 && (
+            <Popconfirm
+              title={t('删除选中的 {n} 台车？有到账记录、在提成单上的不会删。', { n: selected.length })}
+              okText={t('删除')}
+              okButtonProps={{ danger: true }}
+              onConfirm={() => void removeSelected()}
+            >
+              <Button danger icon={<DeleteOutlined />} loading={deleting}>
+                {t('删除选中 {n} 台', { n: selected.length })}
+              </Button>
+            </Popconfirm>
           )}
           {isStaff && (
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setForm({ open: true, vehicle: null })}>
@@ -229,12 +297,23 @@ export default function VehiclesPage() {
         scroll={{ x: 1300 }}
         pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 台', { n }) }}
         rowClassName={() => 'clickable-row'}
-        onRow={(r) => ({ onClick: () => setDetail(r) })}
+        onRow={(r) => ({ onClick: (e) => !(e.target as HTMLElement).closest('.ant-table-selection-column') && setDetail(r) })}
+        rowSelection={
+          isStaff
+            ? {
+                selectedRowKeys: selected,
+                onChange: (keys) => setSelected(keys as number[]),
+                selections: [Table.SELECTION_ALL, Table.SELECTION_NONE],
+                columnWidth: 40,
+                fixed: true,
+              }
+            : undefined
+        }
         summary={() =>
           rows.length ? (
             <Table.Summary fixed>
               <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={5}>
+                <Table.Summary.Cell index={0} colSpan={isStaff ? 6 : 5}>
                   {t('合计')}
                 </Table.Summary.Cell>
                 <Table.Summary.Cell index={5} align="right">
