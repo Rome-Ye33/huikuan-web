@@ -1,11 +1,11 @@
-import { ArrowRightOutlined, PlusOutlined } from '@ant-design/icons'
+import { ArrowRightOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
 import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
+import FlowEditor from '../components/FlowEditor'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
-import { asPosts, POST_LABEL, POSTS } from '../lib/commission'
-import type { Post } from '../lib/commission'
 import { errorText } from '../lib/errors'
+import { useFlow } from '../lib/flow'
 import { dateTime } from '../lib/format'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
@@ -19,6 +19,7 @@ export default function UsersPage() {
   const t = useT()
   const { session, reloadProfile } = useAuth()
   const { salespersons } = useRefData()
+  const flow = useFlow()
   const { message, modal } = App.useApp()
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
@@ -26,7 +27,8 @@ export default function UsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [pwUser, setPwUser] = useState<Profile | null>(null)
   const [pwBusy, setPwBusy] = useState(false)
-  const [postBusy, setPostBusy] = useState<Post | null>(null)
+  const [postBusy, setPostBusy] = useState<string | null>(null)
+  const [flowOpen, setFlowOpen] = useState(false)
   const [pform] = Form.useForm<{ password: string }>()
   const [uform] = Form.useForm<{
     full_name?: string
@@ -56,26 +58,29 @@ export default function UsersPage() {
 
   const registered = new Set(profiles.map((p) => (p.email ?? '').toLowerCase()))
 
-  // ---------- 提成单审批流：每一级由谁审（审批岗位）。已注册的人记在 profiles，还没注册的记在邀请名单、注册时带过去 ----------
+  // ---------- 提成单审批流：有哪几级（管理员点“调整审批流”改），每一级由谁审（审批岗位，存级别的 key）。
+  // 已注册的人记在 profiles，还没注册的记在邀请名单、注册时带过去 ----------
   const waiting = invites.filter((i) => !registered.has(i.email))
   const usable = (p: Profile) => p.active && !!p.role
   const postsOf = (x: { approval_posts: string[] | null }) => x.approval_posts ?? []
   const personName = (p: { full_name: string | null; email: string | null }) => p.full_name || p.email || ''
   /** 这个岗位上现在有谁：p:<用户id> 或 i:<邀请邮箱> */
-  const postValue = (post: Post): string[] => [
+  const postValue = (post: string): string[] => [
     ...profiles.filter((p) => postsOf(p).includes(post)).map((p) => 'p:' + p.id),
     ...waiting.filter((i) => postsOf(i).includes(post)).map((i) => 'i:' + i.email),
   ]
-  const postOptions = (post: Post) => [
+  const postOptions = (post: string) => [
     ...profiles
       .filter((p) => usable(p) || postsOf(p).includes(post))
       .map((p) => ({ value: 'p:' + p.id, label: usable(p) ? personName(p) : t('{name}（已停用）', { name: personName(p) }) })),
     ...waiting.map((i) => ({ value: 'i:' + i.email, label: t('{name}（等待注册）', { name: personName(i) }) })),
   ]
   /** 在岗的人（启用、有角色、已注册）；一个都没有时由管理员代办 */
-  const holders = (post: Post) => profiles.filter((p) => usable(p) && postsOf(p).includes(post))
+  const holders = (post: string) => profiles.filter((p) => usable(p) && postsOf(p).includes(post))
+  /** 这一级上有几个人（已注册的和邀请名单上的）：删掉这一级时他们的岗位会去掉 */
+  const peopleOn = (post: string) => profiles.filter((p) => postsOf(p).includes(post)).length + waiting.filter((i) => postsOf(i).includes(post)).length
 
-  const setPost = async (post: Post, next: string[]) => {
+  const setPost = async (post: string, next: string[]) => {
     const cur = postValue(post)
     const changed = [...next.filter((k) => !cur.includes(k)), ...cur.filter((k) => !next.includes(k))]
     if (!changed.length) return
@@ -83,7 +88,8 @@ export default function UsersPage() {
     let failed: string | null = null
     for (const key of changed) {
       const on = next.includes(key)
-      const withPost = (list: string[]) => asPosts(on ? [...list, post] : list.filter((x) => x !== post))
+      // 顺序、去重、去掉已经删掉的级别由数据库来做
+      const withPost = (list: string[]) => (on ? [...list.filter((x) => x !== post), post] : list.filter((x) => x !== post))
       if (key.startsWith('p:')) {
         const p = profiles.find((x) => 'p:' + x.id === key)
         if (!p) continue
@@ -102,7 +108,7 @@ export default function UsersPage() {
     await load()
     if (changed.includes('p:' + (session?.user.id ?? ''))) await reloadProfile()
   }
-  const postTags = (list: string[]) => asPosts(list).map((p) => <Tag key={p}>{t(POST_LABEL[p])}</Tag>)
+  const postTags = (list: string[]) => flow.sortKeys(list).map((k) => <Tag key={k}>{flow.name(k)}</Tag>)
 
   const saveUser = async () => {
     // 填得不对时表单自己会标红，这里不用再报错
@@ -193,11 +199,17 @@ export default function UsersPage() {
         size="small"
         className="flow-card"
         title={t('提成单审批流')}
+        extra={
+          <Button size="small" icon={<EditOutlined />} onClick={() => setFlowOpen(true)}>
+            {t('调整审批流')}
+          </Button>
+        }
         style={{ marginBottom: 20 }}
       >
         <div className="flow-row">
           <div className="flow-end">{t('业务员开单提交')}</div>
-          {POSTS.map((post, n) => {
+          {flow.active.map((s, n) => {
+            const post = s.key
             const on = holders(post)
             const pending = waiting.some((i) => postsOf(i).includes(post))
             return (
@@ -205,7 +217,7 @@ export default function UsersPage() {
                 <ArrowRightOutlined className="flow-arrow" />
                 <div className="flow-box">
                   <div className="flow-name">
-                    {n + 1}. {t(POST_LABEL[post])}
+                    {n + 1}. {flow.name(post)}
                   </div>
                   <Select
                     mode="multiple"
@@ -234,8 +246,20 @@ export default function UsersPage() {
         </div>
         <div className="hint" style={{ marginTop: 8 }}>
           {t('提成单在线上按这个顺序一级一级审，不用打印签字。一个岗位可以有几个人（谁先审都行），一个人也可以兼几个岗位。岗位和角色是分开的：角色决定能看到、能录什么，岗位决定提成单轮到谁审。管理员任何一级都可以代办。')}
+          {t('要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后提交的提成单。')}
         </div>
       </Card>
+      <FlowEditor
+        open={flowOpen}
+        peopleOn={peopleOn}
+        onClose={(saved) => {
+          setFlowOpen(false)
+          if (saved) {
+            void load()
+            void reloadProfile()
+          }
+        }}
+      />
       <Typography.Title level={5}>{t('已注册的用户')}</Typography.Title>
       <Table
         rowKey="id"

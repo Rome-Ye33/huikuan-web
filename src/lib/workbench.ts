@@ -1,7 +1,8 @@
 // 工作台：到账提交、提成单两种审批并在一起，按登录的人分成待办 / 已办 / 已发起 / 已结束（数据库视图 v_workbench 算好）。
 // 每一步谁做的、什么时候、退回原因记在 approval_logs（触发器写）。
-import { useEffect, useState } from 'react'
-import { asPost, POST_PASSED, STAGE_COLOR, STAGE_LABEL, voucherStage } from './commission'
+import { useEffect, useMemo, useState } from 'react'
+import { useFlow } from './flow'
+import { useT } from './i18n'
 import { STATUS_COLOR, STATUS_LABEL } from './submissions'
 import type { SubmissionStatus } from './submissions'
 import { supabase } from './supabase'
@@ -57,12 +58,6 @@ export const ACTION_LABEL: Record<string, string> = {
   unpay: '已取消发放',
   reopen: '到账被删除，回到待审核',
 }
-/** 一步的说法：提成单每一级通过各有各的（销售部已通过……），其余按动作 */
-export function actionLabel(action: string | null | undefined, step?: string | null): string {
-  const p = action === 'approve' ? asPost(step) : null
-  if (p) return POST_PASSED[p]
-  return ACTION_LABEL[action ?? ''] ?? action ?? ''
-}
 export const ACTION_COLOR: Record<string, string> = {
   submit: 'blue',
   resubmit: 'blue',
@@ -78,14 +73,27 @@ export function docType(x: string | null | undefined): DocType {
   return x === 'voucher' ? 'voucher' : 'submission'
 }
 
-/** 状态的中文（界面上再翻译）和颜色，两种单据各用各的；提成单审批中的按走到哪一级 */
-export function statusLabel(type: DocType, status: string | null | undefined, step?: string | null): string {
-  if (type === 'voucher') return STAGE_LABEL[voucherStage(status, step)]
-  return STATUS_LABEL[(status ?? 'pending') as SubmissionStatus] ?? status ?? ''
-}
-export function statusColor(type: DocType, status: string | null | undefined, step?: string | null): string {
-  if (type === 'voucher') return STAGE_COLOR[voucherStage(status, step)]
-  return STATUS_COLOR[(status ?? 'pending') as SubmissionStatus] ?? 'default'
+/**
+ * 单据状态、审批记录里一步的说法（已翻译）和颜色，两种单据各用各的。
+ * 提成单审批中的写明等哪一级、某一级通过写“{级别}已通过”，级别的名字看审批流（管理员可以改）
+ */
+export function useDocLabels() {
+  const t = useT()
+  const flow = useFlow()
+  return useMemo(
+    () => ({
+      status: (type: DocType, status: string | null | undefined, step?: string | null): string =>
+        type === 'voucher' ? flow.stageLabel(status, step) : t(STATUS_LABEL[(status ?? 'pending') as SubmissionStatus] ?? status ?? ''),
+      color: (type: DocType, status: string | null | undefined, step?: string | null): string =>
+        type === 'voucher' ? flow.stageColor(status, step) : (STATUS_COLOR[(status ?? 'pending') as SubmissionStatus] ?? 'default'),
+      action: (action: string | null | undefined, step?: string | null): string => {
+        if (!action) return ''
+        if (action === 'approve' && step) return t('{name}已通过', { name: flow.name(step) })
+        return t(ACTION_LABEL[action] ?? action)
+      },
+    }),
+    [t, flow],
+  )
 }
 
 /** 某一栏的查询（不含分页） */

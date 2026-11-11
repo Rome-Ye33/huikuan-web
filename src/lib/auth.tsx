@@ -2,8 +2,6 @@ import type { Session } from '@supabase/supabase-js'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { supabase } from './supabase'
-import { asPosts } from './commission'
-import type { Post } from './commission'
 import type { AppRole, Profile } from './supabase'
 
 type AuthState = {
@@ -13,8 +11,8 @@ type AuthState = {
   role: AppRole | null
   isAdmin: boolean
   isStaff: boolean // 管理员或财务
-  /** 我在哪些审批岗位上（提成单轮到哪一级由谁审） */
-  posts: Post[]
+  /** 我在提成单审批流的哪几级上（审批岗位，存级别的 key） */
+  posts: string[]
   reloadProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -72,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role,
       isAdmin: role === 'admin',
       isStaff: role === 'admin' || role === 'finance',
-      posts: role ? asPosts(profile?.approval_posts) : [],
+      posts: role ? (profile?.approval_posts ?? []) : [],
       reloadProfile: () => loadProfile(session),
       signOut: async () => {
         await supabase.auth.signOut()

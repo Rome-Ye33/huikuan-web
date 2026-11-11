@@ -2,7 +2,7 @@ import { Card, Spin, Timeline } from 'antd'
 import { useEffect, useState } from 'react'
 import { dateTime } from '../lib/format'
 import { useT } from '../lib/i18n'
-import { ACTION_COLOR, actionLabel, fetchTrail } from '../lib/workbench'
+import { ACTION_COLOR, fetchTrail, useDocLabels } from '../lib/workbench'
 import type { ApprovalLog, DocType } from '../lib/workbench'
 
 // 审批记录：一张单据从提交到结束，每一步谁做的、什么时候、退回原因
@@ -16,6 +16,7 @@ type Props = {
 
 export default function ApprovalTrail({ docType, docId, version }: Props) {
   const t = useT()
+  const labels = useDocLabels()
   // 读到的记录属于哪张单据（换了单据，旧的不显示）
   const [data, setData] = useState<{ key: string; rows: ApprovalLog[] } | null>(null)
   const [loading, setLoading] = useState(false)
@@ -49,7 +50,7 @@ export default function ApprovalTrail({ docType, docId, version }: Props) {
             content: (
               <div>
                 <div>
-                  <b>{t(actionLabel(r.action, r.step))}</b>
+                  <b>{labels.action(r.action, r.step)}</b>
                   <span className="hint" style={{ marginInlineStart: 8 }}>
                     {r.actor_name || t('系统')} · {dateTime(r.at)}
                   </span>

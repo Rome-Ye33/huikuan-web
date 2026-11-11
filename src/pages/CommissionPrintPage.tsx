@@ -6,6 +6,7 @@ import CommissionSheet from '../components/CommissionSheet'
 import type { CommissionVoucher } from '../lib/commission'
 import { errorText } from '../lib/errors'
 import { useT } from '../lib/i18n'
+import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 
 // 提成单打印页：不带菜单，只有一张单；浏览器“打印”可以直接打或另存为 PDF
@@ -15,6 +16,9 @@ export default function CommissionPrintPage() {
   const { id } = useParams()
   const [v, setV] = useState<CommissionVoucher | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // 签字栏要用审批流里级别的名字，等基础资料读好再出单
+  const { loaded } = useRefData()
+  const ready = !!v && loaded
 
   useEffect(() => {
     const vid = Number(id)
@@ -56,14 +60,14 @@ export default function CommissionPrintPage() {
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/commission')}>
             {t('回到提成申请单')}
           </Button>
-          <Button type="primary" icon={<PrinterOutlined />} disabled={!v} onClick={() => window.print()}>
+          <Button type="primary" icon={<PrinterOutlined />} disabled={!ready} onClick={() => window.print()}>
             {t('打印')}
           </Button>
         </Space>
       </div>
       {err ? (
         <Result status="warning" title={err} />
-      ) : v ? (
+      ) : v && ready ? (
         <CommissionSheet v={v} />
       ) : (
         <div style={{ textAlign: 'center', padding: 48 }}>

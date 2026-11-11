@@ -27,12 +27,9 @@ import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import {
-  asPost,
   isEditableStatus,
   notifyVouchersChanged,
   PAY_STATE_ZH,
-  POST_LABEL,
-  POSTS,
   parsePayments,
   parseVehicles,
   paymentDisplay,
@@ -40,13 +37,11 @@ import {
   printVoucher,
   qtyModelText,
   savedTotals,
-  STAGE_COLOR,
-  STAGE_LABEL,
-  voucherStage,
   voucherStatus,
   voucherTotals,
 } from '../lib/commission'
-import type { CommissionVoucher, Post, VoucherPayment, VoucherStage, VoucherStatus, VoucherVehicle } from '../lib/commission'
+import type { CommissionVoucher, VoucherPayment, VoucherStatus, VoucherVehicle } from '../lib/commission'
+import { parseFlow, useFlow, voucherFlow } from '../lib/flow'
 import type { Json } from '../lib/database.types'
 import { errorText } from '../lib/errors'
 import { dateTime, money, num, round2, todayAccra } from '../lib/format'
@@ -60,7 +55,7 @@ import Vouchers from './Vouchers'
 
 // 提成申请单：按客户开，车从这个客户、这个业务员名下的车里选（大架号必填），
 // 付款从这个客户的到账里勾（这几台车的，或者大架号还没锁定的）。提成金额手填。
-// 流程都在线上：草稿 → 提交 → 销售部 → 应收财务 → 财务负责人 → 公司负责人 → 财务标记已发放。
+// 流程都在线上：草稿 → 提交 → 审批流里的各级（管理员在用户与权限里定，提交时记下当时的流程）→ 财务标记已发放。
 // 每一级由谁审看审批岗位（用户与权限里指定）；岗位上没人时管理员代办。可以带附件。
 
 type Props = {
@@ -93,7 +88,7 @@ type VehRow = { vehicle_id: number; note: string }
 type PayRow = { claim_id: number; share_usd: number | null; note: string }
 type Sel = { veh: VehRow[]; pay: PayRow[] }
 /** 同一个客户的其他提成单（提示重复算） */
-type Other = { id: number; no: string; stage: VoucherStage; vehicleIds: Set<number>; shares: Map<number, number> }
+type Other = { id: number; no: string; status: string | null; step: string | null; vehicleIds: Set<number>; shares: Map<number, number> }
 type Touched = { qty: boolean; discount: boolean; terms: boolean; ratio: boolean }
 
 const EMPTY_SEL: Sel = { veh: [], pay: [] }
@@ -154,7 +149,8 @@ function eligible(c: Claim, vids: Set<number>, spId: number | null, staff: boole
 export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const t = useT()
   const { isStaff, isAdmin, profile, session, posts } = useAuth()
-  const { salespersons, customers } = useRefData()
+  const { salespersons, customers, steps } = useRefData()
+  const flow = useFlow()
   const { message, modal } = App.useApp()
   const mySp = profile?.salesperson_id ?? null
   const myUid = session?.user.id ?? null
@@ -199,9 +195,10 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   }, [sel])
 
   const status: VoucherStatus = voucher ? voucherStatus(voucher.status) : 'draft'
-  const stage: VoucherStage = voucher ? voucherStage(voucher.status, voucher.step) : 'draft'
-  /** 审批中走到哪一级 */
-  const step: Post | null = status === 'submitted' ? asPost(voucher?.step) : null
+  /** 审批中走到哪一级（审批流里级别的 key） */
+  const step: string | null = status === 'submitted' ? (voucher?.step ?? null) : null
+  /** 这张单提交时记下的审批流（谁、什么时候通过的）；草稿没有 */
+  const ownFlow = parseFlow(voucher?.flow)
   /** 能改这张单的人：财务、管理员，或这张单的业务员（有审批岗位的人只能看和审别人的单） */
   const mine = !voucher || isStaff || (mySp != null && voucher.salesperson_id === mySp)
   const editable = !voucher || (isEditableStatus(status) && mine)
@@ -219,13 +216,13 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   }, [spId, customersOf])
 
   const loadVoucher = useCallback(
-    async (vid: number) => {
+    async (vid: number): Promise<CommissionVoucher | null> => {
       setLoading(true)
       const { data, error } = await supabase.from('v_commission_vouchers').select('*').eq('id', vid).single()
       setLoading(false)
       if (error || !data) {
         message.error(errorText(error))
-        return
+        return null
       }
       setVoucher(data)
       setHead(headFrom(data))
@@ -238,6 +235,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       noticePrune.current = true
       setDropped(null)
       setDirty(false)
+      return data
     },
     [message],
   )
@@ -290,7 +288,8 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               return {
                 id: o.id as number,
                 no: o.voucher_no ?? `#${o.id}`,
-                stage: voucherStage(o.status, o.step),
+                status: o.status,
+                step: o.step,
                 vehicleIds: new Set(parseVehicles(o.vehicles).map((v) => v.vehicle_id)),
                 shares,
               }
@@ -589,12 +588,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   }
 
   const DONE: Record<string, string> = {
-    submit: '已提交，等销售部审核',
     withdraw: '已撤回，可以修改后再提交',
-    approve_sales_dept: '销售部已通过，等应收财务审核',
-    approve_ar: '应收财务已通过，等财务负责人审核',
-    approve_finance_head: '财务负责人已通过，等公司负责人审批',
-    approve_company_head: '已批准，等财务发放',
     reject: '已退回',
     pay: '已标记为已发放',
     unpay: '已取消发放',
@@ -608,10 +602,16 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       message.error(errorText(error))
       return false
     }
-    message.success(t(DONE[action] ?? '已保存'))
     setChanged(true)
     notifyVouchersChanged()
-    await loadVoucher(vid)
+    const now = await loadVoucher(vid)
+    // 提交、通过以后说清楚接下来等谁（看重新读到的这张单走到哪一级）
+    const next = voucherStatus(now?.status)
+    if ((action === 'submit' || action.startsWith('approve_')) && next === 'submitted' && now?.step) {
+      const name = flow.name(now.step)
+      message.success(action === 'submit' ? t('已提交，等{name}审批', { name }) : t('已通过，等{name}审批', { name }))
+    } else if (action.startsWith('approve_') && next === 'approved') message.success(t('已批准，等财务发放'))
+    else message.success(t(DONE[action] ?? '已保存'))
     return true
   }
 
@@ -694,21 +694,17 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
 
   // ---------- 显示 ----------
   const spName = salespersons.find((s) => s.id === spId)?.name ?? ''
-  // 销售部还没审之前可以撤回：业务员撤自己名下的，财务撤自己开的
-  const canWithdraw = !!id && step === 'sales_dept' && (isStaff ? voucher?.prepared_by === myUid : mine)
-  // 轮到我这个岗位，或者我是管理员（代办）
+  // 第一级还没审之前可以撤回：业务员撤自己名下的，财务撤自己开的
+  const canWithdraw = !!id && !!step && step === ownFlow[0]?.step && (isStaff ? voucher?.prepared_by === myUid : mine)
+  // 轮到我这一级，或者我是管理员（代办）
   const holdsStep = !!step && posts.includes(step)
   const canApprove = !!id && !!step && (holdsStep || isAdmin)
-  const canReject = !!id && (canApprove || (status === 'approved' && (isAdmin || posts.includes('company_head'))))
+  // 全部批完、还没发放的，这张单的最后一级可以退回
+  const lastStep = ownFlow[ownFlow.length - 1]?.step ?? 'company_head'
+  const canReject = !!id && (canApprove || (status === 'approved' && (isAdmin || posts.includes(lastStep))))
   const canPay = !!id && status === 'approved' && isStaff
   const canUnpay = !!id && status === 'paid' && isAdmin
   const canDelete = !!id && editable
-  const approveText: Record<Post, string> = {
-    sales_dept: '销售部审核通过',
-    ar: '应收财务审核通过',
-    finance_head: '财务负责人审核通过',
-    company_head: '公司负责人批准',
-  }
 
   const title = !id
     ? t('新建提成单')
@@ -716,9 +712,9 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       ? t('提成单 {no}', { no: voucher.voucher_no })
       : t('提成单草稿 #{id}', { id })
 
-  const othersTags = (list: { no: string; stage?: VoucherStage }[]) =>
+  const othersTags = (list: { no: string; status?: string | null; step?: string | null }[]) =>
     list.map((o) => (
-      <Tooltip key={o.no} title={o.stage ? t(STAGE_LABEL[o.stage]) : undefined}>
+      <Tooltip key={o.no} title={o.status !== undefined ? flow.stageLabel(o.status, o.step) : undefined}>
         <Tag color="orange" style={{ marginInlineEnd: 4 }}>
           {o.no}
         </Tag>
@@ -904,15 +900,22 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     claims.filter((c) => c.nature_kind === 'discount' && c.vehicle_id != null && vehIds.has(c.vehicle_id)).reduce((s, c) => s + num(c.amount_usd), 0),
   )
 
-  const stepCurrent = step ? POSTS.indexOf(step) + 1 : { draft: 0, rejected: 0, submitted: 1, approved: 5, paid: 6 }[status]
+  // 进度条：制单 → 这张单的各级（草稿是现在的审批流）→ 发放
+  const shownFlow = voucherFlow(voucher?.flow, steps)
+  const n = shownFlow.length
+  const stepCurrent =
+    status === 'submitted'
+      ? Math.max(shownFlow.findIndex((f) => f.step === step), 0) + 1
+      : status === 'approved'
+        ? n + 1
+        : status === 'paid'
+          ? n + 2
+          : status === 'rejected' && ownFlow.length
+            ? // 退回在哪一级：第一个还没通过的；都通过了是批完以后由最后一级退回的
+              (ownFlow.findIndex((f) => !f.at) + 1 || ownFlow.length)
+            : 0
   const signed = (name: string | null | undefined, at: string | null | undefined, dateOnly = false) =>
     name ? `${name} · ${dateOnly ? (at ?? '') : dateTime(at)}` : ''
-  const signOf: Record<Post, string> = {
-    sales_dept: signed(voucher?.dept_name, voucher?.dept_at),
-    ar: signed(voucher?.ar_name, voucher?.ar_at),
-    finance_head: signed(voucher?.finance_name, voucher?.finance_at),
-    company_head: signed(voucher?.gm_name, voucher?.gm_at),
-  }
 
   return (
     <Drawer
@@ -920,7 +923,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       title={
         <Space wrap>
           <span>{title}</span>
-          {id && <Tag color={STAGE_COLOR[stage]}>{t(STAGE_LABEL[stage])}</Tag>}
+          {id && <Tag color={flow.stageColor(voucher?.status, voucher?.step)}>{flow.stageLabel(voucher?.status, voucher?.step)}</Tag>}
         </Space>
       }
       size={Math.min(1180, typeof window !== 'undefined' ? window.innerWidth : 1180)}
@@ -967,7 +970,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
           )}
           {canApprove && step && (
             <Button type="primary" loading={busy === `approve_${step}`} onClick={() => void act(id as number, `approve_${step}`)}>
-              {holdsStep ? t(approveText[step]) : t('代{post}通过', { post: t(POST_LABEL[step]) })}
+              {holdsStep ? t('{name}审核通过', { name: flow.name(step) }) : t('代{post}通过', { post: flow.name(step) })}
             </Button>
           )}
           {canPay && (
@@ -1011,7 +1014,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               status={status === 'rejected' ? 'error' : status === 'paid' ? 'finish' : 'process'}
               items={[
                 { title: t('制单'), content: signed(voucher?.prepared_name, voucher?.prepared_at) },
-                ...POSTS.map((p) => ({ title: t(POST_LABEL[p]), content: signOf[p] })),
+                ...shownFlow.map((f) => ({ title: flow.name(f.step), content: signed(f.by_name, f.at) })),
                 { title: t('发放'), content: signed(voucher?.paid_name, voucher?.paid_on, true) },
               ]}
             />

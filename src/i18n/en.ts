@@ -110,26 +110,16 @@ const VALUES: Record<string, string> = {
   "内容太大，Claude 收不下，请少传几张图": "The content is too large for Claude. Upload fewer images.",
   "Claude 没法处理这次请求：{reason}": "Claude could not process this request: {reason}",
   "只接受 POST": "POST only",
-  // 提成单状态
+  // 提成单状态（审批中的写明等哪一级，是界面文字“待{name}审批”）
   "草稿": "Draft",
-  "待销售部审核": "Awaiting Sales Dept",
-  "待应收财务审核": "Awaiting AR Finance",
-  "待财务负责人审核": "Awaiting Head of Finance",
-  "待公司负责人审批": "Awaiting Company Head",
+  "审批中": "Pending approval",
   "已批准待发放": "Approved, to pay out",
   "已发放": "Paid out",
-  // 审批岗位（提成单五级审批：业务员 → 销售部 → 应收财务 → 财务负责人 → 公司负责人）
+  // 审批流原来的几级。级别的名字现在由管理员定，界面上用级别自己填的英文名；
+  // 这里只给服务器报错里带的级别名字用（比如“这一步要由“应收财务”审核”）
   "应收财务": "AR Finance",
   "财务负责人": "Head of Finance",
   "公司负责人": "Company Head",
-  "销售部已通过": "Approved by Sales Dept",
-  "应收财务已通过": "Approved by AR Finance",
-  "财务负责人已通过": "Approved by Head of Finance",
-  "公司负责人已批准": "Approved by Company Head",
-  "销售部审核通过": "Approve (Sales Dept)",
-  "应收财务审核通过": "Approve (AR Finance)",
-  "财务负责人审核通过": "Approve (Head of Finance)",
-  "公司负责人批准": "Approve (Company Head)",
   // 凭证、附件（Vouchers 组件）
   "上传凭证": "Upload proof",
   "已上传 {n} 个凭证": "{n} proof(s) uploaded",
@@ -144,10 +134,6 @@ const VALUES: Record<string, string> = {
   "已还 {paid} 期 / 共 {total} 期": "Paid {paid} of {total} terms",
   // 提成单操作完成的提示
   "已撤回，可以修改后再提交": "Withdrawn. You can edit it and submit again.",
-  "已提交，等销售部审核": "Submitted. Waiting for Sales Dept.",
-  "销售部已通过，等应收财务审核": "Sales Dept approved. Waiting for AR Finance.",
-  "应收财务已通过，等财务负责人审核": "AR Finance approved. Waiting for the Head of Finance.",
-  "财务负责人已通过，等公司负责人审批": "Head of Finance approved. Waiting for the Company Head.",
   "已批准，等财务发放": "Approved. Waiting for finance to pay out.",
   "已标记为已发放": "Marked as paid out",
   "已取消发放": "Payout undone",
@@ -171,10 +157,11 @@ const VALUES: Record<string, string> = {
   "这张提成单已经提交过了，请刷新后再看": "This voucher has already been submitted. Refresh and check again.",
   "每台车都要有大架号": "Every vehicle needs a VIN",
   "这张提成单现在不能由你退回": "You can't return this voucher at this stage",
-  "销售部审核之后就不能撤回了，要改请审核人退回": "It can't be withdrawn once Sales Dept has reviewed it. Ask the reviewer to return it.",
+  "第一级审批之后就不能撤回了，要改请审核人退回": "It can't be withdrawn once the first level has approved it. Ask the reviewer to return it.",
   "这张提成单已经不在这一步了，请刷新后再看": "This voucher has moved on from this step. Refresh and check again.",
   "这一步要由“{post}”审核，你不在这个岗位上": "This step is reviewed by {post}, and you are not assigned to it",
-  "公司负责人批准后才能发放": "It can only be paid out after the Company Head approves",
+  "审批全部通过后才能发放": "It can only be paid out after every level has approved it",
+  "审批流还没有设置，请管理员先在“用户与权限”里设置": "The approval flow is not set up yet. Ask an admin to set it up under Users & roles.",
   "只能添加自己上传的附件": "You can only add files you uploaded yourself",
   "提成单已经提交，附件只能加、不能去掉": "The voucher has been submitted: attachments can be added but not removed",
   "一张提成单最多 30 个附件": "A voucher can have at most 30 attachments",
@@ -182,6 +169,16 @@ const VALUES: Record<string, string> = {
   "只有管理员可以取消发放": "Only an admin can undo the payout",
   "这张提成单还没发放": "This voucher has not been paid out yet",
   "未知操作：{action}": "Unknown action: {action}",
+  // 调整审批流（SQL 19 save_voucher_flow）的报错
+  "只有管理员可以改审批流": "Only an admin can change the approval flow",
+  "审批流的格式不对": "The approval flow is not in the right format",
+  "审批流至少要有一级": "The approval flow needs at least one level",
+  "审批流最多 10 级": "The approval flow can have at most 10 levels",
+  "每一级都要填名字": "Every level needs a name",
+  "名字最多 20 个字：{name}": "A name can be at most 20 characters: {name}",
+  "英文名最多 40 个字母：{name}": "An English name can be at most 40 characters: {name}",
+  "有两级都叫“{name}”，请改成不一样的名字": "Two levels are both called “{name}”. Give them different names.",
+  "审批流刚被别人改过，请刷新后再改": "Someone else has just changed the approval flow. Refresh and try again.",
   // 批量导入车辆和期初
   "{field}不是数字": "{field} is not a number",
   "{field}认不出来，按空的导入": "Couldn't read {field}; imported as blank",
@@ -909,8 +906,8 @@ const UI: Record<string, string> = {
   "新建提成单": "New voucher",
   "提成单 {no}": "Commission voucher {no}",
   "提成单草稿 #{id}": "Draft voucher #{id}",
-  "业务员按客户开单（选车、勾客户的付款、填提成金额，可以加附件），提交后在线上逐级审批：销售部 → 应收财务 → 财务负责人 → 公司负责人，批准后财务发放。":
-    "Salespeople open one voucher per customer (choose the vehicles, tick the customer's payments, enter the commission, add attachments if needed). After it is submitted it is approved online, step by step: Sales Dept → AR Finance → Head of Finance → Company Head. Finance then pays out.",
+  "业务员按客户开单（选车、勾客户的付款、填提成金额，可以加附件），提交后在线上逐级审批：{flow}，批准后财务发放。":
+    "Salespeople open one voucher per customer (choose the vehicles, tick the customer's payments, enter the commission, add attachments if needed). After it is submitted it is approved online, step by step: {flow}. Finance then pays out.",
   "草稿 #{id}": "Draft #{id}",
   "按客户开单：选好客户和业务员，再选这单的车（大架号必填）。系统会带出这几台车的到账；大架号还没锁定的到账也可以勾上。提成金额手填。":
     "One voucher per customer: choose the customer and salesperson, then the vehicles on this voucher (VIN required). The receipts of these vehicles come in automatically, and you can also tick receipts whose VIN is not set yet. Enter the commission by hand.",
@@ -928,6 +925,11 @@ const UI: Record<string, string> = {
   "打印": "Print",
   "保存草稿": "Save draft",
   "代{post}通过": "Approve for {post}",
+  "{name}审核通过": "Approve ({name})",
+  "待{name}审批": "Awaiting {name}",
+  "{name}已通过": "Approved by {name}",
+  "已提交，等{name}审批": "Submitted. Waiting for {name}.",
+  "已通过，等{name}审批": "Approved. Waiting for {name}.",
   "附件": "Attachments",
   "附件没存上：": "Attachments not saved: ",
   "合同、付款凭证、聊天截图等，图片、PDF、Excel、Word 都可以。保存或提交时一起存。":
@@ -1085,6 +1087,35 @@ const UI: Record<string, string> = {
   "等对方注册；在这之前由管理员代办": "Waiting for them to sign up. Until then an admin handles this step.",
   "提成单在线上按这个顺序一级一级审，不用打印签字。一个岗位可以有几个人（谁先审都行），一个人也可以兼几个岗位。岗位和角色是分开的：角色决定能看到、能录什么，岗位决定提成单轮到谁审。管理员任何一级都可以代办。":
     "Vouchers are approved online in this order, one step at a time. No printing or signing is needed. A post can have several people (any one of them can approve), and one person can hold several posts. Posts are separate from roles: the role decides what someone can see and enter, the post decides whose turn it is to approve. An admin can act on any step.",
+  "要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后提交的提成单。":
+    " To add or remove a level, rename one or change the order, click “Edit flow” at the top right. Changes only apply to vouchers submitted afterwards.",
+  "调整审批流": "Edit flow",
+
+  // 调整审批流（管理员）
+  "调整提成单审批流": "Edit the commission voucher approval flow",
+  "开头“业务员开单提交”和最后“财务发放”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后提交（包括退回后重新提交）的提成单，已经在审批中的按提交时的流程走完。每一级由谁审，保存后在审批流卡片上选。":
+    "“Salesperson submits” at the start and “Finance pays out” at the end stay as they are. Here you change the approval levels in between: add a level, remove one, rename one or change the order. Changes only apply to vouchers submitted after saving (including ones resubmitted after being returned); vouchers already in approval finish under the flow they were submitted with. After saving, choose who approves each level on the approval flow card.",
+  "名字": "Name",
+  "英文名（英文界面用，可不填）": "English name (shown in the English interface, optional)",
+  "比如 销售经理": "e.g. 销售经理",
+  "比如 Sales Manager": "e.g. Sales Manager",
+  "上移": "Move up",
+  "下移": "Move down",
+  "删掉这一级": "Remove this level",
+  "至少要留一级": "At least one level is needed",
+  "加一级": "Add a level",
+  "最多 {n} 级": "At most {n} levels",
+  "请填名字": "Enter a name",
+  "名字最多 {n} 个字": "At most {n} characters",
+  "英文名最多 {n} 个字母": "English name: at most {n} characters",
+  "和第 {n} 级重名了": "Same name as level {n}",
+  "审批流已保存": "Approval flow saved",
+  "删掉 {names}？": "Remove {names}?",
+  "“{name}”上的 {n} 个人会去掉这个审批岗位": "The {n} person(s) on “{name}” will lose this approval post.",
+  "审批中的 {n} 张提成单还要经过“{name}”，到这一级时由管理员代办": "{n} voucher(s) in approval still have to pass “{name}”. When they get there, an admin approves on its behalf.",
+  "之后提交的提成单不再走删掉的级别。": "Vouchers submitted from now on skip the removed levels.",
+  "删掉并保存": "Remove and save",
+  "再想想": "Cancel",
 }
 
 export const EN: Record<string, string> = { ...VALUES, ...UI }
