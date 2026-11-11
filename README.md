@@ -48,6 +48,17 @@
 
 开号、重设密码、删除账号走 Supabase Edge Function `account`（源码在 `supabase/functions/account/`，部署时关掉 verify_jwt，函数里自己校验管理员身份）。服务端密钥只在 Supabase 服务器上用，不进浏览器。
 
+## 智能填表
+
+到账录入点“新建到账”，最上面有“智能填表”：把业务员在群里发的回款消息、银行的 Credit Alert 贴进去，水单截图传上来（或者 Ctrl+V 粘贴），点“识别并填表”，账户、日期、金额、汇率、付款方和拆分到车都会填好，财务核对后再保存。只有管理员和财务能用。
+
+- 识别由 Claude 的 API 来做，走 Supabase Edge Function `receipt-ai`（源码在 `supabase/functions/receipt-ai/`，部署时关掉 verify_jwt，函数里自己校验是不是财务或管理员）。它只负责看懂内容，不写数据库；保存还是走原来的 `save_receipt`。
+- 开通：在 Supabase 后台 Edge Functions → Secrets 加 `ANTHROPIC_API_KEY`（在 Claude 的开发者后台 platform.claude.com 创建，账户里要有余额）。密钥只放在 Supabase 服务器上，不进浏览器、不进仓库。
+- 可选的两个密钥：`CLAUDE_MODEL`（默认 `claude-opus-5-5`，想省钱可以换便宜的型号）、`CLAUDE_EFFORT`（`low` / `medium` / `high`，默认 `medium`）。
+- 对不上的地方（账户没认出、大架号系统里没有、客户名有出入、一笔钱付几台车没写每台多少）会列在黄色提示里；没对上车的行先按“大架号未锁定”记到客户名下，点 + 可以直接新增那台车。
+- 一次认出好几笔（比如一笔现金、一笔 momo）时，一张表录一笔：保存后再点“新建到账”，剩下的可以接着填，不用再识别一遍。
+- 图片在浏览器里先缩到长边 2000、转成 JPEG 再发；一次最多 4 个图片或 PDF（PDF 每个最多 4 MB）。
+
 ## 本地运行
 
 ```bash
