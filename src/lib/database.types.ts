@@ -692,6 +692,7 @@ export type Database = {
           email: string | null
           full_name: string | null
           id: string
+          notify_email: boolean
           notify_lang: string
           role: Database["public"]["Enums"]["app_role"] | null
           salesperson_id: number | null
@@ -704,6 +705,7 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id: string
+          notify_email?: boolean
           notify_lang?: string
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
@@ -716,6 +718,7 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          notify_email?: boolean
           notify_lang?: string
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
@@ -1537,6 +1540,17 @@ export type Database = {
           to_number: string
         }[]
       }
+      notify_claim_email: {
+        Args: { p_limit?: number }
+        Returns: {
+          body: string
+          go: string
+          id: number
+          lang: string
+          to_email: string
+          to_name: string
+        }[]
+      }
       notify_done: {
         Args: {
           p_error?: string
@@ -1555,6 +1569,10 @@ export type Database = {
       save_receipt: {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number
+      }
+      set_my_email_notify: {
+        Args: { p_lang: string; p_on: boolean }
+        Returns: undefined
       }
       set_my_notify: {
         Args: { p_lang: string; p_whatsapp: string }

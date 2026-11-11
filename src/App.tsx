@@ -78,7 +78,7 @@ export default function App() {
     bindUser(uid)
   }, [uid, bindUser])
 
-  // WhatsApp 提醒里的按钮（?go=…）：登录好以后打开那张单
+  // 邮件提醒里的“打开处理”（?go=…）：登录好以后打开那张单
   const ready = !auth.loading && !!auth.role
   useEffect(() => {
     if (!ready) return

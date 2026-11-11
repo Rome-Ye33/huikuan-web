@@ -1,15 +1,17 @@
-import { WhatsAppOutlined } from '@ant-design/icons'
-import { App, Button, Form, Input, Modal, Radio, Tag, Typography } from 'antd'
-import { useState } from 'react'
+import { MailOutlined } from '@ant-design/icons'
+import { App, Button, Form, Modal, Switch, Tag, Typography } from 'antd'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { useI18n } from '../lib/i18n'
-import type { Lang } from '../lib/i18n'
-import { formatPhone, normalizePhone, saveMyNotify, sendTestMessage } from '../lib/notify'
+import { saveMyNotify, sendTestEmail } from '../lib/notify'
 
-type Values = { whatsapp: string; lang: Lang }
+type Values = { on: boolean }
 
-/** 页头的“WhatsApp 提醒”：每个人填自己的 WhatsApp 号码、选提醒用的语言，可以给自己发一条测试消息 */
+/**
+ * 页头的“邮件提醒”：有新的待办时发邮件到自己登录用的邮箱（默认开着）。可以关掉、给自己发一封测试邮件。
+ * 提醒邮件和网站用同一种语言：网站的语言和存着的不一样时（登录、切换中文 / EN）就记下来，不用另外设。
+ */
 export default function NotifySettings() {
   const { t, lang } = useI18n()
   const { profile, reloadProfile } = useAuth()
@@ -17,32 +19,38 @@ export default function NotifySettings() {
   const [form] = Form.useForm<Values>()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<'save' | 'test' | null>(null)
-  const saved = profile?.whatsapp ?? null
+  const on = profile?.notify_email !== false
+  const email = profile?.email ?? ''
+  const savedLang = profile?.notify_lang
+
+  // 同一种语言只试一次，存不上（比如没网）也不会一直重试
+  const tried = useRef<string | null>(null)
+  useEffect(() => {
+    if (!savedLang || savedLang === lang || tried.current === lang) return
+    tried.current = lang
+    saveMyNotify(null, lang)
+      .then(reloadProfile)
+      .catch(() => {})
+  }, [savedLang, lang, reloadProfile])
 
   const show = () => {
-    // 还没填过号码的，提醒语言先按现在的界面语言
-    const l: Lang = saved ? (profile?.notify_lang === 'en' ? 'en' : 'zh') : lang
-    form.setFieldsValue({ whatsapp: formatPhone(saved), lang: l })
+    form.setFieldsValue({ on })
     setOpen(true)
   }
 
-  /** 存起来；返回存下的号码（null = 没填），表单不对返回 false */
-  const persist = async (): Promise<string | null | false> => {
-    const v = await form.validateFields().catch(() => null)
-    if (!v) return false
-    const num = normalizePhone(v.whatsapp) ?? null
-    await saveMyNotify(num, v.lang)
+  /** 存起来，返回存下的 */
+  const persist = async (): Promise<Values> => {
+    const v = form.getFieldsValue()
+    await saveMyNotify(v.on !== false, lang)
     await reloadProfile()
-    form.setFieldsValue({ whatsapp: formatPhone(num) })
-    return num
+    return v
   }
 
   const save = async () => {
     setBusy('save')
     try {
-      const num = await persist()
-      if (num === false) return
-      message.success(num ? t('已保存，有新的待办会发 WhatsApp 提醒你') : t('已保存，不再发 WhatsApp 提醒'))
+      const v = await persist()
+      message.success(v.on !== false ? t('已保存，有新的待办会发邮件提醒你') : t('已保存，不再发邮件提醒'))
       setOpen(false)
     } catch (e) {
       message.error(errorText(e))
@@ -52,17 +60,11 @@ export default function NotifySettings() {
   }
 
   const test = async () => {
-    // 号码空着点测试：只提示，不存（不然等于把提醒关掉了）
-    if (normalizePhone(form.getFieldValue('whatsapp')) === null) {
-      form.setFields([{ name: 'whatsapp', errors: [t('请先填 WhatsApp 号码')] }])
-      return
-    }
     setBusy('test')
     try {
-      const num = await persist()
-      if (num === false) return
-      await sendTestMessage()
-      message.success(t('测试消息已发出，请看看 WhatsApp 有没有收到'))
+      await persist()
+      const to = await sendTestEmail()
+      message.success(t('测试邮件已发到 {email}，请看看收件箱，没有的话也看看垃圾邮件', { email: to || email }))
     } catch (e) {
       message.error(errorText(e))
     } finally {
@@ -72,18 +74,18 @@ export default function NotifySettings() {
 
   return (
     <>
-      <Button type="text" className="header-notify" icon={<WhatsAppOutlined />} aria-label={t('WhatsApp 提醒')} onClick={show}>
-        <span className="header-notify-text">{t('WhatsApp 提醒')}</span>
+      <Button type="text" className="header-notify" icon={<MailOutlined />} aria-label={t('邮件提醒')} onClick={show}>
+        <span className="header-notify-text">{t('邮件提醒')}</span>
       </Button>
       <Modal
         open={open}
-        title={t('WhatsApp 提醒')}
+        title={t('邮件提醒')}
         onCancel={() => setOpen(false)}
         destroyOnHidden
         footer={
           <div className="notify-footer">
             <Button onClick={test} loading={busy === 'test'} disabled={busy === 'save'}>
-              {t('发一条测试消息')}
+              {t('发一封测试邮件')}
             </Button>
             <span className="notify-footer-right">
               <Button onClick={() => setOpen(false)}>{t('取消')}</Button>
@@ -95,43 +97,24 @@ export default function NotifySettings() {
         }
       >
         <Typography.Paragraph type="secondary">
-          {t('有新的待办时（到账要审核、提成单轮到你审批、单据被退回、提成要发放），系统会给你发一条 WhatsApp 消息，点消息里的按钮就能直接打开那张单，不用一直开着网站。')}
+          {t('有新的待办时（到账要审核、提成单轮到你审批、单据被退回、提成要发放），系统会发一封邮件到你登录用的邮箱，点邮件里的“打开处理”就能直接打开那张单，不用一直开着网站。')}
         </Typography.Paragraph>
         <div style={{ marginBottom: 16 }}>
-          {saved ? (
-            <Tag color="green">{t('已开启：发到 {phone}', { phone: formatPhone(saved) })}</Tag>
-          ) : (
-            <Tag>{t('还没开启')}</Tag>
-          )}
+          {on ? <Tag color="green">{t('已开启：发到 {email}', { email })}</Tag> : <Tag>{t('已关闭')}</Tag>}
         </div>
         <Form form={form} layout="vertical" preserve={false} onFinish={save}>
           <Form.Item
-            name="whatsapp"
-            label={t('WhatsApp 号码')}
-            extra={t('带国家区号，比如加纳 +233 24 123 4567、中国 +86 138 0013 8000。加纳号码也可以直接写 024 123 4567。不填就不发。')}
-            rules={[
-              {
-                validator: (_, v: string) =>
-                  normalizePhone(v) === undefined
-                    ? Promise.reject(new Error(t('号码不对，请带国家区号，比如 +233 24 123 4567')))
-                    : Promise.resolve(),
-              },
-            ]}
+            name="on"
+            label={t('有新的待办时发邮件提醒我')}
+            valuePropName="checked"
+            extra={t('提醒邮件和网站用同一种语言，现在是中文。在页头切换语言，邮件也跟着换。')}
           >
-            <Input prefix={<WhatsAppOutlined />} placeholder="+233 24 123 4567" inputMode="tel" autoComplete="tel" allowClear />
+            <Switch />
           </Form.Item>
-          <Form.Item name="lang" label={t('提醒用的语言')}>
-            <Radio.Group
-              optionType="button"
-              options={[
-                { value: 'zh', label: '中文' },
-                { value: 'en', label: 'English' },
-              ]}
-            />
-          </Form.Item>
-          {/* 让输入框里按回车也能保存 */}
-          <button type="submit" hidden />
         </Form>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+          {t('收不到的话看看垃圾邮件，把它标成“不是垃圾邮件”，以后就会进收件箱。')}
+        </Typography.Paragraph>
       </Modal>
     </>
   )

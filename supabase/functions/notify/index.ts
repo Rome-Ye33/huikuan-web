@@ -1,21 +1,20 @@
-// 待办提醒（Supabase Edge Function “notify”）：有新的待办时，用 WhatsApp 发一条消息给该处理的人
+// 待办提醒（Supabase Edge Function “notify”）：有新的待办时，发一封邮件给该处理的人
 // - flush：数据库有新提醒时、以及每分钟定时（pg_cron）调用，请求头带 x-notify-secret
 //          （口令上线时由数据库随机生成、存在 Vault，这里请数据库 notify_check_secret 核对，谁都不用经手）。
-//          从数据库取待发的提醒（notify_claim），一条条发出去，再把结果报回去（notify_done）。
-// - test：登录的人给自己发一条测试消息，看号码对不对（页头“WhatsApp 提醒”里的“发一条测试消息”）。
+//          从数据库取待发的提醒（notify_claim_email），一封封发出去，再把结果报回去（notify_done）。
+// - test：登录的人给自己发一封测试邮件，看收不收得到（页头“邮件提醒”里的“发一封测试邮件”）。
+// - check：也要带口令。只连一下发信服务器、试试发信邮箱能不能登录，不发邮件（排查用，从数据库里叫）。
 //
-// WhatsApp 用 Meta 官方的 WhatsApp Business Platform（Cloud API），消息模板 todo_notice（中文 zh_CN、英文 en，类别 Utility）：
-//   正文：你在销售管理系统有一项新的待办：{{1}}。请点下面的按钮打开处理。
-//         You have a new to-do in Sales Management: {{1}}. Tap the button below to open it.
-//   按钮：访问网站，动态网址 https://rome-ye33.github.io/huikuan-web/?go={{1}}
+// 用 SMTP 发信，默认 Gmail（smtp.gmail.com 的 465 端口；Supabase 不让连 25 和 587 端口）。
 // 密钥（Supabase → Edge Functions → Secrets）：
-//   WHATSAPP_TOKEN            Meta 系统用户的永久令牌
-//   WHATSAPP_PHONE_NUMBER_ID  发送号码的编号（WhatsApp Manager 里“Phone number ID”，不是手机号）
-//   WHATSAPP_PIN              发送号码的两步验证 6 位数字（自己定；第一次发测试消息时用它把号码注册到 Cloud API）
-//   WHATSAPP_TEMPLATE（可选，默认 todo_notice）、WHATSAPP_API_VERSION（可选，默认 v25.0）
-//   WHATSAPP_API_BASE（可选，默认 https://graph.facebook.com；本地测试时指到假的服务）
-// 部署时 verify_jwt = false：flush 用口令校验，test 自己校验登录。服务端密钥只在 Supabase 服务器上用，不会进浏览器。
+//   SMTP_USER   发信邮箱，比如 xxx@gmail.com
+//   SMTP_PASS   这个邮箱的应用专用密码（Gmail：开了两步验证以后在“应用专用密码”里生成的 16 位，中间的空格有没有都行）
+//   SMTP_HOST、SMTP_PORT（可选，默认 smtp.gmail.com、465；用公司邮箱时按邮箱服务商给的填，比如腾讯企业邮 smtp.exmail.qq.com、465）
+//   MAIL_FROM_NAME（可选，发件人名字，默认“销售管理 Sales Management”）
+//   SITE_URL（可选，邮件里按钮打开的网址，默认 https://rome-ye33.github.io/huikuan-web/）
+// 部署时 verify_jwt = false：flush、check 用口令校验，test 自己校验登录。服务端密钥只在 Supabase 服务器上用，不会进浏览器。
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import nodemailer from 'npm:nodemailer@7'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -50,23 +49,45 @@ const db = createClient(Deno.env.get('SUPABASE_URL')!, serverKey(), {
   auth: { persistSession: false, autoRefreshToken: false },
 })
 
-const TOKEN = Deno.env.get('WHATSAPP_TOKEN') ?? ''
-const PHONE_ID = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') ?? ''
-const TEMPLATE = Deno.env.get('WHATSAPP_TEMPLATE') || 'todo_notice'
-const VERSION = Deno.env.get('WHATSAPP_API_VERSION') || 'v25.0'
-const API_BASE = (Deno.env.get('WHATSAPP_API_BASE') || 'https://graph.facebook.com').replace(/\/+$/, '')
-const PIN = Deno.env.get('WHATSAPP_PIN') ?? ''
+const SMTP_HOST = (Deno.env.get('SMTP_HOST') || 'smtp.gmail.com').trim()
+const SMTP_PORT = Number(Deno.env.get('SMTP_PORT')) || 465
+const SMTP_USER = (Deno.env.get('SMTP_USER') ?? '').trim()
+const SMTP_PASS = (Deno.env.get('SMTP_PASS') ?? '').replace(/\s+/g, '') // Gmail 显示的应用专用密码中间有空格
+const FROM_NAME = (Deno.env.get('MAIL_FROM_NAME') || '销售管理 Sales Management').trim()
+const SITE = (Deno.env.get('SITE_URL') || 'https://rome-ye33.github.io/huikuan-web/').trim().replace(/\/*$/, '/')
 const BATCH = 20
+const MAX_ROUNDS = 3 // 一次最多 3 批（60 封），剩下的等下一分钟的定时任务
+const TIME_BUDGET = 60_000 // 发了一分钟还没发完的，也等下一分钟
 
-type Claim = { id: number; to_number: string | null; lang: string | null; body: string | null; go: string | null }
-type Result = { status: 'sent'; id: string } | { status: 'retry' | 'failed' | 'skipped'; error: string; code?: number }
-type WaReply = {
-  success?: boolean
-  messages?: { id?: string }[]
-  error?: { code?: number; message?: string; error_data?: { details?: string } }
+const configured = () => SMTP_USER !== '' && SMTP_PASS !== ''
+
+type Claim = { id: number; to_email: string | null; to_name: string | null; lang: string | null; body: string | null; go: string | null }
+// 发送结果。没发出去的：kind = auth 发信邮箱登录不上 / net 连不上发信服务器 / quota 今天发太多了；stop = 这一批剩下的也发不出去，先停下
+type Failure = { status: 'retry' | 'failed' | 'skipped'; error: string; detail?: string; kind?: 'auth' | 'net' | 'quota'; stop?: boolean }
+type Result = { status: 'sent'; id: string } | Failure
+type MailErr = { code?: string; responseCode?: number; response?: string; message?: string }
+type Transport = {
+  sendMail: (m: Record<string, unknown>) => Promise<{ messageId?: string }>
+  verify: () => Promise<unknown>
+  close: () => void
 }
 
-// flush 带的口令对不对：请数据库和 Vault 里的 notify_secret 核对
+function transport(pool: boolean): Transport {
+  return nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465, // 465 一连上就加密；别的端口先连上再升级加密（STARTTLS），不加密不发
+    requireTLS: SMTP_PORT !== 465,
+    auth: configured() ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+    pool,
+    maxConnections: 1,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 30000,
+  }) as Transport
+}
+
+// flush、check 带的口令对不对：请数据库和 Vault 里的 notify_secret 核对
 async function flushAllowed(given: string): Promise<boolean> {
   if (!given) return false
   const { data, error } = await db.rpc('notify_check_secret', { p_secret: given })
@@ -74,122 +95,172 @@ async function flushAllowed(given: string): Promise<boolean> {
   return !error && data === true
 }
 
-// WhatsApp 模板参数里不能有换行、制表符、连着好几个空格
-const clean = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 700)
+// ---------------------------------------------------------------- 邮件的样子
+const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim()
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string)
+const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + '…' : s)
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-// 暂时性的错误：过一会儿再发。号码不对、模板没批、令牌失效这类就不重发了
-// 1/2 服务暂时出错，4/80007/130429/131048/131056 发得太快，131000 未知错误，131016 服务不可用
-const RETRY_CODES = new Set([1, 2, 4, 80007, 130429, 131000, 131016, 131048, 131056])
-// 发送号码还没注册到 Cloud API
-const NOT_REGISTERED = 133010
+type Mail = { subject: string; text: string; html: string }
 
-const errorDetail = (status: number, j: WaReply | null) => {
-  const err = j?.error ?? {}
-  return `${status} ${err.code ?? ''} ${err.error_data?.details ?? err.message ?? ''}`.replace(/\s+/g, ' ').trim()
+/** 一封提醒邮件。text = 提醒的文字（数据库 notify_text 写好的那一段）；空的 = 测试邮件。name 空的就不称呼名字 */
+function compose(lang: string | null, name: string | null, text: string | null, go: string): Mail {
+  const en = lang === 'en'
+  const test = text === null
+  const what = test ? '' : oneLine(text)
+  const who = name ? oneLine(name) : ''
+  const link = `${SITE}?go=${encodeURIComponent(go)}`
+  const subject = test
+    ? en ? '[Sales Management] Test email' : '【销售管理】测试邮件'
+    : en ? `[Sales Management] ${cut(cap(what), 150)}` : `【销售管理】${cut(what, 100)}`
+  const greeting = en ? (who ? `Hello ${who},` : 'Hello,') : who ? `${who}，你好：` : '你好：'
+  const line = test
+    ? en
+      ? 'This is a test email. When something is waiting for you, you will get an email like this.'
+      : '这是一封测试邮件。以后有待办，会像这样发到这个邮箱。'
+    : en
+      ? `You have a new to-do in Sales Management: ${what}.`
+      : `你在销售管理系统有一项新的待办：${what}。`
+  const button = test ? (en ? 'Open the workbench' : '打开工作台') : en ? 'Open it' : '打开处理'
+  const opens = test
+    ? en ? 'The button opens the website. After you sign in, it goes to the workbench.' : '点按钮会打开网站，登录后到工作台。'
+    : en ? 'The button opens the website. After you sign in, it goes straight to this item.' : '点按钮会打开网站，登录后直接到这张单。'
+  const foot = en
+    ? `${opens} To stop these emails, turn them off under “Email reminders” at the top right of the website. This email was sent automatically. Please do not reply.`
+    : `${opens}不想收到这类邮件，可以在网站右上角“邮件提醒”里关掉。这封邮件由系统自动发出，请不要回复。`
+  const font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',Arial,sans-serif"
+  const html = `<!doctype html>
+<html lang="${en ? 'en' : 'zh-CN'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title></head>
+<body style="margin:0;padding:0;background:#f3f6fb">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px;font-family:${font};font-size:15px;line-height:1.6;color:#1f2937">
+<div style="margin:0 0 12px;font-size:16px;font-weight:600;color:#1d4ed8">${en ? 'Sales Management' : '销售管理'}</div>
+<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px">
+<p style="margin:0 0 12px">${esc(greeting)}</p>
+<p style="margin:0 0 20px">${esc(line)}</p>
+<a href="${esc(link)}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:6px">${esc(button)}</a>
+</div>
+<p style="margin:16px 0 0;font-size:12px;color:#6b7280">${esc(foot)}</p>
+</div>
+</body></html>`
+  const textBody = `${greeting}\n\n${line}\n\n${button}${en ? ': ' : '：'}${link}\n\n${foot}\n`
+  return { subject, text: textBody, html }
 }
 
-async function sendWhatsApp(to: string, lang: string | null, text: string, go: string): Promise<Result> {
-  let res: Response
-  try {
-    res = await fetch(`${API_BASE}/${VERSION}/${PHONE_ID}/messages`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: to.replace(/^\+/, ''),
-        type: 'template',
-        template: {
-          name: TEMPLATE,
-          language: { code: lang === 'en' ? 'en' : 'zh_CN' },
-          components: [
-            { type: 'body', parameters: [{ type: 'text', text: clean(text) }] },
-            { type: 'button', sub_type: 'url', index: '0', parameters: [{ type: 'text', text: go }] },
-          ],
-        },
-      }),
-      signal: AbortSignal.timeout(15000),
-    })
-  } catch (e) {
-    return { status: 'retry', error: '连不上 WhatsApp：' + String(e) }
-  }
-  const j = (await res.json().catch(() => null)) as WaReply | null
-  const id = j?.messages?.[0]?.id
-  if (res.ok && id) return { status: 'sent', id }
-  const code = Number(j?.error?.code) || undefined
-  const retry = res.status === 429 || res.status >= 500 || RETRY_CODES.has(code ?? 0)
-  return { status: retry ? 'retry' : 'failed', error: errorDetail(res.status, j), code }
+// ---------------------------------------------------------------- 发信
+const NET_CODES = new Set(['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'EDNS', 'ETLS', 'EPROTOCOL', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EHOSTUNREACH'])
+
+// 发信服务器回的话：好几行的（550-5.1.1 …\n550 5.1.1 …）合成一行，代码只留开头一个
+function smtpText(resp: string): string {
+  const lines = resp.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const head = /^(\d{3})[ -](?:(\d\.\d{1,3}\.\d{1,3}) )?/.exec(lines[0] ?? '')
+  if (!head) return oneLine(resp)
+  const rest = lines.map((l) => l.replace(/^\d{3}[ -](?:\d\.\d{1,3}\.\d{1,3} )?/, '')).join(' ')
+  return oneLine(`${head[1]}${head[2] ? ' ' + head[2] : ''} ${rest}`)
 }
 
-// 发送号码要先注册到 Cloud API 才能发，而且只能用接口注册（WhatsApp Manager 里做不了）。
-// 注册每 72 小时最多 10 次，所以只在有人点“发一条测试消息”、碰到“号码没注册”时注册一次，定时发提醒时不做。
-// 返回 null = 注册好了，否则是原因
-async function registerNumber(): Promise<string | null> {
-  let res: Response
+// 4xx、连不上、超时：过一会儿再发；5xx（收件人不存在、地址不对）：不重发。
+// 登录不上、连不上发信服务器、今天发太多了：这一批剩下的也发不出去，先停下（stop）
+function mailError(e: unknown): Failure {
+  const err = (e ?? {}) as MailErr
+  const rc = Number(err.responseCode) || 0
+  const detail = (err.response ? smtpText(err.response) : oneLine(`${err.code ?? ''} ${err.message ?? String(e)}`)).slice(0, 300)
+  if (err.code === 'EAUTH') return { status: 'retry', error: '发信邮箱登录不上：' + detail, detail, kind: 'auth', stop: true }
+  if (/5\.4\.5|sending (limit|quota) exceeded/i.test(detail)) return { status: 'failed', error: '发信邮箱今天发太多了：' + detail, detail, kind: 'quota', stop: true }
+  if (rc >= 500) return { status: 'failed', error: detail, detail }
+  if (rc >= 400) return { status: 'retry', error: detail, detail }
+  if (NET_CODES.has(err.code ?? '')) return { status: 'retry', error: '连不上发信服务器：' + detail, detail, kind: 'net', stop: true }
+  if (err.code === 'EENVELOPE' || err.code === 'EMESSAGE') return { status: 'failed', error: detail, detail }
+  return { status: 'retry', error: detail, detail }
+}
+
+async function sendMail(t: Transport, to: string, mail: Mail): Promise<Result> {
   try {
-    res = await fetch(`${API_BASE}/${VERSION}/${PHONE_ID}/register`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messaging_product: 'whatsapp', pin: PIN }),
-      signal: AbortSignal.timeout(15000),
-    })
+    const info = await t.sendMail({ from: { name: FROM_NAME, address: SMTP_USER }, to, ...mail })
+    return { status: 'sent', id: String(info?.messageId ?? '') }
   } catch (e) {
-    return '连不上 WhatsApp：' + String(e)
+    return mailError(e)
   }
-  const j = (await res.json().catch(() => null)) as WaReply | null
-  return res.ok && j?.success ? null : errorDetail(res.status, j)
+}
+
+async function report(id: number, res: Result) {
+  const done = await db.rpc('notify_done', {
+    p_id: id,
+    p_status: res.status,
+    p_wa_id: res.status === 'sent' ? res.id : null, // 邮件的 Message-ID
+    p_error: res.status === 'sent' ? null : res.error,
+  })
+  if (done.error) console.error('notify_done', id, done.error.message)
 }
 
 async function flush(): Promise<Response> {
   const count = { sent: 0, retry: 0, failed: 0, skipped: 0 }
-  // 一次最多处理 5 批，剩下的等下一分钟的定时任务
-  for (let round = 0; round < 5; round++) {
-    const { data, error } = await db.rpc('notify_claim', { p_limit: BATCH })
-    if (error) return reply(500, { error: error.message })
-    const rows = (data ?? []) as Claim[]
-    for (const r of rows) {
-      let res: Result
-      if (!TOKEN || !PHONE_ID) res = { status: 'skipped', error: 'WhatsApp 还没配置好' }
-      else if (!r.to_number || !r.body || !r.go) res = { status: 'skipped', error: '没有号码或内容' }
-      else res = await sendWhatsApp(r.to_number, r.lang, r.body, r.go)
-      const done = await db.rpc('notify_done', {
-        p_id: r.id,
-        p_status: res.status,
-        p_wa_id: res.status === 'sent' ? res.id : null,
-        p_error: res.status === 'sent' ? null : res.error,
-      })
-      if (done.error) console.error('notify_done', r.id, done.error.message)
-      count[res.status]++
+  const started = Date.now()
+  let t: Transport | null = null
+  try {
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const { data, error } = await db.rpc('notify_claim_email', { p_limit: BATCH })
+      if (error) return reply(500, { error: error.message })
+      const rows = (data ?? []) as Claim[]
+      let stopped: Failure | null = null
+      for (const r of rows) {
+        let res: Result
+        if (stopped) res = stopped // 登录不上、连不上：这一批剩下的不去试，一起等下次
+        else if (!configured()) res = { status: 'skipped', error: '邮件提醒还没配置好' }
+        else if (!r.to_email || !r.body || !r.go) res = { status: 'skipped', error: '没有邮箱或内容' }
+        else {
+          t ??= transport(true)
+          res = await sendMail(t, r.to_email, compose(r.lang, r.to_name, r.body, r.go))
+          if (res.status !== 'sent' && res.stop) stopped = res
+        }
+        await report(r.id, res)
+        count[res.status]++
+      }
+      if (stopped || rows.length < BATCH || Date.now() - started > TIME_BUDGET) break
     }
-    if (rows.length < BATCH) break
+  } finally {
+    t?.close()
   }
   return reply(200, { ok: true, ...count })
 }
 
-// 给自己发一条测试消息
+// 给自己发一封测试邮件
 async function test(req: Request): Promise<Response> {
   const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
   if (!token) return reply(401, { error: '请先登录' })
   const { data, error } = await db.auth.getUser(token)
   if (error || !data.user) return reply(401, { error: '登录已过期，请重新登录' })
-  const { data: prof } = await db.from('profiles').select('whatsapp, notify_lang, role, active').eq('id', data.user.id).maybeSingle()
+  const { data: prof } = await db.from('profiles').select('email, full_name, notify_lang, role, active').eq('id', data.user.id).maybeSingle()
   if (!prof || !prof.active || !prof.role) return reply(403, { error: '账号还没有开通' })
-  if (!prof.whatsapp) return reply(400, { error: '请先填 WhatsApp 号码并保存' })
-  if (!TOKEN || !PHONE_ID) return reply(503, { error: 'WhatsApp 提醒还没开通，等管理员配置好以后再试' })
-  const text =
-    prof.notify_lang === 'en'
-      ? 'this is a test message. When something is waiting for you, you will get a message like this'
-      : '这是一条测试消息，以后有待办会像这样提醒你'
-  let res = await sendWhatsApp(prof.whatsapp, prof.notify_lang, text, 'wb')
-  if (res.status !== 'sent' && res.code === NOT_REGISTERED) {
-    // 第一次用：先把发送号码注册好，再发一次
-    if (!/^\d{6}$/.test(PIN)) return reply(503, { error: '发送号码还没注册：请管理员在 Supabase 密钥里加上 WHATSAPP_PIN（6 位数字）以后再试' })
-    const failed = await registerNumber()
-    if (failed) return reply(502, { error: '发送号码注册没成功：' + failed })
-    res = await sendWhatsApp(prof.whatsapp, prof.notify_lang, text, 'wb')
+  const to = String(prof.email ?? '').trim()
+  if (!to) return reply(400, { error: '你的账号没有邮箱' })
+  if (!configured()) return reply(503, { error: '邮件提醒还没开通，等管理员配置好以后再试' })
+  // 没填名字的，注册时名字记成了邮箱：不称呼
+  const name = prof.full_name && !String(prof.full_name).includes('@') ? String(prof.full_name) : null
+  const t = transport(false)
+  let res: Result
+  try {
+    res = await sendMail(t, to, compose(prof.notify_lang, name, null, 'wb'))
+  } finally {
+    t.close()
   }
-  if (res.status === 'sent') return reply(200, { ok: true })
-  return reply(502, { error: 'WhatsApp 没有发出去：' + res.error })
+  if (res.status === 'sent') return reply(200, { ok: true, to })
+  if (res.kind === 'auth') return reply(502, { error: '发信邮箱登录不上，请管理员检查发信邮箱和应用专用密码：' + res.detail })
+  if (res.kind === 'net') return reply(502, { error: '连不上发信服务器：' + res.detail })
+  return reply(502, { error: '邮件没有发出去：' + (res.detail ?? res.error) })
+}
+
+// 排查：连一下发信服务器、试试发信邮箱能不能登录（不发邮件）。没配发信邮箱时只看连不连得上
+async function check(): Promise<Response> {
+  const t = transport(false)
+  try {
+    await t.verify()
+    return reply(200, { ok: true, configured: configured(), host: SMTP_HOST, port: SMTP_PORT })
+  } catch (e) {
+    return reply(200, { ok: false, configured: configured(), host: SMTP_HOST, port: SMTP_PORT, error: mailError(e).error })
+  } finally {
+    t.close()
+  }
 }
 
 Deno.serve(async (req) => {
@@ -202,9 +273,9 @@ Deno.serve(async (req) => {
     // 没有内容就当空的
   }
   try {
-    if (body.action === 'flush') {
+    if (body.action === 'flush' || body.action === 'check') {
       if (!(await flushAllowed(req.headers.get('x-notify-secret') ?? ''))) return reply(401, { error: '口令不对' })
-      return await flush()
+      return body.action === 'flush' ? await flush() : await check()
     }
     if (body.action === 'test') return await test(req)
     return reply(400, { error: '未知操作' })

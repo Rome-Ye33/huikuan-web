@@ -1,5 +1,5 @@
 import { ArrowRightOutlined, PlusOutlined } from '@ant-design/icons'
-import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Radio, Select, Space, Switch, Table, Tag, Typography } from 'antd'
+import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
 import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
@@ -7,7 +7,6 @@ import { asPosts, POST_LABEL, POSTS } from '../lib/commission'
 import type { Post } from '../lib/commission'
 import { errorText } from '../lib/errors'
 import { dateTime } from '../lib/format'
-import { formatPhone, normalizePhone } from '../lib/notify'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { AppRole, Invite, Profile } from '../lib/supabase'
@@ -34,8 +33,7 @@ export default function UsersPage() {
     role: AppRole | null
     salesperson_id?: number | null
     active: boolean
-    whatsapp?: string
-    notify_lang: 'zh' | 'en'
+    notify_email: boolean
   }>()
   const [iform] = Form.useForm<{ email: string; role: AppRole; salesperson_id?: number | null; full_name?: string }>()
   const uRole = Form.useWatch('role', uform)
@@ -117,8 +115,7 @@ export default function UsersPage() {
         role: v.role,
         salesperson_id: v.role === 'sales' ? (v.salesperson_id ?? null) : null,
         active: v.active,
-        whatsapp: normalizePhone(v.whatsapp) ?? null,
-        notify_lang: v.notify_lang,
+        notify_email: v.notify_email !== false,
       })
       .eq('id', editUser!.id)
     if (error) return message.error(errorText(error))
@@ -253,16 +250,17 @@ export default function UsersPage() {
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
           { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
           {
-            title: t('WhatsApp 提醒'),
-            dataIndex: 'whatsapp',
-            width: 170,
-            render: (v: string | null, p) =>
-              v ? (
-                <span className="num">
-                  {formatPhone(v)} <span className="hint">{p.notify_lang === 'en' ? 'English' : '中文'}</span>
+            title: t('邮件提醒'),
+            dataIndex: 'notify_email',
+            width: 120,
+            render: (v: boolean | null, p) =>
+              v !== false ? (
+                <span>
+                  <Tag color="green">{t('开')}</Tag>
+                  <span className="hint">{p.notify_lang === 'en' ? 'English' : '中文'}</span>
                 </span>
               ) : (
-                <span className="hint">{t('没填，不发')}</span>
+                <Tag>{t('关')}</Tag>
               ),
           },
           { title: t('启用'), dataIndex: 'active', width: 70, render: (v: boolean) => (v ? <Tag color="green">{t('启用')}</Tag> : <Tag>{t('停用')}</Tag>) },
@@ -282,8 +280,7 @@ export default function UsersPage() {
                         role: p.role,
                         salesperson_id: p.salesperson_id,
                         active: p.active,
-                        whatsapp: formatPhone(p.whatsapp),
-                        notify_lang: p.notify_lang === 'en' ? 'en' : 'zh',
+                        notify_email: p.notify_email !== false,
                       })
                       setEditUser(p)
                     }}
@@ -374,28 +371,12 @@ export default function UsersPage() {
             <Switch />
           </Form.Item>
           <Form.Item
-            name="whatsapp"
-            label={t('WhatsApp 号码（有新的待办时提醒他）')}
-            extra={t('带国家区号，比如 +233 24 123 4567；加纳号码也可以写 024 123 4567。不填就不发。本人也可以在页头“WhatsApp 提醒”里自己填。')}
-            rules={[
-              {
-                validator: (_, v: string) =>
-                  normalizePhone(v) === undefined
-                    ? Promise.reject(new Error(t('号码不对，请带国家区号，比如 +233 24 123 4567')))
-                    : Promise.resolve(),
-              },
-            ]}
+            name="notify_email"
+            label={t('邮件提醒（有新的待办时发到他的登录邮箱）')}
+            extra={t('本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。')}
+            valuePropName="checked"
           >
-            <Input placeholder="+233 24 123 4567" inputMode="tel" autoComplete="off" allowClear />
-          </Form.Item>
-          <Form.Item name="notify_lang" label={t('提醒用的语言')}>
-            <Radio.Group
-              optionType="button"
-              options={[
-                { value: 'zh', label: '中文' },
-                { value: 'en', label: 'English' },
-              ]}
-            />
+            <Switch />
           </Form.Item>
         </Form>
       </Modal>
