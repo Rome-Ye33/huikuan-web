@@ -2,6 +2,7 @@ import { PaperClipOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/ico
 import { Button, Card, Empty, Segmented, Space, Spin, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import SubmissionForm from '../components/SubmissionForm'
+import { useFlow } from '../lib/flow'
 import { dateTime, money, num, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
@@ -16,8 +17,10 @@ type Filter = 'all' | SubmissionStatus
 export default function SubmitPage() {
   const t = useT()
   const { accountById } = useRefData()
+  const rflow = useFlow('receipt')
   const [rows, setRows] = useState<Submission[]>([])
-  const [receiptNos, setReceiptNos] = useState<Map<number, string>>(new Map())
+  /** 审核通过后生成的到账：编号、审批状态（到账自己还要走审批，批完才算到账） */
+  const [receipts, setReceipts] = useState<Map<number, { no: string; status: string | null; step: string | null }>>(new Map())
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [editing, setEditing] = useState<{ open: boolean; sub: Submission | null }>({ open: false, sub: null })
@@ -29,8 +32,8 @@ export default function SubmitPage() {
     setRows(list)
     const ids = list.map((x) => x.receipt_id).filter((x): x is number => x != null)
     if (ids.length) {
-      const r = await supabase.from('bank_receipts').select('id, receipt_no').in('id', ids)
-      setReceiptNos(new Map((r.data ?? []).map((x) => [x.id, x.receipt_no])))
+      const r = await supabase.from('bank_receipts').select('id, receipt_no, status, step').in('id', ids)
+      setReceipts(new Map((r.data ?? []).map((x) => [x.id, { no: x.receipt_no, status: x.status, step: x.step }])))
     }
     setLoading(false)
   }, [])
@@ -110,9 +113,14 @@ export default function SubmitPage() {
                       {t('退回原因：{reason}', { reason: s.review_note ?? '' })}
                     </div>
                   )}
-                  {status === 'approved' && s.receipt_id != null && receiptNos.get(s.receipt_id) && (
+                  {status === 'approved' && s.receipt_id != null && receipts.get(s.receipt_id) && (
                     <div className="text-ok" style={{ marginTop: 6 }}>
-                      {t('到账编号 {no}', { no: receiptNos.get(s.receipt_id) ?? '' })}
+                      <Space size={6}>
+                        {t('到账编号 {no}', { no: receipts.get(s.receipt_id)?.no ?? '' })}
+                        <Tag color={rflow.stageColor(receipts.get(s.receipt_id)?.status, receipts.get(s.receipt_id)?.step)}>
+                          {rflow.stageLabel(receipts.get(s.receipt_id)?.status, receipts.get(s.receipt_id)?.step)}
+                        </Tag>
+                      </Space>
                     </div>
                   )}
                   <div className="hint" style={{ marginTop: 4 }}>

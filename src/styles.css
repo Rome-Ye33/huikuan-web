@@ -469,9 +469,20 @@ html[lang='en'] .logo-name {
   .app-header {
     padding: 0 8px 0 10px !important;
   }
-  /* 手机上页头放得下：间距和按钮左右留白收紧一点 */
+  /* 手机上页头放得下：间距和按钮左右留白收紧一点；放不下时只缩名字（名字省略号），按钮和角色标签不缩 */
   .app-header .ant-space {
     column-gap: 4px !important;
+    max-width: 100%;
+  }
+  .app-header .ant-space-item {
+    flex-shrink: 0;
+  }
+  .app-header .ant-space-item:has(.header-user) {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  .header-name {
+    min-width: 0;
   }
   .app-header .ant-btn {
     padding-inline: 8px;
@@ -656,6 +667,11 @@ html[lang='en'] .logo-name {
 .wb-tabs .ant-tabs-nav {
   margin-bottom: 10px;
 }
+/* 种类筛选（全部 / 到账提交 / 提成单 / 到账）：手机上放不下时在自己的框里左右滑，不把整页撑宽 */
+.wb-type {
+  max-width: 100%;
+  overflow-x: auto;
+}
 
 /* 用户与权限：提成单审批流（业务员提交 → 管理员定的几级 → 财务发放），放不下时换行，窄屏时一行一级 */
 .flow-row {
@@ -700,6 +716,10 @@ html[lang='en'] .logo-name {
   }
   .flow-last .flow-arrow {
     margin-top: 4px;
+  }
+  /* 手机上结尾的字（比如英文的“Takes effect (counts as received)”）可以折行，不把页面撑宽 */
+  .flow-last .flow-end {
+    white-space: normal;
   }
 }
 

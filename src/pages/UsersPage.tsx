@@ -6,6 +6,7 @@ import FlowEditor from '../components/FlowEditor'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { useFlow } from '../lib/flow'
+import type { FlowApi, FlowDocType } from '../lib/flow'
 import { dateTime } from '../lib/format'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
@@ -19,7 +20,8 @@ export default function UsersPage() {
   const t = useT()
   const { session, reloadProfile } = useAuth()
   const { salespersons } = useRefData()
-  const flow = useFlow()
+  const flow = useFlow('voucher')
+  const rflow = useFlow('receipt')
   const { message, modal } = App.useApp()
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
@@ -28,7 +30,7 @@ export default function UsersPage() {
   const [pwUser, setPwUser] = useState<Profile | null>(null)
   const [pwBusy, setPwBusy] = useState(false)
   const [postBusy, setPostBusy] = useState<string | null>(null)
-  const [flowOpen, setFlowOpen] = useState(false)
+  const [flowOpen, setFlowOpen] = useState<FlowDocType | null>(null)
   const [pform] = Form.useForm<{ password: string }>()
   const [uform] = Form.useForm<{
     full_name?: string
@@ -58,8 +60,8 @@ export default function UsersPage() {
 
   const registered = new Set(profiles.map((p) => (p.email ?? '').toLowerCase()))
 
-  // ---------- 提成单审批流：有哪几级（管理员点“调整审批流”改），每一级由谁审（审批岗位，存级别的 key）。
-  // 已注册的人记在 profiles，还没注册的记在邀请名单、注册时带过去 ----------
+  // ---------- 审批流（提成单的、到账的）：有哪几级（管理员点“调整审批流”改），每一级由谁审（审批岗位，存级别的 key，
+  // 两种单据的级别放在一起）。已注册的人记在 profiles，还没注册的记在邀请名单、注册时带过去 ----------
   const waiting = invites.filter((i) => !registered.has(i.email))
   const usable = (p: Profile) => p.active && !!p.role
   const postsOf = (x: { approval_posts: string[] | null }) => x.approval_posts ?? []
@@ -109,6 +111,68 @@ export default function UsersPage() {
     if (changed.includes('p:' + (session?.user.id ?? ''))) await reloadProfile()
   }
   const postTags = (list: string[]) => flow.sortKeys(list).map((k) => <Tag key={k}>{flow.name(k)}</Tag>)
+
+  /** 一条审批流的卡片：开头、每一级（选审核人）、结尾 */
+  const flowCard = (f: FlowApi, title: string, start: string, end: string, hint: string, empty: string) => (
+    <Card
+      size="small"
+      className={`flow-card flow-card-${f.docType}`}
+      title={title}
+      extra={
+        <Button size="small" icon={<EditOutlined />} onClick={() => setFlowOpen(f.docType)}>
+          {t('调整审批流')}
+        </Button>
+      }
+      style={{ marginBottom: 20 }}
+    >
+      <div className="flow-row">
+        <div className="flow-end">{start}</div>
+        {f.active.map((s, n) => {
+          const post = s.key
+          const on = holders(post)
+          const pending = waiting.some((i) => postsOf(i).includes(post))
+          return (
+            <div key={post} className="flow-step" data-post={post}>
+              <ArrowRightOutlined className="flow-arrow" />
+              <div className="flow-box">
+                <div className="flow-name">
+                  {n + 1}. {f.name(post)}
+                </div>
+                <Select
+                  mode="multiple"
+                  style={{ width: '100%' }}
+                  placeholder={t('选审核人')}
+                  loading={postBusy === post}
+                  disabled={postBusy !== null}
+                  showSearch={{ optionFilterProp: 'label' }}
+                  value={postValue(post)}
+                  options={postOptions(post)}
+                  onChange={(v: string[]) => void setPost(post, v)}
+                />
+                {on.length === 0 && (
+                  <div className="hint text-warn" style={{ marginTop: 2 }}>
+                    {pending ? t('等对方注册；在这之前由管理员代办') : t('还没指定人，暂由管理员代办')}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+        <div className="flow-step flow-last">
+          <ArrowRightOutlined className="flow-arrow" />
+          <div className="flow-end">{end}</div>
+        </div>
+      </div>
+      {f.active.length === 0 && (
+        <div className="hint text-warn" style={{ marginTop: 8 }}>
+          {empty}
+        </div>
+      )}
+      <div className="hint" style={{ marginTop: 8 }}>
+        {hint}
+      </div>
+    </Card>
+  )
 
   const saveUser = async () => {
     // 填得不对时表单自己会标红，这里不用再报错
@@ -195,65 +259,30 @@ export default function UsersPage() {
         style={{ marginBottom: 12 }}
         title={t('新同事：先在下面“邀请名单”加上对方的邮箱和角色，再让对方打开系统，在登录页点“第一次使用”设置密码。不在名单上的邮箱注册不了。忘记密码的用“重设密码”；离职的人把“启用”关掉即可。')}
       />
-      <Card
-        size="small"
-        className="flow-card"
-        title={t('提成单审批流')}
-        extra={
-          <Button size="small" icon={<EditOutlined />} onClick={() => setFlowOpen(true)}>
-            {t('调整审批流')}
-          </Button>
-        }
-        style={{ marginBottom: 20 }}
-      >
-        <div className="flow-row">
-          <div className="flow-end">{t('业务员开单提交')}</div>
-          {flow.active.map((s, n) => {
-            const post = s.key
-            const on = holders(post)
-            const pending = waiting.some((i) => postsOf(i).includes(post))
-            return (
-              <div key={post} className="flow-step" data-post={post}>
-                <ArrowRightOutlined className="flow-arrow" />
-                <div className="flow-box">
-                  <div className="flow-name">
-                    {n + 1}. {flow.name(post)}
-                  </div>
-                  <Select
-                    mode="multiple"
-                    style={{ width: '100%' }}
-                    placeholder={t('选审核人')}
-                    loading={postBusy === post}
-                    disabled={postBusy !== null}
-                    showSearch={{ optionFilterProp: 'label' }}
-                    value={postValue(post)}
-                    options={postOptions(post)}
-                    onChange={(v: string[]) => void setPost(post, v)}
-                  />
-                  {on.length === 0 && (
-                    <div className="hint text-warn" style={{ marginTop: 2 }}>
-                      {pending ? t('等对方注册；在这之前由管理员代办') : t('还没指定人，暂由管理员代办')}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-          <div className="flow-step flow-last">
-            <ArrowRightOutlined className="flow-arrow" />
-            <div className="flow-end">{t('财务发放')}</div>
-          </div>
-        </div>
-        <div className="hint" style={{ marginTop: 8 }}>
-          {t('提成单在线上按这个顺序一级一级审，不用打印签字。一个岗位可以有几个人（谁先审都行），一个人也可以兼几个岗位。岗位和角色是分开的：角色决定能看到、能录什么，岗位决定提成单轮到谁审。管理员任何一级都可以代办。')}
-          {t('要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后提交的提成单。')}
-        </div>
-      </Card>
+      {flowCard(
+        flow,
+        t('提成单审批流'),
+        t('业务员开单提交'),
+        t('财务发放'),
+        t('提成单在线上按这个顺序一级一级审，不用打印签字。一个岗位可以有几个人（谁先审都行），一个人也可以兼几个岗位。岗位和角色是分开的：角色决定能看到、能录什么，岗位决定提成单轮到谁审。管理员任何一级都可以代办。') +
+          t('要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后提交的提成单。'),
+        t('还没有审批级别，提成单提交不了。点“调整审批流”加级别。'),
+      )}
+      {flowCard(
+        rflow,
+        t('到账审批流'),
+        t('财务录入到账'),
+        t('生效（算到账、可报款）'),
+        t('财务录的到账、业务员提交经财务审核转成的到账，录入后都按这个顺序一级一级审，全部通过才算到账（才进余额和报表、才能报款）。一个岗位可以有几个人（谁先审都行），管理员任何一级都可以代办；审批人可以是业务员账号，他只看得到走审批的到账。') +
+          t('要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后录入的到账。'),
+        t('还没有审批级别：现在到账录入后直接生效。点“调整审批流”加级别。'),
+      )}
       <FlowEditor
-        open={flowOpen}
+        open={flowOpen !== null}
+        docType={flowOpen ?? 'voucher'}
         peopleOn={peopleOn}
         onClose={(saved) => {
-          setFlowOpen(false)
+          setFlowOpen(null)
           if (saved) {
             void load()
             void reloadProfile()
