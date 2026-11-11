@@ -291,7 +291,6 @@ const UI: Record<string, string> = {
   "修改": "Edit",
   "取消": "Cancel",
   "关联": "Link",
-  "打开": "Open",
   "选择": "Select",
   "全部": "All",
   "状态": "Status",
@@ -567,18 +566,6 @@ const UI: Record<string, string> = {
     "For special cases the automatic text can't handle (payment by a third party, a vehicle swap difference, etc.). Once saved, this receipt keeps this text until you click “Use automatic text”.",
 
   // 报款页
-  "已复制 {n} 条，可以一起粘贴到群里": "Copied {n}. You can paste them into the group together.",
-  "复制失败": "Copy failed",
-  "已标记 {n} 条为已发群": "Marked {n} as posted",
-  "待发群": "To post",
-  "最近已发": "Recently posted",
-  "全选": "Select all",
-  "复制选中（{n}）": "Copy selected ({n})",
-  "选中的都标记已发群": "Mark selected as posted",
-  "建议先复制、发到群里，再标记已发。": "Copy and post to the group first, then mark as posted.",
-  "没有待发的报款": "Nothing to post",
-  "还没有已发的报款": "Nothing posted yet",
-  "补": "Late",
 
   // 业务员提交到账
   "提交新的到账": "Submit a new payment",
