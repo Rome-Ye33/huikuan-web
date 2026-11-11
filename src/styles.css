@@ -751,3 +751,23 @@ html[lang='en'] .logo-name {
     flex-direction: column;
   }
 }
+
+/* 到账录入：智能填表（贴群消息、水单截图，Claude 识别后自动填表） */
+.ai-fill {
+  border-color: #adc6ff;
+  background: #f7faff;
+}
+.ai-fill-list {
+  margin-bottom: 6px;
+}
+.ai-fill-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.ai-fill-notes {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
