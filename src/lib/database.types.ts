@@ -1570,12 +1570,12 @@ export type Database = {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number
       }
-      set_my_notify: {
-        Args: { p_lang: string; p_whatsapp: string }
-        Returns: undefined
-      }
       set_my_email_notify: {
         Args: { p_lang: string; p_on: boolean }
+        Returns: undefined
+      }
+      set_my_notify: {
+        Args: { p_lang: string; p_whatsapp: string }
         Returns: undefined
       }
       today_accra: { Args: never; Returns: string }
