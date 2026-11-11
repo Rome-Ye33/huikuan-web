@@ -13,18 +13,7 @@ import { useRefData } from '../lib/refdata'
 import { claimsSummary } from '../lib/submissions'
 import type { Submission } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
-import {
-  actionLabel,
-  BOX_LABEL,
-  BOX_ORDER,
-  BOXES,
-  boxQuery,
-  DOC_COLOR,
-  DOC_LABEL,
-  docType,
-  statusColor,
-  statusLabel,
-} from '../lib/workbench'
+import { BOX_LABEL, BOX_ORDER, BOXES, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
 import type { Box, DocType, WorkItem } from '../lib/workbench'
 
 // 工作台：到账提交、提成单两种审批，按“待办 / 已办 / 已发起 / 已结束”分栏。点开就是原来的审核、修改页面
@@ -43,6 +32,7 @@ const EMPTY_TEXT: Record<Box, string> = {
 
 function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp: boolean; onOpen: () => void }) {
   const t = useT()
+  const labels = useDocLabels()
   const { accountById } = useRefData()
   const type = docType(it.doc_type)
   const isSub = type === 'submission'
@@ -69,7 +59,7 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
     isSub ? t('到账 {date}', { date: it.doc_date ?? '' }) : it.amount != null ? t('本次发放 {amt}', { amt: '$ ' + money(it.amount) }) : null,
   ].filter(Boolean)
 
-  const action = (a: string | null | undefined, step: string | null | undefined) => (a ? t(actionLabel(a, step)) : '')
+  const action = (a: string | null | undefined, step: string | null | undefined) => labels.action(a, step)
   const progress =
     box === 'done' && it.my_action
       ? t('我：{action} · {when}', { action: action(it.my_action, it.my_step), when: dateTime(it.my_at) })
@@ -84,8 +74,8 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
           <Tag color={DOC_COLOR[type]}>{t(DOC_LABEL[type])}</Tag>
           {title}
         </div>
-        <Tag color={statusColor(type, it.status, it.step)} style={{ marginInlineEnd: 0 }}>
-          {t(statusLabel(type, it.status, it.step))}
+        <Tag color={labels.color(type, it.status, it.step)} style={{ marginInlineEnd: 0 }}>
+          {labels.status(type, it.status, it.step)}
         </Tag>
       </div>
       {details.map((line, i) => (

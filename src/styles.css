@@ -694,3 +694,60 @@ html[lang='en'] .logo-name {
     margin-top: 4px;
   }
 }
+
+/* 调整审批流（管理员）：一行一级，序号、名字、英文名、上移下移删除；窄屏时名字和英文名上下排 */
+.flow-edit-head,
+.flow-edit-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+}
+.flow-edit-head {
+  color: #888;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.flow-edit-row {
+  margin-bottom: 8px;
+}
+.flow-edit-no {
+  color: #888;
+  text-align: right;
+}
+.flow-edit-btns {
+  display: inline-flex;
+  gap: 4px;
+}
+.flow-edit-err {
+  grid-column: 2 / -1;
+  font-size: 12px;
+}
+@media (max-width: 575px) {
+  .flow-edit-head {
+    display: none;
+  }
+  .flow-edit-row {
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed #eee;
+  }
+  .flow-edit-no {
+    grid-row: 1 / span 2;
+    align-self: start;
+    padding-top: 5px;
+  }
+  .flow-edit-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .flow-edit-en {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .flow-edit-btns {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    flex-direction: column;
+  }
+}
