@@ -56,6 +56,33 @@ export type Database = {
         }
         Relationships: []
       }
+      approval_steps: {
+        Row: {
+          active: boolean
+          created_at: string
+          key: string
+          name: string
+          name_en: string | null
+          position: number
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          key: string
+          name: string
+          name_en?: string | null
+          position: number
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          key?: string
+          name?: string
+          name_en?: string | null
+          position?: number
+        }
+        Relationships: []
+      }
       bank_accounts: {
         Row: {
           active: boolean
@@ -334,6 +361,7 @@ export type Database = {
           finance_at: string | null
           finance_by: string | null
           finance_name: string | null
+          flow: Json | null
           full_payment: boolean
           gm_at: string | null
           gm_by: string | null
@@ -383,6 +411,7 @@ export type Database = {
           finance_at?: string | null
           finance_by?: string | null
           finance_name?: string | null
+          flow?: Json | null
           full_payment?: boolean
           gm_at?: string | null
           gm_by?: string | null
@@ -432,6 +461,7 @@ export type Database = {
           finance_at?: string | null
           finance_by?: string | null
           finance_name?: string | null
+          flow?: Json | null
           full_payment?: boolean
           gm_at?: string | null
           gm_by?: string | null
@@ -476,6 +506,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "salespersons"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commission_vouchers_step_fkey"
+            columns: ["step"]
+            isOneToOne: false
+            referencedRelation: "approval_steps"
+            referencedColumns: ["key"]
           },
         ]
       }
@@ -605,6 +642,7 @@ export type Database = {
           created_at: string
           doc_id: number
           doc_type: string
+          due_at: string | null
           error: string | null
           id: number
           kind: string
@@ -621,6 +659,7 @@ export type Database = {
           created_at?: string
           doc_id: number
           doc_type: string
+          due_at?: string | null
           error?: string | null
           id?: never
           kind: string
@@ -637,6 +676,7 @@ export type Database = {
           created_at?: string
           doc_id?: number
           doc_type?: string
+          due_at?: string | null
           error?: string | null
           id?: never
           kind?: string
@@ -1197,6 +1237,7 @@ export type Database = {
           finance_at: string | null
           finance_by: string | null
           finance_name: string | null
+          flow: Json | null
           full_payment: boolean | null
           gm_at: string | null
           gm_by: string | null
@@ -1248,6 +1289,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "salespersons"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "commission_vouchers_step_fkey"
+            columns: ["step"]
+            isOneToOne: false
+            referencedRelation: "approval_steps"
+            referencedColumns: ["key"]
           },
         ]
       }
@@ -1540,6 +1588,15 @@ export type Database = {
           to_number: string
         }[]
       }
+      notify_claim_digest: {
+        Args: { p_limit?: number }
+        Returns: {
+          items: Json
+          lang: string
+          to_email: string
+          to_name: string
+        }[]
+      }
       notify_claim_email: {
         Args: { p_limit?: number }
         Returns: {
@@ -1560,6 +1617,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      notify_done_many: {
+        Args: {
+          p_error?: string
+          p_ids: number[]
+          p_status: string
+          p_wa_id?: string
+        }
+        Returns: undefined
+      }
       receipt_report_text: { Args: { p_receipt_id: number }; Returns: string }
       save_claims: {
         Args: { p_claims: Json; p_receipt_id: number }
@@ -1570,6 +1636,7 @@ export type Database = {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number
       }
+      save_voucher_flow: { Args: { p_steps: Json }; Returns: undefined }
       set_my_email_notify: {
         Args: { p_lang: string; p_on: boolean }
         Returns: undefined
