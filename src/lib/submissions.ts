@@ -6,7 +6,8 @@ import { supabase } from './supabase'
 import type { TableRow } from './supabase'
 
 export type Submission = TableRow<'receipt_submissions'>
-export type SubmissionStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
+/** requested = 财务请业务员填写、等他填（23）；其余是业务员提交后的状态 */
+export type SubmissionStatus = 'requested' | 'pending' | 'approved' | 'rejected' | 'withdrawn'
 
 /** 业务员填的一行“这笔钱是哪台车的”。车在系统里就有 vehicle_id；不在就填客户、车型、大架号（大架号可以不知道） */
 export type SubmissionClaim = {
@@ -20,16 +21,23 @@ export type SubmissionClaim = {
 }
 
 export const STATUS_LABEL: Record<SubmissionStatus, string> = {
+  requested: '待填写',
   pending: '待审核',
   approved: '已通过',
   rejected: '已退回',
   withdrawn: '已撤回',
 }
 export const STATUS_COLOR: Record<SubmissionStatus, string> = {
+  requested: 'orange',
   pending: 'blue',
   approved: 'green',
   rejected: 'red',
   withdrawn: 'default',
+}
+
+/** 这条是财务请业务员填写的（账户、日期、金额按财务录的，填好后拆分写到那笔到账上），不是业务员自己提交的 */
+export function isFillRequest(s: Pick<Submission, 'requested_by'> | null | undefined): boolean {
+  return !!s?.requested_by
 }
 
 export function parseClaims(j: Json | null | undefined): SubmissionClaim[] {
@@ -76,14 +84,14 @@ export function useSubmissionCount(status: SubmissionStatus, enabled: boolean): 
   return enabled ? n : 0
 }
 
-/** 拆分摘要：客户 · 大架号 · 款项，最多两行 */
-export function claimsSummary(s: { claims: Json | null }, t: (zh: string, v?: Record<string, string | number>) => string): string[] {
+/** 拆分摘要：客户 · 大架号 · 款项，默认最多两行 */
+export function claimsSummary(s: { claims: Json | null }, t: (zh: string, v?: Record<string, string | number>) => string, max = 2): string[] {
   const list = parseClaims(s.claims)
-  const lines = list.slice(0, 2).map((c) =>
+  const lines = list.slice(0, max).map((c) =>
     [c.customer_name, c.vin || (c.vehicle_id ? '' : c.model ? t('{model}（大架号未定）', { model: c.model }) : ''), c.nature ? t(c.nature) : '', c.amount_orig ? money(c.amount_orig) : '']
       .filter(Boolean)
       .join(' · '),
   )
-  if (list.length > 2) lines.push(t('还有 {n} 笔', { n: list.length - 2 }))
+  if (list.length > max) lines.push(t('还有 {n} 笔', { n: list.length - max }))
   return lines
 }

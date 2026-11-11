@@ -13,6 +13,7 @@ const VALUES: Record<string, string> = {
   "已通过": "Approved",
   "已退回": "Returned",
   "已撤回": "Withdrawn",
+  "待填写": "To fill in",
   // 拆分状态
   "未认领": "Unallocated",
   "部分认领": "Partly allocated",
@@ -58,6 +59,15 @@ const VALUES: Record<string, string> = {
   "只有财务能审核": "Only finance can review submissions",
   "退回请写原因，业务员会看到": "Please give a reason when returning it. The salesperson will see it.",
   "已通过的提交不能改关联的到账": "The receipt of an approved submission can't be changed",
+  // 财务请业务员填写（23）
+  "只有财务能请业务员填写": "Only finance can ask a salesperson to fill in",
+  "找不到这笔到账": "Receipt not found",
+  "业务员不存在或已停用": "This salesperson doesn't exist or is inactive",
+  "业务员 {name} 还没有登录账号，先在“用户与权限”里邀请他": "{name} doesn't have a login yet. Invite them under “Users & permissions” first.",
+  "这笔到账已经在请业务员填写了，要换人先取消": "A salesperson is already being asked about this receipt. Cancel that request first to ask someone else.",
+  "还在等业务员填写，只能取消": "Still waiting for the salesperson to fill it in. You can only cancel the request.",
+  "财务请你填写的到账不能撤回，有问题写在说明里": "A receipt finance asked you to fill in can't be withdrawn. Put any problem in the note.",
+  "请业务员填写的记录不能换到账": "A fill-in request can't be moved to another receipt",
   "找不到这笔到账，或没有权限修改": "Receipt not found, or you are not allowed to change it",
   "这条提交刚被业务员改过或撤回，或者已经审核过了，请关掉后重新打开":
     "The salesperson has just changed or withdrawn this submission, or it has already been reviewed. Close it and open it again.",
@@ -224,6 +234,8 @@ const VALUES: Record<string, string> = {
   "已重新提交": "Resubmitted",
   "审核通过": "Approved",
   "到账被删除，回到待审核": "Receipt deleted, back to review",
+  "已请业务员填写": "Asked the salesperson to fill in",
+  "取消了请业务员填写": "Cancelled the fill-in request",
   "没有待办，都处理完了": "Nothing to do. All caught up.",
   "没有处理过、还在流程中的单据": "Nothing you handled is still in progress",
   "还没有发起过": "You haven't submitted anything yet",
@@ -579,8 +591,8 @@ const UI: Record<string, string> = {
 
   // 业务员提交到账
   "提交新的到账": "Submit a new payment",
-  "客户的钱到了就在这里提交，附上转账截图。财务审核通过后才算到账；被退回的按原因改好再提交。":
-    "When a customer pays, submit it here with the transfer screenshot. It counts as received only after finance approves it. If it is returned, fix it as asked and submit again.",
+  "客户的钱到了就在这里提交，附上转账截图。财务审核通过后才算到账；被退回的按原因改好再提交。财务请你填写的也在这里：填好这笔钱是哪台车的再提交。":
+    "When a customer pays, submit it here with the transfer screenshot. It counts as received only after finance approves it. If it is returned, fix it as asked and submit again. Receipts finance asks you to fill in are here too: fill in which vehicle the money is for, then submit.",
   "还没有提交过到账": "You haven't submitted any payments yet",
   "没有这个状态的提交": "No submissions with this status",
   "退回原因：{reason}": "Reason for return: {reason}",
@@ -644,12 +656,64 @@ const UI: Record<string, string> = {
   "已分 {cur} {a} / 到账 {b}，剩 {c}": "Assigned {cur} {a} of {b}, {c} left",
   "给财务的说明（可空）": "Note for finance (optional)",
   "如：客户说剩下的下周付": "e.g. The customer says the rest will be paid next week",
+  // 财务请你填写的（23）：账户、日期、金额锁定，填好是哪台车的再提交
+  "财务请你填写 #{id}": "Finance asks you to fill in #{id}",
+  "财务 {name} 请你填写：这笔钱是哪个客户哪台车的": "{name} (finance) asks you: which customer and vehicle is this money for?",
+  "账户、日期、金额按财务录的，改不了。填好下面“这笔钱是哪台车的”，有转账截图也传上，再点“提交”。":
+    "Account, date and amount are as finance entered them and can't be changed. Fill in “Which vehicle is this money for” below, add a transfer screenshot if you have one, then click “Submit”.",
+  "{when} 已提交，等财务审核。审核前可以修改。": "Submitted {when}. Waiting for finance to review it. You can edit it until then.",
+  "财务已采用你填的，到账编号 {no}": "Finance accepted what you filled in. Receipt no. {no}",
+  "财务已采用你填的": "Finance accepted what you filled in",
+  "{req} 于 {when} 请 {name} 填写": "{req} asked {name} to fill this in on {when}",
+  "（财务已经把水单放进来了；你有转账截图也可以传）": "(finance already attached the bank slip; you can add a transfer screenshot too)",
+  "财务 {name} 请你填写": "{name} (finance) asks you to fill in",
+  "{when} 发来": "Sent to you {when}",
+  "财务说：{note}": "Finance says: {note}",
 
   // 财务看业务员提交
   "提交时间": "Submitted",
   "业务员说是哪台车的": "Vehicles (from salesperson)",
   "共 {n} 条": "{n} in total",
   "没有等审核的提交": "No submissions waiting for review",
+  "等 {name} 填写": "Waiting for {name} to fill in",
+  "财务请他填的": "Asked by finance",
+
+  // 财务请业务员填写（到账录入页，23）
+  "请业务员填写": "Ask salesperson to fill in",
+  "先保存，再请业务员填写": "Save first, then ask the salesperson",
+  "不知道这笔钱是哪个客户哪台车的？发给业务员填，他填好你再核对": "Don't know which customer or vehicle this money is for? Send it to the salesperson to fill in, then check what they entered.",
+  "请业务员填写：这笔钱是哪个客户哪台车的": "Ask a salesperson: which customer and vehicle is this money for?",
+  "他会在“提交到账”里看到这笔（账户、日期、金额照你录的，改不了），填好是哪台车的再提交回来，你核对后采用。期间这笔到账照常可以审批、算到账。":
+    "They will see it under “Submit payment” (account, date and amount as you entered them, locked), fill in which vehicle it is for and submit it back for you to check and accept. Meanwhile this receipt can still be approved and counted as received.",
+  "选业务员": "Choose a salesperson",
+  "给他的话（可空）": "Message to them (optional)",
+  "如：11-08 GHS 150,000 TRF FROM KOFI 是谁的？": "e.g. Whose is the GHS 150,000 TRF FROM KOFI on 11-08?",
+  "发给他": "Send",
+  "已发给 {name} 填写，他填好会提醒你": "Sent to {name}. You'll be notified when they have filled it in.",
+  "已请 {name} 填写这笔是哪个客户哪台车的（{when}）": "Asked {name} to fill in which customer and vehicle this is for ({when})",
+  "留言：{note}": "Message: {note}",
+  "他填好提交后会提醒你，到时在这里核对、采用。等他填的期间这笔到账照常可以审批、算到账。":
+    "You'll be notified when they submit it; check and accept it here. Meanwhile this receipt can still be approved and counted as received.",
+  "取消请填写": "Cancel request",
+  "取消请 {name} 填写？": "Cancel the request to {name}?",
+  "他那边这条就没有了；以后还可以再请他或别人填。": "It will disappear from their list. You can ask them or someone else again later.",
+  "确定取消": "Yes, cancel",
+  "返回": "Back",
+  "他已经填好提交了，请关掉后重新打开": "They have already filled it in and submitted it. Close this receipt and open it again.",
+  "已取消": "Cancelled",
+  "{name} 填好了（{when}），请核对": "{name} has filled it in ({when}). Please check it.",
+  "他传了 {n} 个凭证，采用后会挂到这笔到账上": "They uploaded {n} proof file(s); accepting attaches them to this receipt.",
+  "“采用并通过”：拆分照他填的存到这笔到账（替换已有的拆分）。想先看看、改一改，点“先放进拆分”，改好再采用。":
+    "“Accept and approve” saves the allocation as they filled it in (replacing the current lines). To look at it or adjust it first, click “Put into allocation”, then accept.",
+  "采用并通过": "Accept and approve",
+  "先放进拆分": "Put into allocation",
+  "已放进拆分": "In allocation",
+  "采用失败：": "Couldn't accept: ",
+  "已采用并通过，{name} 填的拆分存到了这笔到账": "Accepted. The allocation {name} filled in is saved on this receipt.",
+  "财务请业务员填的": "Fill-in request from finance",
+  "已退回给 {name}，等他改好重新提交": "Returned to {name}. Waiting for them to fix it and submit again.",
+  "退回了 {name} 填的（{when}）：{reason}": "Returned what {name} filled in ({when}): {reason}",
+  "等他改好重新提交。不等了可以取消。": "Waiting for them to fix it and submit again. Cancel the request if you don't want to wait.",
 
   // 凭证
   "上传失败：": "Upload failed: ",

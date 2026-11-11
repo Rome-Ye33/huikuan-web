@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { dateTime, money, num, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
-import { claimsSummary, STATUS_COLOR, STATUS_LABEL } from '../lib/submissions'
+import { claimsSummary, isFillRequest, STATUS_COLOR, STATUS_LABEL } from '../lib/submissions'
 import type { Submission, SubmissionStatus } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import ReceiptEditor from './ReceiptEditor'
@@ -54,7 +54,9 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
   const spName = (id: number) => salespersons.find((s) => s.id === id)?.name ?? ''
 
   const open = (s: Submission) => {
-    if (s.status === 'pending') setReview(s)
+    // 财务请业务员填写的：在那笔到账的页面看、审核（拆分写到那笔到账上）
+    if (isFillRequest(s) && s.receipt_id) setReceiptId(s.receipt_id)
+    else if (s.status === 'pending') setReview(s)
     else if (s.status === 'approved' && s.receipt_id) setReceiptId(s.receipt_id)
     else setView(s)
   }
@@ -82,15 +84,21 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
     },
     {
       title: t('业务员说是哪台车的'),
-      render: (_, r) => (
-        <div>
-          {claimsSummary(r, t).map((line, i) => (
-            <div key={i} style={{ fontSize: 12 }}>
-              {line}
-            </div>
-          ))}
-        </div>
-      ),
+      render: (_, r) =>
+        isFillRequest(r) && r.status === 'requested' ? (
+          <div className="hint" style={{ fontSize: 12 }}>
+            {t('等 {name} 填写', { name: spName(r.salesperson_id) })}
+            {r.request_note ? `：${r.request_note}` : ''}
+          </div>
+        ) : (
+          <div>
+            {claimsSummary(r, t).map((line, i) => (
+              <div key={i} style={{ fontSize: 12 }}>
+                {line}
+              </div>
+            ))}
+          </div>
+        ),
     },
     {
       title: '',
@@ -108,6 +116,7 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
       render: (_, r) => (
         <div>
           <Tag color={STATUS_COLOR[r.status as SubmissionStatus]}>{t(STATUS_LABEL[r.status as SubmissionStatus])}</Tag>
+          {isFillRequest(r) && r.status !== 'requested' && <div className="hint">{t('财务请他填的')}</div>}
           {r.status === 'rejected' && r.review_note && <div className="hint">{r.review_note}</div>}
         </div>
       ),
@@ -115,7 +124,7 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
   ]
 
   const filters: { value: Filter; label: string }[] = [
-    ...(['pending', 'rejected', 'approved', 'withdrawn'] as SubmissionStatus[]).map((s) => ({ value: s, label: t(STATUS_LABEL[s]) })),
+    ...(['pending', 'requested', 'rejected', 'approved', 'withdrawn'] as SubmissionStatus[]).map((s) => ({ value: s, label: t(STATUS_LABEL[s]) })),
     { value: 'all', label: t('全部') },
   ]
 

@@ -59,6 +59,8 @@ export const ACTION_LABEL: Record<string, string> = {
   pay: '已发放',
   unpay: '已取消发放',
   reopen: '到账被删除，回到待审核',
+  request: '已请业务员填写',
+  cancel: '取消了请业务员填写',
 }
 export const ACTION_COLOR: Record<string, string> = {
   submit: 'blue',
@@ -69,6 +71,8 @@ export const ACTION_COLOR: Record<string, string> = {
   pay: 'green',
   unpay: 'gray',
   reopen: 'gray',
+  request: 'orange',
+  cancel: 'gray',
 }
 
 export function docType(x: string | null | undefined): DocType {

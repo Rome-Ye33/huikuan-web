@@ -8,7 +8,7 @@ import { dateTime, money, num, round2, todayAccra, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { defaultNature, receiptNatures } from '../lib/natures'
 import { accountOptions, lookupRate, useRefData } from '../lib/refdata'
-import { notifySubmissionsChanged, parseClaims, STATUS_COLOR, STATUS_LABEL } from '../lib/submissions'
+import { isFillRequest, notifySubmissionsChanged, parseClaims, STATUS_COLOR, STATUS_LABEL } from '../lib/submissions'
 import type { Submission, SubmissionClaim, SubmissionStatus } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import type { Vehicle } from '../lib/supabase'
@@ -69,7 +69,9 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
   const rateTouched = useRef(false)
 
   const status = (submission?.status ?? null) as SubmissionStatus | null
-  const editable = !isStaff && (!submission || status === 'pending' || status === 'rejected')
+  /** 财务请我填写的（23）：账户、日期、金额、汇率这些按财务录的，只填这笔钱是哪台车的（和凭证、说明），不能撤回 */
+  const isReq = isFillRequest(submission)
+  const editable = !isStaff && (!submission || status === 'requested' || status === 'pending' || status === 'rejected')
   const uid = session?.user.id
 
   const accountId = Form.useWatch('account_id', form)
@@ -190,7 +192,7 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
 
   const validate = (v: FormValues): string | null => {
     if (!isUsd && !(num(v.fx_rate) > 0)) return t('请填汇率')
-    if (account?.kind !== 'cash' && attachments.length === 0) return t('请上传凭证（转账截图、水单或 Credit Alert）')
+    if (!isReq && account?.kind !== 'cash' && attachments.length === 0) return t('请上传凭证（转账截图、水单或 Credit Alert）')
     const used = lines.filter((l) => l.vehicle_id || l.customer_name.trim() || l.model.trim() || l.vin.trim() || l.nature || num(l.amount_orig) > 0)
     if (used.length === 0) return t('至少填一笔：这笔钱是哪台车或哪个客户的')
     for (const [i, l] of used.entries()) {
@@ -248,7 +250,7 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
     }
     const doSave = async () => {
       if (!profile?.salesperson_id || !account) return
-      const payload = {
+      const head = {
         receipt_date: v.receipt_date!.format('YYYY-MM-DD'),
         account_id: account.id,
         currency: account.currency,
@@ -257,18 +259,21 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
         fx_rate: isUsd ? 1 : num(v.fx_rate) || null,
         payer_summary: v.payer_summary?.trim() || null,
         cheque_no: v.cheque_no?.trim() || null,
+      }
+      const body = {
         note: v.note?.trim() || null,
         attachments,
         claims: buildClaims() as unknown as Json,
       }
       setSaving(true)
+      // 财务请我填写的：账户、金额这些按财务录的，不传；填好（或改好）就是提交
       const res = submission
         ? await supabase
             .from('receipt_submissions')
-            .update({ ...payload, ...(status === 'rejected' ? { status: 'pending' } : {}) })
+            .update({ ...(isReq ? {} : head), ...body, ...(status === 'rejected' || status === 'requested' ? { status: 'pending' } : {}) })
             .eq('id', submission.id)
             .select('id')
-        : await supabase.from('receipt_submissions').insert(payload).select('id')
+        : await supabase.from('receipt_submissions').insert({ ...head, ...body }).select('id')
       setSaving(false)
       if (res.error) {
         message.error(t('提交失败：') + errorText(res.error))
@@ -326,17 +331,36 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
   }
 
   const spName = submission ? salespersons.find((s) => s.id === submission.salesperson_id)?.name : undefined
-  const title = submission ? t('到账提交 #{id}', { id: submission.id }) : t('提交到账')
+  const title = submission ? (isReq ? t('财务请你填写 #{id}', { id: submission.id }) : t('到账提交 #{id}', { id: submission.id })) : t('提交到账')
   const width = Math.min(760, typeof window !== 'undefined' ? window.innerWidth : 760)
 
   const banner = (() => {
     if (!submission || !status) return null
+    if (status === 'requested')
+      return (
+        <Alert
+          type="warning"
+          showIcon
+          title={t('财务 {name} 请你填写：这笔钱是哪个客户哪台车的', { name: submission.requested_name ?? t('财务') })}
+          description={
+            <div>
+              {submission.request_note && <div>{t('财务说：{note}', { note: submission.request_note })}</div>}
+              {editable && <div>{t('账户、日期、金额按财务录的，改不了。填好下面“这笔钱是哪台车的”，有转账截图也传上，再点“提交”。')}</div>}
+              <div className="hint">{dateTime(submission.requested_at)}</div>
+            </div>
+          }
+        />
+      )
     if (status === 'pending')
       return (
         <Alert
           type="info"
           showIcon
-          title={t('{when} 已提交，等财务审核。审核前可以修改或撤回。', { when: dateTime(submission.submitted_at) })}
+          title={
+            isReq
+              ? t('{when} 已提交，等财务审核。审核前可以修改。', { when: dateTime(submission.submitted_at) })
+              : t('{when} 已提交，等财务审核。审核前可以修改或撤回。', { when: dateTime(submission.submitted_at) })
+          }
           description={submission.review_note ? t('上次退回原因：{reason}', { reason: submission.review_note }) : undefined}
         />
       )
@@ -354,7 +378,15 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
         <Alert
           type="success"
           showIcon
-          title={receiptNo ? t('财务已审核通过，到账编号 {no}', { no: receiptNo }) : t('财务已审核通过')}
+          title={
+            isReq
+              ? receiptNo
+                ? t('财务已采用你填的，到账编号 {no}', { no: receiptNo })
+                : t('财务已采用你填的')
+              : receiptNo
+                ? t('财务已审核通过，到账编号 {no}', { no: receiptNo })
+                : t('财务已审核通过')
+          }
           description={submission.reviewed_at ? dateTime(submission.reviewed_at) : undefined}
         />
       )
@@ -376,13 +408,13 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
       extra={
         editable && (
           <Space>
-            {submission && (
+            {submission && !isReq && (
               <Button danger onClick={withdraw}>
                 {t('撤回')}
               </Button>
             )}
             <Button type="primary" loading={saving} onClick={submit}>
-              {!submission ? t('提交') : status === 'rejected' ? t('重新提交') : t('保存修改')}
+              {!submission || status === 'requested' ? t('提交') : status === 'rejected' ? t('重新提交') : t('保存修改')}
             </Button>
           </Space>
         )
@@ -392,19 +424,26 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
         {banner && <div style={{ marginBottom: 12 }}>{banner}</div>}
         {isStaff && submission && (
           <Typography.Paragraph type="secondary">
-            {t('业务员：{name}，提交于 {when}', { name: spName ?? '', when: dateTime(submission.submitted_at) })}
+            {isReq
+              ? t('{req} 于 {when} 请 {name} 填写', { req: submission.requested_name ?? '', when: dateTime(submission.requested_at), name: spName ?? '' })
+              : t('业务员：{name}，提交于 {when}', { name: spName ?? '', when: dateTime(submission.submitted_at) })}
           </Typography.Paragraph>
         )}
         <Form form={form} layout="vertical" disabled={!editable} onValuesChange={() => setDirty(true)}>
           <Row gutter={12}>
             <Col xs={24} md={12}>
               <Form.Item name="account_id" label={t('客户付到哪个账户')} rules={[{ required: true, message: t('请选收款账户') }]}>
-                <Select showSearch={{ optionFilterProp: 'label' }} options={accountOptions(accounts)} placeholder={t('搜索账户，如 ECO 8651')} />
+                <Select
+                  showSearch={{ optionFilterProp: 'label' }}
+                  options={accountOptions(accounts)}
+                  placeholder={t('搜索账户，如 ECO 8651')}
+                  disabled={isReq || !editable}
+                />
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
               <Form.Item name="receipt_date" label={t('到账日期')} rules={[{ required: true, message: t('请选日期') }]}>
-                <DatePicker style={{ width: '100%' }} allowClear={false} inputReadOnly />
+                <DatePicker style={{ width: '100%' }} allowClear={false} inputReadOnly disabled={isReq || !editable} />
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
@@ -413,7 +452,7 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
                 label={currency ? t('金额（{cur}）', { cur: currency }) : t('金额')}
                 rules={[{ required: true, message: t('请填金额') }]}
               >
-                <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
+                <InputNumber min={0.01} precision={2} style={{ width: '100%' }} disabled={isReq || !editable} />
               </Form.Item>
             </Col>
             {!isUsd && (
@@ -427,6 +466,7 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
                     min={0.000001}
                     precision={4}
                     style={{ width: '100%' }}
+                    disabled={isReq || !editable}
                     onChange={() => {
                       rateTouched.current = true
                     }}
@@ -436,12 +476,12 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
             )}
             <Col xs={24} md={isUsd ? 12 : 10}>
               <Form.Item name="payer_summary" label={t('付款人（转账用的名字 / 公司）')}>
-                <Input />
+                <Input disabled={isReq || !editable} />
               </Form.Item>
             </Col>
             <Col xs={12} md={isUsd ? 12 : 8}>
               <Form.Item name="cheque_no" label={t('支票号（支票才填）')}>
-                <Input />
+                <Input disabled={isReq || !editable} />
               </Form.Item>
             </Col>
           </Row>
@@ -450,7 +490,7 @@ export default function SubmissionForm({ open, submission, onClose }: Props) {
           <Typography.Text strong>{t('凭证')}</Typography.Text>
           <span className="hint">
             {' '}
-            {account?.kind === 'cash' ? t('（现金可以不传）') : t('（转账截图、水单或 Credit Alert，必传）')}
+            {isReq ? t('（财务已经把水单放进来了；你有转账截图也可以传）') : account?.kind === 'cash' ? t('（现金可以不传）') : t('（转账截图、水单或 Credit Alert，必传）')}
           </span>
           <div style={{ marginTop: 6 }}>
             <Vouchers
