@@ -3,7 +3,7 @@
 // 返回给“到账录入”页面预填。这里不写数据库：财务在页面上逐项核对以后，才照常走 save_receipt 保存。
 // - recognize：识别一段文字和 / 或几张图片、PDF
 // - status：看看密钥配了没有（页面据此提示“还没开通”）
-// 只有启用中的财务、管理员能用。部署时 verify_jwt = false，下面自己校验登录和角色（和 account 一样）。
+// 只有启用中的管理员能用（识别要花 Claude API 的钱）。部署时 verify_jwt = false，下面自己校验登录和角色（和 account 一样）。
 // 密钥（Supabase → Edge Functions → Secrets）：
 //   ANTHROPIC_API_KEY   Claude API 密钥。只放在这里，不进浏览器、不进代码库。
 //   CLAUDE_MODEL        可选，换模型用，默认见下面 DEFAULT_MODEL
@@ -61,13 +61,13 @@ function apiKey(): string {
 }
 
 // ---------------------------------------------------------------- 登录和角色
-async function requireStaff(req: Request): Promise<{ id: string } | Response> {
+async function requireAdmin(req: Request): Promise<{ id: string } | Response> {
   const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
   if (!token) return reply(401, { error: '请先登录' })
   const { data, error } = await db.auth.getUser(token)
   if (error || !data.user) return reply(401, { error: '登录已过期，请重新登录' })
   const { data: prof } = await db.from('profiles').select('role, active').eq('id', data.user.id).maybeSingle()
-  if (!prof || !prof.active || (prof.role !== 'admin' && prof.role !== 'finance')) return reply(403, { error: '只有财务和管理员能用智能填表' })
+  if (!prof || !prof.active || prof.role !== 'admin') return reply(403, { error: '只有管理员能用智能填表' })
   return { id: data.user.id }
 }
 
@@ -324,7 +324,7 @@ function readInput(body: Record<string, unknown>): { text: string; files: FileIn
 
 // ---------------------------------------------------------------- 识别
 async function recognize(req: Request, body: Record<string, unknown>) {
-  const caller = await requireStaff(req)
+  const caller = await requireAdmin(req)
   if (caller instanceof Response) return caller
   const input = readInput(body)
   if (typeof input === 'string') return reply(400, { error: input })
@@ -423,7 +423,7 @@ function claudeError(e: unknown, model: string): Response {
 }
 
 async function status(req: Request) {
-  const caller = await requireStaff(req)
+  const caller = await requireAdmin(req)
   if (caller instanceof Response) return caller
   return reply(200, { ok: true, configured: apiKey() !== '' })
 }

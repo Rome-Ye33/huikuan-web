@@ -11,7 +11,8 @@ import { useRefData } from '../lib/refdata'
 import { uploadVoucher } from './Vouchers'
 
 // 智能填表：新建到账时，把业务员在群里发的回款消息、银行的 Credit Alert 贴进来，
-// 连同已经传好的水单截图一起交给 Claude 识别，认出来的内容直接填到下面的表里，财务核对后保存。
+// 连同已经传好的水单截图一起交给 Claude 识别，认出来的内容直接填到下面的表里，核对后保存。
+// 只给管理员用（识别要花 Claude API 的钱），服务端也只放行管理员。
 // 一次认出好几笔（比如一笔现金一笔 momo）时，一张表录一笔，剩下的下次新建到账接着填。
 
 type Props = {
@@ -31,7 +32,7 @@ let knownConfigured = false
 export default function AiFill({ attachments, onAttach, onFill, lockedAmount }: Props) {
   const t = useT()
   const { message } = App.useApp()
-  const { profile, isAdmin } = useAuth()
+  const { profile } = useAuth()
   const { accountById, customers, salespersons } = useRefData()
   const uid = profile?.id
 
@@ -181,11 +182,7 @@ export default function AiFill({ attachments, onAttach, onFill, lockedAmount }: 
           showIcon
           style={{ marginBottom: 8 }}
           title={t('智能填表还没开通')}
-          description={
-            isAdmin
-              ? t('到 Supabase 后台的 Edge Functions → Secrets，加一条 ANTHROPIC_API_KEY（Claude 的 API 密钥），加好就能用。')
-              : t('请管理员开通后再用，现在先手工录入。')
-          }
+          description={t('到 Supabase 后台的 Edge Functions → Secrets，加一条 ANTHROPIC_API_KEY（Claude 的 API 密钥），加好就能用。')}
         />
       )}
       <div className="hint" style={{ marginBottom: 6 }}>
