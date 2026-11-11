@@ -3,6 +3,7 @@ import { Alert, App, Button, Form, Input, Tabs, Typography } from 'antd'
 import { useState } from 'react'
 import LangSwitch from '../components/LangSwitch'
 import Logo from '../components/Logo'
+import fetLogo from '../assets/fet-logo.jpg'
 import { accountCall, MIN_PASSWORD } from '../lib/account'
 import { errorText } from '../lib/errors'
 import { supabase } from '../lib/supabase'
@@ -42,12 +43,12 @@ export default function LoginPage() {
     }
   }
 
-  // 宽屏时左边一栏：系统名和几项主要功能
+  // 宽屏时左边一栏：公司 logo、系统名和几个主要模块（Rome 2026-11-11：界面不需要太多叙述，只列模块名）
   const features = [
-    { icon: <CarOutlined />, title: t('车辆台账'), text: t('每台车的合同价、已到账和余额，一目了然') },
-    { icon: <MoneyCollectOutlined />, title: t('到账与报款'), text: t('业务员提交，财务审核，自动生成报款文字') },
-    { icon: <FileDoneOutlined />, title: t('提成申请单'), text: t('多级线上审批，不用打印签字') },
-    { icon: <BankOutlined />, title: t('银行对账'), text: t('导入银行流水，自动配对到账') },
+    { icon: <CarOutlined />, title: t('车辆台账') },
+    { icon: <MoneyCollectOutlined />, title: t('到账录入') },
+    { icon: <FileDoneOutlined />, title: t('提成申请单') },
+    { icon: <BankOutlined />, title: t('银行对账') },
   ]
 
   return (
@@ -55,6 +56,9 @@ export default function LoginPage() {
       <aside className="login-brand">
         <Logo size={40} className="logo-lg" />
         <div className="login-brand-body">
+          <div className="login-company">
+            <img src={fetLogo} alt="FET AUTO" />
+          </div>
           <h1>
             {t('车辆销售、回款和提成')}
             <br />
@@ -64,10 +68,7 @@ export default function LoginPage() {
             {features.map((f) => (
               <li key={f.title}>
                 <span className="login-feature-icon">{f.icon}</span>
-                <span>
-                  <b>{f.title}</b>
-                  <span>{f.text}</span>
-                </span>
+                {f.title}
               </li>
             ))}
           </ul>
