@@ -1,5 +1,6 @@
 // 待办提醒（Supabase Edge Function “notify”）：有新的待办时，用 WhatsApp 发一条消息给该处理的人
-// - flush：数据库有新提醒时、以及每分钟定时（pg_cron）调用，请求头带 x-notify-secret。
+// - flush：数据库有新提醒时、以及每分钟定时（pg_cron）调用，请求头带 x-notify-secret
+//          （口令上线时由数据库随机生成、存在 Vault，这里请数据库 notify_check_secret 核对，谁都不用经手）。
 //          从数据库取待发的提醒（notify_claim），一条条发出去，再把结果报回去（notify_done）。
 // - test：登录的人给自己发一条测试消息，看号码对不对（页头“WhatsApp 提醒”里的“发一条测试消息”）。
 //
@@ -11,7 +12,6 @@
 //   WHATSAPP_TOKEN            Meta 系统用户的永久令牌
 //   WHATSAPP_PHONE_NUMBER_ID  发送号码的编号（WhatsApp Manager 里“Phone number ID”，不是手机号）
 //   WHATSAPP_PIN              发送号码的两步验证 6 位数字（自己定；第一次发测试消息时用它把号码注册到 Cloud API）
-//   NOTIFY_SECRET             和数据库 Vault 里的 notify_secret 一样
 //   WHATSAPP_TEMPLATE（可选，默认 todo_notice）、WHATSAPP_API_VERSION（可选，默认 v25.0）
 //   WHATSAPP_API_BASE（可选，默认 https://graph.facebook.com；本地测试时指到假的服务）
 // 部署时 verify_jwt = false：flush 用口令校验，test 自己校验登录。服务端密钥只在 Supabase 服务器上用，不会进浏览器。
@@ -56,7 +56,6 @@ const TEMPLATE = Deno.env.get('WHATSAPP_TEMPLATE') || 'todo_notice'
 const VERSION = Deno.env.get('WHATSAPP_API_VERSION') || 'v25.0'
 const API_BASE = (Deno.env.get('WHATSAPP_API_BASE') || 'https://graph.facebook.com').replace(/\/+$/, '')
 const PIN = Deno.env.get('WHATSAPP_PIN') ?? ''
-const SECRET = Deno.env.get('NOTIFY_SECRET') ?? ''
 const BATCH = 20
 
 type Claim = { id: number; to_number: string | null; lang: string | null; body: string | null; go: string | null }
@@ -67,13 +66,12 @@ type WaReply = {
   error?: { code?: number; message?: string; error_data?: { details?: string } }
 }
 
-// 口令比较不提前退出，免得能按耗时一位位猜
-function sameSecret(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a)
-  const y = new TextEncoder().encode(b)
-  let diff = x.length ^ y.length
-  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0)
-  return diff === 0
+// flush 带的口令对不对：请数据库和 Vault 里的 notify_secret 核对
+async function flushAllowed(given: string): Promise<boolean> {
+  if (!given) return false
+  const { data, error } = await db.rpc('notify_check_secret', { p_secret: given })
+  if (error) console.error('notify_check_secret', error.message)
+  return !error && data === true
 }
 
 // WhatsApp 模板参数里不能有换行、制表符、连着好几个空格
@@ -205,7 +203,7 @@ Deno.serve(async (req) => {
   }
   try {
     if (body.action === 'flush') {
-      if (!SECRET || !sameSecret(req.headers.get('x-notify-secret') ?? '', SECRET)) return reply(401, { error: '口令不对' })
+      if (!(await flushAllowed(req.headers.get('x-notify-secret') ?? ''))) return reply(401, { error: '口令不对' })
       return await flush()
     }
     if (body.action === 'test') return await test(req)

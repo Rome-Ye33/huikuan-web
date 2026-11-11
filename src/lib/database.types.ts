@@ -1526,6 +1526,7 @@ export type Database = {
         Returns: undefined
       }
       match_statement_lines: { Args: { p_account_id: number }; Returns: number }
+      notify_check_secret: { Args: { p_secret: string }; Returns: boolean }
       notify_claim: {
         Args: { p_limit?: number }
         Returns: {
