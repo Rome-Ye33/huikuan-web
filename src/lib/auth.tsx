@@ -24,15 +24,19 @@ const AuthContext = createContext<AuthState | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  // 资料是哪个账号的：登录后 session 先有、资料还在读，这时按“还在加载”算，免得闪一下“账号还没有开通”
+  const [profileUid, setProfileUid] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const loadProfile = useCallback(async (s: Session | null) => {
     if (!s) {
       setProfile(null)
+      setProfileUid(null)
       return
     }
     const { data } = await supabase.from('profiles').select('*').eq('id', s.user.id).maybeSingle()
     setProfile(data ?? null)
+    setProfileUid(s.user.id)
   }, [])
 
   useEffect(() => {
@@ -60,8 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AuthState>(() => {
     const role = profile && profile.active ? profile.role : null
+    const profileReady = !session || profileUid === session.user.id
     return {
-      loading,
+      loading: loading || !profileReady,
       session,
       profile,
       role,
@@ -74,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null)
       },
     }
-  }, [loading, session, profile, loadProfile])
+  }, [loading, session, profile, profileUid, loadProfile])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
