@@ -9,6 +9,7 @@ import { HashRouter } from 'react-router-dom'
 import App from './App'
 import { AuthProvider } from './lib/auth'
 import { LangProvider, useI18n } from './lib/i18n'
+import { captureGo } from './lib/notify'
 import { RefDataProvider } from './lib/refdata'
 import './styles.css'
 
@@ -58,6 +59,9 @@ function Themed({ children }: { children: ReactNode }) {
     </ConfigProvider>
   )
 }
+
+// WhatsApp 提醒里的按钮带着 ?go=…：先记下来、从地址栏去掉，登录好以后再打开
+captureGo()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

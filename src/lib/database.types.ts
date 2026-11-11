@@ -598,6 +598,65 @@ export type Database = {
           },
         ]
       }
+      notifications: {
+        Row: {
+          attempts: number
+          claimed_at: string | null
+          created_at: string
+          doc_id: number
+          doc_type: string
+          error: string | null
+          id: number
+          kind: string
+          log_id: number | null
+          next_try_at: string
+          sent_at: string | null
+          status: string
+          user_id: string
+          wa_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          claimed_at?: string | null
+          created_at?: string
+          doc_id: number
+          doc_type: string
+          error?: string | null
+          id?: never
+          kind: string
+          log_id?: number | null
+          next_try_at?: string
+          sent_at?: string | null
+          status?: string
+          user_id: string
+          wa_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          claimed_at?: string | null
+          created_at?: string
+          doc_id?: number
+          doc_type?: string
+          error?: string | null
+          id?: never
+          kind?: string
+          log_id?: number | null
+          next_try_at?: string
+          sent_at?: string | null
+          status?: string
+          user_id?: string
+          wa_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       payment_natures: {
         Row: {
           active: boolean
@@ -633,8 +692,10 @@ export type Database = {
           email: string | null
           full_name: string | null
           id: string
+          notify_lang: string
           role: Database["public"]["Enums"]["app_role"] | null
           salesperson_id: number | null
+          whatsapp: string | null
         }
         Insert: {
           active?: boolean
@@ -643,8 +704,10 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id: string
+          notify_lang?: string
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
+          whatsapp?: string | null
         }
         Update: {
           active?: boolean
@@ -653,8 +716,10 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          notify_lang?: string
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
+          whatsapp?: string | null
         }
         Relationships: [
           {
@@ -1461,6 +1526,25 @@ export type Database = {
         Returns: undefined
       }
       match_statement_lines: { Args: { p_account_id: number }; Returns: number }
+      notify_claim: {
+        Args: { p_limit?: number }
+        Returns: {
+          body: string
+          go: string
+          id: number
+          lang: string
+          to_number: string
+        }[]
+      }
+      notify_done: {
+        Args: {
+          p_error?: string
+          p_id: number
+          p_status: string
+          p_wa_id?: string
+        }
+        Returns: undefined
+      }
       receipt_report_text: { Args: { p_receipt_id: number }; Returns: string }
       save_claims: {
         Args: { p_claims: Json; p_receipt_id: number }
@@ -1470,6 +1554,10 @@ export type Database = {
       save_receipt: {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number
+      }
+      set_my_notify: {
+        Args: { p_lang: string; p_whatsapp: string }
+        Returns: undefined
       }
       today_accra: { Args: never; Returns: string }
     }

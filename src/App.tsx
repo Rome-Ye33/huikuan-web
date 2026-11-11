@@ -16,9 +16,11 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import ChangePassword from './components/ChangePassword'
 import LangSwitch from './components/LangSwitch'
 import Logo from './components/Logo'
+import NotifySettings from './components/NotifySettings'
 import { ROLE_LABEL, useAuth } from './lib/auth'
 import { useVoucherTodo } from './lib/commission'
 import { useI18n } from './lib/i18n'
+import { goPath, takeGo } from './lib/notify'
 import { useSubmissionCount } from './lib/submissions'
 import { useTodoCount } from './lib/workbench'
 import LoginPage from './pages/LoginPage'
@@ -75,6 +77,14 @@ export default function App() {
   useEffect(() => {
     bindUser(uid)
   }, [uid, bindUser])
+
+  // WhatsApp 提醒里的按钮（?go=…）：登录好以后打开那张单
+  const ready = !auth.loading && !!auth.role
+  useEffect(() => {
+    if (!ready) return
+    const go = takeGo()
+    if (go) navigate(goPath(go), { replace: true })
+  }, [ready, navigate])
 
   if (auth.loading) return <FullSpin />
   if (!auth.session) return <LoginPage />
@@ -175,6 +185,7 @@ export default function App() {
             <Tag color={auth.isAdmin ? 'red' : auth.isStaff ? 'blue' : 'green'} style={{ marginInlineEnd: 0 }}>
               {t(ROLE_LABEL[auth.role])}
             </Tag>
+            <NotifySettings />
             <ChangePassword />
             <Button type="text" icon={<LogoutOutlined />} onClick={auth.signOut}>
               <span className="header-logout">{t('退出')}</span>

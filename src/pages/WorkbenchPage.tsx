@@ -1,12 +1,14 @@
 import { FileDoneOutlined, ReloadOutlined, SendOutlined } from '@ant-design/icons'
 import { App, Badge, Button, Card, Empty, Pagination, Segmented, Space, Spin, Tabs, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import CommissionEditor from '../components/CommissionEditor'
 import ReceiptEditor from '../components/ReceiptEditor'
 import SubmissionForm from '../components/SubmissionForm'
 import { useAuth } from '../lib/auth'
 import { dateTime, money, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
+import { parseOpen } from '../lib/notify'
 import { useRefData } from '../lib/refdata'
 import { claimsSummary } from '../lib/submissions'
 import type { Submission } from '../lib/submissions'
@@ -154,23 +156,60 @@ export default function WorkbenchPage() {
     }
   }, [load])
 
-  const open = async (it: WorkItem) => {
-    const id = it.doc_id
-    if (id == null) return
-    if (it.doc_type === 'voucher') {
-      setVoucher({ open: true, id })
-      return
-    }
-    const { data } = await supabase.from('receipt_submissions').select('*').eq('id', id).maybeSingle()
-    if (!data) {
-      message.warning(t('这张单据已经不在了'))
-      void load()
-      return
-    }
-    if (isStaff && data.status === 'pending') setReview(data)
-    else if (isStaff && data.status === 'approved' && data.receipt_id) setReceiptId(data.receipt_id)
-    else setSubForm({ open: true, sub: data })
+  const openDoc = useCallback(
+    async (type: DocType, id: number) => {
+      if (type === 'voucher') {
+        setVoucher({ open: true, id })
+        return
+      }
+      const { data } = await supabase.from('receipt_submissions').select('*').eq('id', id).maybeSingle()
+      if (!data) {
+        message.warning(t('这张单据已经不在了'))
+        void load()
+        return
+      }
+      if (isStaff && data.status === 'pending') setReview(data)
+      else if (isStaff && data.status === 'approved' && data.receipt_id) setReceiptId(data.receipt_id)
+      else setSubForm({ open: true, sub: data })
+    },
+    [isStaff, load, message, t],
+  )
+
+  /** 从 WhatsApp 提醒点进来的：先看看这张单还在不在、我能不能看，再打开 */
+  const openFromLink = useCallback(
+    async (type: DocType, id: number) => {
+      const { data } =
+        type === 'voucher'
+          ? await supabase.from('v_commission_vouchers').select('id').eq('id', id).maybeSingle()
+          : await supabase.from('receipt_submissions').select('id').eq('id', id).maybeSingle()
+      if (!data) {
+        message.warning(t('这张单据已经不在了'))
+        return
+      }
+      await openDoc(type, id)
+    },
+    [openDoc, message, t],
+  )
+
+  const open = (it: WorkItem) => {
+    if (it.doc_id != null) void openDoc(it.doc_type === 'voucher' ? 'voucher' : 'submission', it.doc_id)
   }
+
+  // WhatsApp 提醒里的按钮：/workbench?open=v12 打开提成单 12，?open=s34 打开到账提交 34
+  const [params, setParams] = useSearchParams()
+  const openParam = params.get('open')
+  useEffect(() => {
+    if (openParam === null) return
+    setParams(
+      (p) => {
+        p.delete('open')
+        return p
+      },
+      { replace: true },
+    )
+    const target = parseOpen(openParam)
+    if (target) void openFromLink(target.type, target.id)
+  }, [openParam, openFromLink, setParams])
 
   const closed = (changed: boolean) => {
     setVoucher({ open: false, id: null })
