@@ -77,6 +77,15 @@ const VALUES: Record<string, string> = {
   "这个账号录过数据，只能停用，不能删除": "This account has entered data, so it can only be deactivated, not deleted.",
   "请求格式不对": "Invalid request",
   "未知操作": "Unknown action",
+  // 待办提醒（数据库 set_my_notify、Edge Function notify）的报错
+  "提醒语言只能选中文或英文": "The alert language can only be Chinese or English",
+  "WhatsApp 号码不对，请带国家区号，比如 +233241234567": "Invalid WhatsApp number. Include the country code, e.g. +233241234567",
+  "请先填 WhatsApp 号码并保存": "Enter your WhatsApp number and save it first",
+  "WhatsApp 提醒还没开通，等管理员配置好以后再试": "WhatsApp alerts are not set up yet. Try again after an admin finishes the setup.",
+  "WhatsApp 没有发出去：{reason}": "WhatsApp did not send it: {reason}",
+  "发送号码还没注册：请管理员在 Supabase 密钥里加上 WHATSAPP_PIN（6 位数字）以后再试":
+    "The sending number is not registered yet. Ask an admin to add WHATSAPP_PIN (6 digits) to the Supabase secrets, then try again.",
+  "发送号码注册没成功：{reason}": "Could not register the sending number: {reason}",
   // 提成单状态
   "草稿": "Draft",
   "待销售部审核": "Awaiting Sales Dept",
@@ -221,6 +230,27 @@ const UI: Record<string, string> = {
   "请再输一次新密码": "Enter the new password again",
   "两次输入的新密码不一样": "The two new passwords don't match",
   "密码已修改，下次登录请用新密码": "Password changed. Use the new one next time you sign in.",
+
+  // 页头：WhatsApp 提醒（有新的待办时发 WhatsApp）
+  "WhatsApp 提醒": "WhatsApp alerts",
+  "发一条测试消息": "Send a test message",
+  "有新的待办时（到账要审核、提成单轮到你审批、单据被退回、提成要发放），系统会给你发一条 WhatsApp 消息，点消息里的按钮就能直接打开那张单，不用一直开着网站。":
+    "When something new is waiting for you (a receipt to review, a commission voucher to approve, something returned to you, a commission to pay), the system sends you a WhatsApp message. Tap the button in the message to open it directly. You don't need to keep the website open.",
+  "已开启：发到 {phone}": "On: sent to {phone}",
+  "还没开启": "Off",
+  "WhatsApp 号码": "WhatsApp number",
+  "带国家区号，比如加纳 +233 24 123 4567、中国 +86 138 0013 8000。加纳号码也可以直接写 024 123 4567。不填就不发。":
+    "Include the country code, e.g. Ghana +233 24 123 4567 or China +86 138 0013 8000. Ghana numbers can also be written as 024 123 4567. Leave it empty to get no alerts.",
+  "号码不对，请带国家区号，比如 +233 24 123 4567": "Invalid number. Include the country code, e.g. +233 24 123 4567",
+  "提醒用的语言": "Alert language",
+  "已保存，有新的待办会发 WhatsApp 提醒你": "Saved. You will get a WhatsApp message when something new is waiting for you.",
+  "已保存，不再发 WhatsApp 提醒": "Saved. You will no longer get WhatsApp alerts.",
+  "请先填 WhatsApp 号码": "Enter your WhatsApp number first",
+  "测试消息已发出，请看看 WhatsApp 有没有收到": "Test message sent. Check WhatsApp to see if it arrived.",
+  "没填，不发": "Not set (no alerts)",
+  "WhatsApp 号码（有新的待办时提醒他）": "WhatsApp number (alerts for new to-dos)",
+  "带国家区号，比如 +233 24 123 4567；加纳号码也可以写 024 123 4567。不填就不发。本人也可以在页头“WhatsApp 提醒”里自己填。":
+    "Include the country code, e.g. +233 24 123 4567. Ghana numbers can also be written as 024 123 4567. Leave it empty for no alerts. People can also set it themselves under “WhatsApp alerts” at the top of the page.",
 
   // 通用
   "保存": "Save",

@@ -1,5 +1,5 @@
 import { ArrowRightOutlined, PlusOutlined } from '@ant-design/icons'
-import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
+import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Radio, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
 import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
@@ -7,6 +7,7 @@ import { asPosts, POST_LABEL, POSTS } from '../lib/commission'
 import type { Post } from '../lib/commission'
 import { errorText } from '../lib/errors'
 import { dateTime } from '../lib/format'
+import { formatPhone, normalizePhone } from '../lib/notify'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { AppRole, Invite, Profile } from '../lib/supabase'
@@ -28,7 +29,14 @@ export default function UsersPage() {
   const [pwBusy, setPwBusy] = useState(false)
   const [postBusy, setPostBusy] = useState<Post | null>(null)
   const [pform] = Form.useForm<{ password: string }>()
-  const [uform] = Form.useForm<{ full_name?: string; role: AppRole | null; salesperson_id?: number | null; active: boolean }>()
+  const [uform] = Form.useForm<{
+    full_name?: string
+    role: AppRole | null
+    salesperson_id?: number | null
+    active: boolean
+    whatsapp?: string
+    notify_lang: 'zh' | 'en'
+  }>()
   const [iform] = Form.useForm<{ email: string; role: AppRole; salesperson_id?: number | null; full_name?: string }>()
   const uRole = Form.useWatch('role', uform)
   const iRole = Form.useWatch('role', iform)
@@ -99,7 +107,9 @@ export default function UsersPage() {
   const postTags = (list: string[]) => asPosts(list).map((p) => <Tag key={p}>{t(POST_LABEL[p])}</Tag>)
 
   const saveUser = async () => {
-    const v = await uform.validateFields()
+    // 填得不对时表单自己会标红，这里不用再报错
+    const v = await uform.validateFields().catch(() => null)
+    if (!v) return
     const { error } = await supabase
       .from('profiles')
       .update({
@@ -107,6 +117,8 @@ export default function UsersPage() {
         role: v.role,
         salesperson_id: v.role === 'sales' ? (v.salesperson_id ?? null) : null,
         active: v.active,
+        whatsapp: normalizePhone(v.whatsapp) ?? null,
+        notify_lang: v.notify_lang,
       })
       .eq('id', editUser!.id)
     if (error) return message.error(errorText(error))
@@ -240,6 +252,19 @@ export default function UsersPage() {
           { title: t('角色'), dataIndex: 'role', width: 90, render: (r: AppRole | null) => (r ? <Tag color={ROLE_COLOR[r]}>{t(ROLE_LABEL[r])}</Tag> : <Tag>{t('未授权')}</Tag>) },
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
           { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
+          {
+            title: t('WhatsApp 提醒'),
+            dataIndex: 'whatsapp',
+            width: 170,
+            render: (v: string | null, p) =>
+              v ? (
+                <span className="num">
+                  {formatPhone(v)} <span className="hint">{p.notify_lang === 'en' ? 'English' : '中文'}</span>
+                </span>
+              ) : (
+                <span className="hint">{t('没填，不发')}</span>
+              ),
+          },
           { title: t('启用'), dataIndex: 'active', width: 70, render: (v: boolean) => (v ? <Tag color="green">{t('启用')}</Tag> : <Tag>{t('停用')}</Tag>) },
           { title: t('注册时间'), dataIndex: 'created_at', width: 150, render: (v: string) => dateTime(v) },
           {
@@ -252,7 +277,14 @@ export default function UsersPage() {
                 <Space size="middle">
                   <a
                     onClick={() => {
-                      uform.setFieldsValue({ full_name: p.full_name ?? '', role: p.role, salesperson_id: p.salesperson_id, active: p.active })
+                      uform.setFieldsValue({
+                        full_name: p.full_name ?? '',
+                        role: p.role,
+                        salesperson_id: p.salesperson_id,
+                        active: p.active,
+                        whatsapp: formatPhone(p.whatsapp),
+                        notify_lang: p.notify_lang === 'en' ? 'en' : 'zh',
+                      })
                       setEditUser(p)
                     }}
                   >
@@ -340,6 +372,30 @@ export default function UsersPage() {
           )}
           <Form.Item name="active" label={t('启用')} valuePropName="checked">
             <Switch />
+          </Form.Item>
+          <Form.Item
+            name="whatsapp"
+            label={t('WhatsApp 号码（有新的待办时提醒他）')}
+            extra={t('带国家区号，比如 +233 24 123 4567；加纳号码也可以写 024 123 4567。不填就不发。本人也可以在页头“WhatsApp 提醒”里自己填。')}
+            rules={[
+              {
+                validator: (_, v: string) =>
+                  normalizePhone(v) === undefined
+                    ? Promise.reject(new Error(t('号码不对，请带国家区号，比如 +233 24 123 4567')))
+                    : Promise.resolve(),
+              },
+            ]}
+          >
+            <Input placeholder="+233 24 123 4567" inputMode="tel" autoComplete="off" allowClear />
+          </Form.Item>
+          <Form.Item name="notify_lang" label={t('提醒用的语言')}>
+            <Radio.Group
+              optionType="button"
+              options={[
+                { value: 'zh', label: '中文' },
+                { value: 'en', label: 'English' },
+              ]}
+            />
           </Form.Item>
         </Form>
       </Modal>

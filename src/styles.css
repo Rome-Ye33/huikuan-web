@@ -425,11 +425,28 @@ html[lang='en'] .logo-name {
 #root {
   overflow-x: clip;
 }
-/* 页头的“修改密码”：窄屏只留钥匙图标 */
+/* 页头的“修改密码”：窄屏只留钥匙图标；“WhatsApp 提醒”屏幕不够宽（左边有菜单时页头只剩七百多）就只留图标 */
 @media (max-width: 768px) {
   .header-password-text {
     display: none;
   }
+}
+@media (max-width: 1199.98px) {
+  .header-notify-text {
+    display: none;
+  }
+}
+/* WhatsApp 提醒弹窗底部：测试按钮在左，取消、保存在右 */
+.notify-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.notify-footer-right {
+  display: inline-flex;
+  gap: 8px;
+  margin-inline-start: auto;
 }
 @media (max-width: 600px) {
   .header-name {
