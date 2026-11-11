@@ -792,7 +792,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
         {prefill?.line_id && !currentId && !review && (
           <Alert type="info" showIcon style={{ marginBottom: 12 }} title={t('这笔是从银行对账单生成的，保存后会自动和那条流水配对。')} />
         )}
-        {isStaff && !currentId && !receiptId && !review && !submission && (
+        {isAdmin && !currentId && !receiptId && !review && !submission && (
           <AiFill
             attachments={attachments}
             lockedAmount={prefill?.line_id ? (prefill.amount_orig ?? null) : null}
