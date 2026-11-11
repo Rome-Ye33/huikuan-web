@@ -86,7 +86,7 @@ const VALUES: Record<string, string> = {
   "连不上发信服务器：{reason}": "Could not reach the mail server: {reason}",
   "邮件没有发出去：{reason}": "The email was not sent: {reason}",
   // 智能填表（Edge Function receipt-ai）的报错
-  "只有财务和管理员能用智能填表": "Only finance and admins can use Smart fill",
+  "只有管理员能用智能填表": "Only admins can use Smart fill",
   "智能填表还没开通：请管理员先在 Supabase 的密钥设置里加上 ANTHROPIC_API_KEY":
     "Smart fill is not set up yet. An admin needs to add ANTHROPIC_API_KEY to the Supabase secrets first.",
   "文字太长了（最多 {n} 字），请分几次贴": "The text is too long (max {n} characters). Paste it in parts.",
@@ -470,7 +470,6 @@ const UI: Record<string, string> = {
   "智能填表还没开通": "Smart fill is not set up yet",
   "到 Supabase 后台的 Edge Functions → Secrets，加一条 ANTHROPIC_API_KEY（Claude 的 API 密钥），加好就能用。":
     "In the Supabase dashboard, open Edge Functions → Secrets and add ANTHROPIC_API_KEY (a Claude API key). It works as soon as the key is added.",
-  "请管理员开通后再用，现在先手工录入。": "Ask an admin to set it up. For now, enter the receipt by hand.",
   "把业务员在群里发的回款消息、银行的 Credit Alert 贴在下面，水单截图传上来，点“识别并填表”，下面的表会自动填好。":
     "Paste the salesperson's payment message or the bank's credit alert below, upload the bank slip screenshots, then click “Read and fill”. The form below is filled in for you.",
   "例如：WELL MOTORS 付了一台比亚迪秦预付款全款，汇率：12，业务：BOSS，编号：LC0C76C48S4120785":
