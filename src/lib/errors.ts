@@ -25,7 +25,6 @@ export function errorText(e: unknown): string {
     if (/down_payment_required/.test(msg)) return tr('分期付款必须填首付金额')
     if (/down_payment_le_contract/.test(msg)) return tr('首付不能超过合同价')
     if (/sales_needs_salesperson|invite_sales_needs_salesperson/.test(msg)) return tr('业务员角色必须选对应的业务员')
-    if (/profiles_whatsapp_check/.test(msg)) return tr('号码不对，请带国家区号，比如 +233 24 123 4567')
     if (/vin/.test(msg)) return tr('大架号不能有空格')
     return tr('填写的内容不符合要求：') + trServer(msg)
   }

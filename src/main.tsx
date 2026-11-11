@@ -60,7 +60,7 @@ function Themed({ children }: { children: ReactNode }) {
   )
 }
 
-// WhatsApp 提醒里的按钮带着 ?go=…：先记下来、从地址栏去掉，登录好以后再打开
+// 邮件提醒里的“打开处理”带着 ?go=…：先记下来、从地址栏去掉，登录好以后再打开
 captureGo()
 
 createRoot(document.getElementById('root')!).render(

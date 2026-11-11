@@ -1,44 +1,19 @@
-// 待办提醒：有新的待办时，系统发一条 WhatsApp 消息给该处理的人（数据库 17_todo_notify.sql + Edge Function notify）。
-// 这里是网页这边用的：号码怎么填、存自己的号码、给自己发测试消息、消息里的按钮打开哪张单。
+// 待办提醒：有新的待办时，系统发一封邮件给该处理的人（数据库 17_todo_notify.sql、18_todo_email.sql + Edge Function notify）。
+// 这里是网页这边用的：开关自己的邮件提醒、把网站的语言记成提醒邮件的语言、给自己发测试邮件、邮件里的按钮打开哪张单。
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { tr } from './i18n'
 import type { Lang } from './i18n'
 import { supabase } from './supabase'
 
-/**
- * 把填的号码整理成 +国家区号号码（和数据库里存的一样）：
- * 空格、横线、括号、点去掉；00 开头换成 +；加纳本地写法 024 123 4567（0 开头 10 位）补上 +233；
- * 233 开头没写 + 的补上 +；写成 +233 0XX… 的去掉多余的 0。
- * 返回 null = 没填（不发提醒）；undefined = 格式不对。
- */
-export function normalizePhone(input: string | null | undefined): string | null | undefined {
-  let v = (input ?? '').replace(/[\s().-]/g, '')
-  if (!v) return null
-  if (v.startsWith('00')) v = '+' + v.slice(2)
-  else if (/^0\d{9}$/.test(v)) v = '+233' + v.slice(1)
-  else if (/^233\d{9}$/.test(v)) v = '+' + v
-  if (/^\+2330\d{9}$/.test(v)) v = '+233' + v.slice(5)
-  return /^\+[1-9]\d{7,14}$/.test(v) ? v : undefined
-}
-
-/** 显示用：加纳号码 +233 24 123 4567，中国手机 +86 138 0013 8000，其他照原样 */
-export function formatPhone(v: string | null | undefined): string {
-  if (!v) return ''
-  let m = /^\+233(\d{2})(\d{3})(\d{4})$/.exec(v)
-  if (m) return `+233 ${m[1]} ${m[2]} ${m[3]}`
-  m = /^\+86(1\d{2})(\d{4})(\d{4})$/.exec(v)
-  if (m) return `+86 ${m[1]} ${m[2]} ${m[3]}`
-  return v
-}
-
-/** 存自己的号码和提醒语言 */
-export async function saveMyNotify(whatsapp: string | null, lang: Lang): Promise<void> {
-  const { error } = await supabase.rpc('set_my_notify', { p_whatsapp: whatsapp ?? '', p_lang: lang })
+/** 开关自己的邮件提醒，同时把提醒邮件的语言记成 lang。on 给 null = 开关不变，只记语言 */
+export async function saveMyNotify(on: boolean | null, lang: Lang): Promise<void> {
+  // 数据库那边 p_on 可以是空的（= 不变），生成的类型里没写
+  const { error } = await supabase.rpc('set_my_email_notify', { p_on: on as boolean, p_lang: lang })
   if (error) throw error
 }
 
-/** 给自己发一条测试消息 */
-export async function sendTestMessage(): Promise<void> {
+/** 给自己发一封测试邮件；返回发到的邮箱 */
+export async function sendTestEmail(): Promise<string> {
   const { data, error } = await supabase.functions.invoke('notify', { body: { action: 'test' } })
   if (error) {
     if (error instanceof FunctionsHttpError) {
@@ -47,10 +22,12 @@ export async function sendTestMessage(): Promise<void> {
     }
     throw new Error(tr('网络连接失败，请检查网络后重试'))
   }
-  if (!(data as { ok?: boolean } | null)?.ok) throw new Error(tr('操作失败，请稍后再试'))
+  const r = data as { ok?: boolean; to?: string } | null
+  if (!r?.ok) throw new Error(tr('操作失败，请稍后再试'))
+  return r.to ?? ''
 }
 
-// ---------------------------------------------------------------- 消息里的按钮
+// ---------------------------------------------------------------- 邮件里的按钮
 // 按钮打开 https://…/huikuan-web/?go=v12（提成单 12）、?go=s34（到账提交 34）、?go=wb（工作台）。
 // 页面一打开就记下来、把地址栏里的 ?go= 去掉；没登录的登录以后再打开。
 const GO_KEY = 'go'

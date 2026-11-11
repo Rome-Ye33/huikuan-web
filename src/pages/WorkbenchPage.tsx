@@ -175,7 +175,7 @@ export default function WorkbenchPage() {
     [isStaff, load, message, t],
   )
 
-  /** 从 WhatsApp 提醒点进来的：先看看这张单还在不在、我能不能看，再打开 */
+  /** 从邮件提醒点进来的：先看看这张单还在不在、我能不能看，再打开 */
   const openFromLink = useCallback(
     async (type: DocType, id: number) => {
       const { data } =
@@ -195,7 +195,7 @@ export default function WorkbenchPage() {
     if (it.doc_id != null) void openDoc(it.doc_type === 'voucher' ? 'voucher' : 'submission', it.doc_id)
   }
 
-  // WhatsApp 提醒里的按钮：/workbench?open=v12 打开提成单 12，?open=s34 打开到账提交 34
+  // 邮件提醒里的“打开处理”：/workbench?open=v12 打开提成单 12，?open=s34 打开到账提交 34
   const [params, setParams] = useSearchParams()
   const openParam = params.get('open')
   useEffect(() => {
