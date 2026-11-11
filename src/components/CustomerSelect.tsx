@@ -15,9 +15,11 @@ type Props = {
   salespersonId?: number | null
   placeholder?: string
   style?: React.CSSProperties
+  /** 只列这些客户（比如某个业务员名下的）；不传就列全部。当前已选的客户不受影响 */
+  only?: Set<number> | null
 }
 
-export default function CustomerSelect({ value, onChange, allowCreate, salespersonId, placeholder, style }: Props) {
+export default function CustomerSelect({ value, onChange, allowCreate, salespersonId, placeholder, style, only }: Props) {
   const t = useT()
   const { customers, reload } = useRefData()
   const { message } = App.useApp()
@@ -25,7 +27,7 @@ export default function CustomerSelect({ value, onChange, allowCreate, salespers
   const [creating, setCreating] = useState(false)
 
   const q = text.trim().toLowerCase()
-  const list = customers.filter((c) => !q || c.name.toLowerCase().includes(q)).slice(0, 50)
+  const list = customers.filter((c) => (!only || only.has(c.id)) && (!q || c.name.toLowerCase().includes(q))).slice(0, 50)
   const exact = customers.some((c) => c.name.trim().toLowerCase() === q)
   const options: { value: number; label: string }[] = list.map((c) => ({ value: c.id, label: c.name }))
   if (allowCreate && q && !exact) options.unshift({ value: -1, label: t('+ 新建客户“{name}”', { name: text.trim() }) })
