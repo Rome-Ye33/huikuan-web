@@ -649,7 +649,7 @@ html[lang='en'] .logo-name {
   margin-bottom: 10px;
 }
 
-/* 用户与权限：提成单审批流（业务员提交 → 四个岗位 → 财务发放），窄屏时一行一级 */
+/* 用户与权限：提成单审批流（业务员提交 → 管理员定的几级 → 财务发放），放不下时换行，窄屏时一行一级 */
 .flow-row {
   display: flex;
   flex-wrap: wrap;
@@ -659,7 +659,7 @@ html[lang='en'] .logo-name {
 .flow-step {
   display: flex;
   align-items: flex-start;
-  flex: 1 1 210px;
+  flex: 1 1 180px;
   min-width: 0;
 }
 .flow-step.flow-last {

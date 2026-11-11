@@ -116,7 +116,8 @@ export default function CommissionPage() {
         })}
       </Typography.Paragraph>
       <Space wrap className="filters">
-        <Select style={{ width: 190 }} value={filter} onChange={setFilter} options={options} />
+        {/* 选项随审批流的级别变多：不用虚拟列表，全部放进下拉框（多了就滚动） */}
+        <Select style={{ width: 190 }} value={filter} onChange={setFilter} options={options} virtual={false} />
         <Input.Search allowClear placeholder={t('编号、客户、业务员、大架号')} style={{ width: 260 }} onSearch={setQ} />
       </Space>
       <Table
