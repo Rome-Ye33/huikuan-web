@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { aiSession } from '../lib/aiFill'
 import type { AiFilled } from '../lib/aiFill'
 import { useAuth } from '../lib/auth'
+import { notifyChequesChanged } from '../lib/cheques'
 import { errorText } from '../lib/errors'
 import { parseFlow, receiptStatus, useFlow } from '../lib/flow'
 import { dateTime, money, num, round2, todayAccra, usd } from '../lib/format'
@@ -54,6 +55,10 @@ export type ReceiptPrefill = {
   cheque_no?: string | null
   /** 由哪条银行对账单流水生成 */
   line_id?: number
+  /** 由哪张支票生成（26）：保存后把到账对到这张支票上 */
+  cheque_id?: number
+  /** 预填的拆分（支票上选了车就带一行） */
+  claims?: { nature?: string; vehicle_id?: number | null; customer_id?: number | null; amount_orig?: number | null }[]
 }
 
 /** 配对的银行流水里，按银行为准的几项 */
@@ -341,7 +346,11 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       bank_ref: prefill?.bank_ref ?? '',
       cheque_no: prefill?.cheque_no ?? '',
     })
-    setClaims([{ key: newKey() }])
+    if (prefill?.claims?.length) {
+      setClaims(prefill.claims.map((c) => ({ key: newKey(), nature: c.nature, vehicle_id: c.vehicle_id ?? null, customer_id: c.customer_id ?? null, amount_orig: c.amount_orig ?? null })))
+      const vids = prefill.claims.map((c) => c.vehicle_id).filter((x): x is number => !!x)
+      if (vids.length) void supabase.from('v_vehicle_ledger').select('*').in('id', vids).then((v) => rememberVehicles(v.data ?? []))
+    } else setClaims([{ key: newKey() }])
   }, [open, receiptId, prefill, submission, load, form, rememberVehicles])
 
   // 审核时：看看财务是不是已经录过这笔（同账户、同金额、日期相差 3 天内，还没关联别的提交）
@@ -558,6 +567,12 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     }
     const wasReview = !!review
     const wasApproved = !!currentId && rStatus === 'approved'
+    // 由支票生成的：对到那张支票上（到账录入时填了支票号、同账户同金额的，数据库已经自动对上，再对一次不会重复）
+    if (!currentId && prefill?.cheque_id && data) {
+      const link = await supabase.rpc('cheque_action', { p_id: prefill.cheque_id, p_action: 'link', p: { receipt_id: data } })
+      if (link.error) message.warning(t('到账已保存，但没对上支票：{err}', { err: errorText(link.error) }))
+      notifyChequesChanged()
+    }
     if (review) setReview(null)
     if (aiIndex !== null) {
       aiSession.markSaved(aiIndex)
