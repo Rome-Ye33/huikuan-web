@@ -1,5 +1,6 @@
-import { PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
-import { Button, Input, Select, Space, Table, Tag, Tooltip } from 'antd'
+import { DeleteOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { App, Button, Input, Popconfirm, Select, Space, Table, Tag, Tooltip } from 'antd'
+import type { Key } from 'react'
 import type { ColumnsType } from 'antd/es/table'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import ChequeDetail from '../components/ChequeDetail'
@@ -8,9 +9,10 @@ import ChequeImport from '../components/ChequeImport'
 import ReceiptEditor from '../components/ReceiptEditor'
 import type { ReceiptPrefill } from '../components/ReceiptEditor'
 import { useAuth } from '../lib/auth'
-import { CHEQUE_ALERT_LABEL, CHEQUE_ALERTS, CHEQUE_STATUS_COLOR, CHEQUE_STATUS_LABEL, CHEQUE_STATUSES, chequeStatus, chequeVehicleIds, chequeVins, inAlert } from '../lib/cheques'
+import { CHEQUE_ALERT_LABEL, CHEQUE_ALERTS, CHEQUE_STATUS_COLOR, CHEQUE_STATUS_LABEL, CHEQUE_STATUSES, chequeStatus, chequeVehicleIds, chequeVins, inAlert, notifyChequesChanged } from '../lib/cheques'
 import type { Cheque, ChequeAlert, ChequeStatus } from '../lib/cheques'
 import { pickCol, textCol } from '../lib/colFilter'
+import { errorText } from '../lib/errors'
 import { cleanSearch, money, shortDate, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { accountOptions, useRefData } from '../lib/refdata'
@@ -24,6 +26,7 @@ const OPEN_STATUSES: string[] = ['pending', 'confirming', 'deposited', 'bounced'
 
 export default function ChequesPage() {
   const t = useT()
+  const { message } = App.useApp()
   const { isStaff } = useAuth()
   const { accounts, salespersons } = useRefData()
   const [rows, setRows] = useState<Cheque[]>([])
@@ -37,6 +40,8 @@ export default function ChequesPage() {
   const [detailId, setDetailId] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [receipt, setReceipt] = useState<{ open: boolean; id: number | null; prefill: ReceiptPrefill | null }>({ open: false, id: null, prefill: null })
+  const [selected, setSelected] = useState<number[]>([])
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -105,6 +110,36 @@ export default function ChequesPage() {
             : [],
       },
     })
+  }
+
+  // 批量删除：按列表上看得见的选中项算；已到账的不删（数据库的删除策略也拦着）
+  const chosen = shown.filter((c) => selected.includes(c.id as number))
+  const removeSelected = async () => {
+    const kept = chosen.filter((c) => c.status === 'cleared')
+    const ids = chosen.filter((c) => c.status !== 'cleared').map((c) => c.id as number)
+    setDeleting(true)
+    if (ids.length) {
+      const { error } = await supabase.from('cheques').delete().in('id', ids)
+      if (error) {
+        setDeleting(false)
+        message.error(errorText(error))
+        return
+      }
+    }
+    setDeleting(false)
+    if (kept.length)
+      message.warning(
+        t('已删除 {n} 张；{m} 张没删：{list}（已到账的要先取消和到账的关联）', {
+          n: ids.length,
+          m: kept.length,
+          list: kept.map((c) => c.cheque_no).join('、'),
+        }),
+        8,
+      )
+    else message.success(t('已删除 {n} 张支票', { n: ids.length }))
+    setSelected([])
+    notifyChequesChanged()
+    void load()
   }
 
   const dueCell = (c: Cheque) => {
@@ -284,6 +319,20 @@ export default function ChequesPage() {
         />
         <Input.Search allowClear placeholder={t('支票号、客户、户名、大架号')} style={{ width: 240 }} onSearch={setQ} />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
+        {isStaff && chosen.length > 0 && (
+          <Popconfirm
+            title={t('删除选中的 {n} 张支票？', { n: chosen.length })}
+            description={t('已到账的不会删。删掉的支票不能恢复，重新导入表格可以再导进来。')}
+            okText={t('删除')}
+            cancelText={t('取消')}
+            okButtonProps={{ danger: true }}
+            onConfirm={() => void removeSelected()}
+          >
+            <Button danger icon={<DeleteOutlined />} loading={deleting} className="cheque-bulk-delete">
+              {t('删除选中 {n} 张', { n: chosen.length })}
+            </Button>
+          </Popconfirm>
+        )}
         {isStaff && (
           <>
             <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
@@ -304,7 +353,18 @@ export default function ChequesPage() {
         scroll={{ x: 1600 }}
         pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 张支票', { n }) }}
         rowClassName={() => 'clickable-row'}
-        onRow={(c) => ({ onClick: () => setDetailId(c.id) })}
+        onRow={(c) => ({ onClick: (e) => !(e.target as HTMLElement).closest('.ant-table-selection-column') && setDetailId(c.id) })}
+        rowSelection={
+          isStaff
+            ? {
+                selectedRowKeys: selected,
+                onChange: (keys: Key[]) => setSelected(keys as number[]),
+                selections: [Table.SELECTION_ALL, Table.SELECTION_NONE],
+                columnWidth: 40,
+                fixed: true,
+              }
+            : undefined
+        }
       />
       <ChequeEditor
         open={editor.open}
