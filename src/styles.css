@@ -818,3 +818,8 @@ html[lang='en'] .logo-name {
   margin: 0 0 6px;
   padding-left: 18px;
 }
+
+/* 支票详情：左边的项目名不要折行 */
+.cheque-desc .ant-descriptions-item-label {
+  white-space: nowrap;
+}
