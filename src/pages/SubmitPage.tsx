@@ -6,7 +6,7 @@ import { useFlow } from '../lib/flow'
 import { dateTime, money, num, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
-import { claimsSummary, STATUS_COLOR, STATUS_LABEL } from '../lib/submissions'
+import { claimsSummary, isFillRequest, STATUS_COLOR, STATUS_LABEL } from '../lib/submissions'
 import type { Submission, SubmissionStatus } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 
@@ -52,7 +52,7 @@ export default function SubmitPage() {
   const options: { value: Filter; label: string }[] = [
     { value: 'all', label: t('全部') },
     // 只列有提交的状态，手机上一行放得下
-    ...(['rejected', 'pending', 'approved', 'withdrawn'] as SubmissionStatus[])
+    ...(['requested', 'rejected', 'pending', 'approved', 'withdrawn'] as SubmissionStatus[])
       .filter((s) => counts[s] || filter === s)
       .map((s) => ({
         value: s,
@@ -72,7 +72,7 @@ export default function SubmitPage() {
         </Space>
       </div>
       <Typography.Paragraph type="secondary">
-        {t('客户的钱到了就在这里提交，附上转账截图。财务审核通过后才算到账；被退回的按原因改好再提交。')}
+        {t('客户的钱到了就在这里提交，附上转账截图。财务审核通过后才算到账；被退回的按原因改好再提交。财务请你填写的也在这里：填好这笔钱是哪台车的再提交。')}
       </Typography.Paragraph>
       <Segmented options={options} value={filter} onChange={(v) => setFilter(v as Filter)} style={{ marginBottom: 12, maxWidth: '100%', overflowX: 'auto' }} />
       <Spin spinning={loading}>
@@ -108,6 +108,12 @@ export default function SubmitPage() {
                       {s.attachments.length > 0 && <PaperClipOutlined className="hint" />}
                     </Space>
                   </div>
+                  {status === 'requested' && (
+                    <div className="text-warn" style={{ marginTop: 6 }}>
+                      {t('财务 {name} 请你填写', { name: s.requested_name ?? '' })}
+                      {s.request_note ? `：${s.request_note}` : ''}
+                    </div>
+                  )}
                   {status === 'rejected' && (
                     <div className="text-danger" style={{ marginTop: 6 }}>
                       {t('退回原因：{reason}', { reason: s.review_note ?? '' })}
@@ -124,7 +130,9 @@ export default function SubmitPage() {
                     </div>
                   )}
                   <div className="hint" style={{ marginTop: 4 }}>
-                    {t('提交于 {when}', { when: dateTime(s.submitted_at) })}
+                    {isFillRequest(s) && status === 'requested'
+                      ? t('{when} 发来', { when: dateTime(s.requested_at) })
+                      : t('提交于 {when}', { when: dateTime(s.submitted_at) })}
                   </div>
                 </Card>
               )

@@ -10,7 +10,7 @@ import { dateTime, money, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { parseOpen } from '../lib/notify'
 import { useRefData } from '../lib/refdata'
-import { claimsSummary } from '../lib/submissions'
+import { claimsSummary, isFillRequest } from '../lib/submissions'
 import type { Submission } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import { BOX_LABEL, BOX_ORDER, BOXES, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
@@ -37,6 +37,8 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
   const type = docType(it.doc_type)
   const isSub = type === 'submission'
   const isRec = type === 'receipt'
+  /** 财务请业务员填写的到账提交（23） */
+  const isReq = isSub && !!it.is_request
 
   const amountText = (
     <span className="num">
@@ -79,6 +81,7 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
       <div className="wb-head">
         <div style={{ minWidth: 0 }}>
           <Tag color={DOC_COLOR[type]}>{t(DOC_LABEL[type])}</Tag>
+          {isReq && <Tag color="orange">{t('财务请业务员填的')}</Tag>}
           {title}
         </div>
         <Tag color={labels.color(type, it.status, it.step)} style={{ marginInlineEnd: 0 }}>
@@ -93,6 +96,9 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
       {meta.length > 0 && <div className="hint wb-line">{meta.join(' · ')}</div>}
       {it.status === 'rejected' && it.last_action === 'reject' && it.last_note && (
         <div className="text-danger wb-line">{t('退回原因：{reason}', { reason: it.last_note })}</div>
+      )}
+      {isReq && it.status === 'requested' && it.last_action === 'request' && it.last_note && (
+        <div className="text-warn wb-line">{t('财务说：{note}', { note: it.last_note })}</div>
       )}
       {isSub && it.status === 'approved' && it.receipt_no && <div className="text-ok wb-line">{t('到账编号 {no}', { no: it.receipt_no })}</div>}
       <div className="hint wb-line" style={{ marginTop: 4 }}>
@@ -169,7 +175,9 @@ export default function WorkbenchPage() {
         void load()
         return
       }
-      if (isStaff && data.status === 'pending') setReview(data)
+      // 财务请业务员填写的：财务在那笔到账的页面看、审核；业务员打开填写表单
+      if (isStaff && isFillRequest(data) && data.receipt_id) setReceiptId(data.receipt_id)
+      else if (isStaff && data.status === 'pending') setReview(data)
       else if (isStaff && data.status === 'approved' && data.receipt_id) setReceiptId(data.receipt_id)
       else setSubForm({ open: true, sub: data })
     },

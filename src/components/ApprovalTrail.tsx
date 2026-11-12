@@ -55,7 +55,11 @@ export default function ApprovalTrail({ docType, docId, version }: Props) {
                     {r.actor_name || t('系统')} · {dateTime(r.at)}
                   </span>
                 </div>
-                {r.note && <div className={r.action === 'reject' ? 'text-danger' : undefined}>{t('原因：{note}', { note: r.note })}</div>}
+                {r.note && (
+                  <div className={r.action === 'reject' ? 'text-danger' : undefined}>
+                    {r.action === 'request' ? t('财务说：{note}', { note: r.note }) : t('原因：{note}', { note: r.note })}
+                  </div>
+                )}
               </div>
             ),
           }))}

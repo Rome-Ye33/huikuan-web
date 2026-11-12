@@ -946,6 +946,10 @@ export type Database = {
           payer_summary: string | null
           receipt_date: string
           receipt_id: number | null
+          request_note: string | null
+          requested_at: string | null
+          requested_by: string | null
+          requested_name: string | null
           review_note: string | null
           reviewed_at: string | null
           reviewed_by: string | null
@@ -970,6 +974,10 @@ export type Database = {
           payer_summary?: string | null
           receipt_date: string
           receipt_id?: number | null
+          request_note?: string | null
+          requested_at?: string | null
+          requested_by?: string | null
+          requested_name?: string | null
           review_note?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
@@ -994,6 +1002,10 @@ export type Database = {
           payer_summary?: string | null
           receipt_date?: string
           receipt_id?: number | null
+          request_note?: string | null
+          requested_at?: string | null
+          requested_by?: string | null
+          requested_name?: string | null
           review_note?: string | null
           reviewed_at?: string | null
           reviewed_by?: string | null
@@ -1556,6 +1568,7 @@ export type Database = {
           in_todo: boolean | null
           initiated_at: string | null
           is_ended: boolean | null
+          is_request: boolean | null
           last_action: string | null
           last_actor_name: string | null
           last_at: string | null
@@ -1667,6 +1680,10 @@ export type Database = {
         Returns: undefined
       }
       receipt_report_text: { Args: { p_receipt_id: number }; Returns: string }
+      request_receipt_info: {
+        Args: { p_note?: string; p_receipt_id: number; p_salesperson_id: number }
+        Returns: number
+      }
       save_approval_flow: {
         Args: { p_doc_type: string; p_steps: Json }
         Returns: undefined
