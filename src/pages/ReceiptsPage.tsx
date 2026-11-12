@@ -165,7 +165,7 @@ function ReceiptList() {
           style={{ width: 120 }}
           value={approval}
           onChange={setApproval}
-          options={(['pending', 'approved', 'rejected'] as ReceiptStatus[]).map((x) => ({ value: x, label: t(RECEIPT_STATUS_LABEL[x]) }))}
+          options={(['pending', 'approved', 'rejected', 'withdrawn'] as ReceiptStatus[]).map((x) => ({ value: x, label: t(RECEIPT_STATUS_LABEL[x]) }))}
         />
         <Select allowClear placeholder={t('拆分状态')} style={{ width: 120 }} value={claimStatus} onChange={setClaimStatus} options={opts(['未认领', '部分认领', '已认领'])} />
         <Select allowClear placeholder={t('报款状态')} style={{ width: 120 }} value={reportStatus} onChange={setReportStatus} options={opts(['未报', '已报', '需发修改'])} />

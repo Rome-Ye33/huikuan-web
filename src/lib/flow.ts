@@ -19,20 +19,22 @@ export function flowDocType(x: string | null | undefined): FlowDocType {
   return x === 'receipt' ? 'receipt' : 'voucher'
 }
 
-export type ReceiptStatus = 'pending' | 'approved' | 'rejected'
+export type ReceiptStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
 export const RECEIPT_STATUS_LABEL: Record<ReceiptStatus, string> = {
   pending: '审批中',
   approved: '已生效',
   rejected: '已退回',
+  withdrawn: '已撤回',
 }
 export const RECEIPT_STATUS_COLOR: Record<ReceiptStatus, string> = {
   pending: 'processing',
   approved: 'success',
   rejected: 'error',
+  withdrawn: 'default',
 }
-/** 到账的状态：审批中 / 已生效（算到账）/ 已退回。没有这一列的旧数据算已生效 */
+/** 到账的状态：审批中 / 已生效（算到账）/ 已退回 / 已撤回（录入人在第一级批之前收回去了，24）。没有这一列的旧数据算已生效 */
 export function receiptStatus(s: string | null | undefined): ReceiptStatus {
-  return s === 'pending' || s === 'rejected' ? s : 'approved'
+  return s === 'pending' || s === 'rejected' || s === 'withdrawn' ? s : 'approved'
 }
 
 /** 提成单 flow 里的一级：哪一级，谁、什么时候通过的（还没通过为空） */

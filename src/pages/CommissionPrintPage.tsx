@@ -8,17 +8,26 @@ import { errorText } from '../lib/errors'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
+import { fetchTrail } from '../lib/workbench'
+import type { ApprovalLog } from '../lib/workbench'
 
 // 提成单打印页：不带菜单，只有一张单；浏览器“打印”可以直接打或另存为 PDF
+// 换一张单（地址里的 id 变了）就整页重来，免得新单还没读完时露出上一张的内容或审批过程
 export default function CommissionPrintPage() {
+  const { id } = useParams()
+  return <PrintOne key={id} id={id} />
+}
+
+function PrintOne({ id }: { id: string | undefined }) {
   const t = useT()
   const navigate = useNavigate()
-  const { id } = useParams()
   const [v, setV] = useState<CommissionVoucher | null>(null)
+  /** 审批过程（approval_logs）：读完才出单，免得打印时还没出来 */
+  const [trail, setTrail] = useState<ApprovalLog[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   // 签字栏要用审批流里级别的名字，等基础资料读好再出单
   const { loaded } = useRefData()
-  const ready = !!v && loaded
+  const ready = !!v && loaded && trail !== null
 
   useEffect(() => {
     const vid = Number(id)
@@ -38,6 +47,9 @@ export default function CommissionPrintPage() {
         else if (!data) setErr(t('找不到这张提成单，或没有权限'))
         else setV(data)
       })
+    void fetchTrail('voucher', vid).then((list) => {
+      if (alive) setTrail(list)
+    })
     return () => {
       alive = false
     }
@@ -68,7 +80,7 @@ export default function CommissionPrintPage() {
       {err ? (
         <Result status="warning" title={err} />
       ) : v && ready ? (
-        <CommissionSheet v={v} />
+        <CommissionSheet v={v} trail={trail ?? []} />
       ) : (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <Spin />
