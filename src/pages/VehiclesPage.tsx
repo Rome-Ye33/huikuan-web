@@ -27,6 +27,7 @@ import VehicleImport from '../components/VehicleImport'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { RECEIPT_STATUS_COLOR, RECEIPT_STATUS_LABEL, receiptStatus } from '../lib/flow'
+import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money, num, todayAccra, usd } from '../lib/format'
 import { useRefData } from '../lib/refdata'
 import { fetchAll, supabase } from '../lib/supabase'
@@ -150,9 +151,11 @@ export default function VehiclesPage() {
     void loadUnlocked()
   }, [loadUnlocked])
 
+  /** 列头筛选后表里实际显示的行（合计按它算） */
+  const [shown, setShown] = useState<Vehicle[] | null>(null)
   const totals = useMemo(
     () =>
-      rows.reduce(
+      (shown ?? rows).reduce(
         (acc, r) => ({
           contract: acc.contract + Number(r.contract_usd ?? 0),
           received: acc.received + Number(r.received_usd ?? 0),
@@ -160,7 +163,7 @@ export default function VehiclesPage() {
         }),
         { contract: 0, received: 0, balance: 0 },
       ),
-    [rows],
+    [rows, shown],
   )
 
   const exportExcel = () => {
@@ -192,11 +195,11 @@ export default function VehiclesPage() {
   }
 
   const columns: ColumnsType<Vehicle> = [
-    { title: t('大架号'), dataIndex: 'vin', width: 180, fixed: 'left' },
-    { title: t('车型'), dataIndex: 'model', width: 150, ellipsis: true },
-    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true },
-    { title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true },
-    { title: t('付款方式'), dataIndex: 'payment_method', width: 80, render: (v: string) => t(v) },
+    { title: t('大架号'), dataIndex: 'vin', width: 180, fixed: 'left', ...textCol<Vehicle>((r) => r.vin) },
+    { title: t('车型'), dataIndex: 'model', width: 150, ellipsis: true, ...textCol<Vehicle>((r) => r.model) },
+    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true, ...textCol<Vehicle>((r) => r.customer_name) },
+    { title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true, ...pickCol(rows, (r) => r.salesperson_name) },
+    { title: t('付款方式'), dataIndex: 'payment_method', width: 80, render: (v: string) => t(v), ...pickCol(rows, (r) => r.payment_method, t) },
     { title: t('合同价'), dataIndex: 'contract_usd', width: 100, align: 'right', render: (v) => <span className="num">{usd(v)}</span> },
     { title: t('已到账'), dataIndex: 'received_usd', width: 100, align: 'right', render: (v) => <span className="num">{usd(v)}</span> },
     {
@@ -206,7 +209,7 @@ export default function VehiclesPage() {
       align: 'right',
       render: (v) => <span className={`num ${Number(v) > 1 ? 'text-danger' : ''}`}>{usd(v)}</span>,
     },
-    { title: t('回款状态'), dataIndex: 'pay_status', width: 90, render: (v: string) => <Tag color={PAY_COLOR[v]}>{t(v)}</Tag> },
+    { title: t('回款状态'), dataIndex: 'pay_status', width: 90, render: (v: string) => <Tag color={PAY_COLOR[v]}>{t(v)}</Tag>, ...pickCol(rows, (r) => r.pay_status, t) },
     {
       title: t('可发车'),
       dataIndex: 'can_ship',
@@ -300,6 +303,7 @@ export default function VehiclesPage() {
         pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 台', { n }) }}
         rowClassName={() => 'clickable-row'}
         onRow={(r) => ({ onClick: (e) => !(e.target as HTMLElement).closest('.ant-table-selection-column') && setDetail(r) })}
+        onChange={(_, __, ___, extra) => setShown(extra.currentDataSource)}
         rowSelection={
           isStaff
             ? {
