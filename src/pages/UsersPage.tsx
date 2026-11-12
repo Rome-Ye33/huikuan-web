@@ -186,23 +186,32 @@ export default function UsersPage() {
     </Card>
   )
 
+  // 改自己时只能改姓名（角色、启用、提醒要由别的管理员改，免得把自己锁在外面）
+  const editingSelf = !!editUser && editUser.id === session?.user.id
+
   const saveUser = async () => {
     // 填得不对时表单自己会标红，这里不用再报错
     const v = await uform.validateFields().catch(() => null)
     if (!v) return
+    const full_name = v.full_name?.trim() || null
     const { error } = await supabase
       .from('profiles')
-      .update({
-        full_name: v.full_name?.trim() || null,
-        role: v.role,
-        salesperson_id: v.role === 'sales' ? (v.salesperson_id ?? null) : null,
-        active: v.active,
-        notify_email: v.notify_email !== false,
-      })
+      .update(
+        editingSelf
+          ? { full_name }
+          : {
+              full_name,
+              role: v.role,
+              salesperson_id: v.role === 'sales' ? (v.salesperson_id ?? null) : null,
+              active: v.active,
+              notify_email: v.notify_email !== false,
+            },
+      )
       .eq('id', editUser!.id)
     if (error) return message.error(errorText(error))
     message.success(t('已保存'))
     setEditUser(null)
+    if (editingSelf) await reloadProfile() // 右上角的名字跟着变
     void load()
   }
 
@@ -335,7 +344,17 @@ export default function UsersPage() {
             width: 200,
             render: (_, p) =>
               p.id === session?.user.id ? (
-                <span className="hint">{t('自己')}</span>
+                <Space size="middle">
+                  <a
+                    onClick={() => {
+                      uform.setFieldsValue({ full_name: p.full_name ?? '' })
+                      setEditUser(p)
+                    }}
+                  >
+                    {t('修改姓名')}
+                  </a>
+                  <span className="hint">{t('自己')}</span>
+                </Space>
               ) : (
                 <Space size="middle">
                   <a
@@ -419,30 +438,41 @@ export default function UsersPage() {
         ]}
       />
 
-      <Modal open={!!editUser} title={t('修改 {email}', { email: editUser?.email ?? '' })} okText={t('保存')} onOk={saveUser} onCancel={() => setEditUser(null)} forceRender>
+      <Modal
+        open={!!editUser}
+        title={editingSelf ? t('修改自己的姓名') : t('修改 {email}', { email: editUser?.email ?? '' })}
+        okText={t('保存')}
+        onOk={saveUser}
+        onCancel={() => setEditUser(null)}
+        forceRender
+      >
         <Form form={uform} layout="vertical">
-          <Form.Item name="full_name" label={t('姓名')}>
+          <Form.Item name="full_name" label={t('姓名')} extra={editingSelf ? t('自己只能改姓名；角色、启用要由别的管理员改。') : undefined}>
             <Input />
           </Form.Item>
-          <Form.Item name="role" label={t('角色')} rules={[{ required: true }]}>
-            <Select options={roleOptions} />
-          </Form.Item>
-          {uRole === 'sales' && (
-            <Form.Item name="salesperson_id" label={t('对应业务员（只看得到这个业务员名下的车）')} rules={[{ required: true, message: t('业务员角色必须选') }]}>
-              <Select showSearch={{ optionFilterProp: 'label' }} options={spOptions} />
-            </Form.Item>
+          {!editingSelf && (
+            <>
+              <Form.Item name="role" label={t('角色')} rules={[{ required: true }]}>
+                <Select options={roleOptions} />
+              </Form.Item>
+              {uRole === 'sales' && (
+                <Form.Item name="salesperson_id" label={t('对应业务员（只看得到这个业务员名下的车）')} rules={[{ required: true, message: t('业务员角色必须选') }]}>
+                  <Select showSearch={{ optionFilterProp: 'label' }} options={spOptions} />
+                </Form.Item>
+              )}
+              <Form.Item name="active" label={t('启用')} valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              <Form.Item
+                name="notify_email"
+                label={t('邮件提醒（有新的待办时发到他的登录邮箱）')}
+                extra={t('工作日上午 10 点、下午 4 点（加纳时间）汇总发。本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。')}
+                valuePropName="checked"
+              >
+                <Switch />
+              </Form.Item>
+            </>
           )}
-          <Form.Item name="active" label={t('启用')} valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item
-            name="notify_email"
-            label={t('邮件提醒（有新的待办时发到他的登录邮箱）')}
-            extra={t('工作日上午 10 点、下午 4 点（加纳时间）汇总发。本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。')}
-            valuePropName="checked"
-          >
-            <Switch />
-          </Form.Item>
         </Form>
       </Modal>
       <Modal
