@@ -14,9 +14,9 @@ import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 
 // 导入 Rome 的《支票表》：自动认出 主表-分期合同支票明细 / 其他支票明细 / 支票表存取备忘录 三张工作表，
-// 整理成一行一张支票，备注里的大架号对车，预览 → 每次 300 张交给 import_cheques。已报回款的不导；已录过的跳过。
+// 整理成一行一张支票，备注里的大架号对车，预览 → 每次 300 张交给 import_cheques。已报回款的不导；已录过的跳过（只按表里的备注补上缺的车）。
 
-type Result = { created: number; skipped: { row: number; cheque_no: string }[]; customers: number }
+type Result = { created: number; skipped: { row: number; cheque_no: string; cars_added?: number }[]; customers: number; cars_added: number }
 type Filter = 'all' | 'warn' | 'skip'
 const BATCH = 300
 
@@ -155,7 +155,7 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
     setImporting(true)
     setResult(null)
     setFailure(null)
-    const sum: Result = { created: 0, skipped: [], customers: 0 }
+    const sum: Result = { created: 0, skipped: [], customers: 0, cars_added: 0 }
     setProgress({ done: 0, total: toImport.length })
     for (let i = 0; i < toImport.length; i += BATCH) {
       const batch = toImport.slice(i, i + BATCH)
@@ -168,6 +168,7 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
       const d = data as unknown as Result
       sum.created += Number(d.created ?? 0)
       sum.customers += Number(d.customers ?? 0)
+      sum.cars_added += Number(d.cars_added ?? 0)
       sum.skipped.push(...(d.skipped ?? []).map((s) => ({ row: i + Number(s.row), cheque_no: s.cheque_no })))
       setProgress({ done: Math.min(i + BATCH, toImport.length), total: toImport.length })
     }
@@ -285,7 +286,14 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
               className="cheque-import-result"
               style={{ marginBottom: 8 }}
               message={t('导入完成：新增 {created} 张，跳过已录过的 {skipped} 张，新建客户 {customers} 个', { created: result.created, skipped: result.skipped.length, customers: result.customers })}
-              description={result.skipped.length ? <div className="hint">{t('跳过的支票号：{list}', { list: result.skipped.map((s) => s.cheque_no).join('、') })}</div> : undefined}
+              description={
+                result.skipped.length ? (
+                  <div className="hint">
+                    {result.cars_added > 0 && <div>{t('其中 {n} 张已录过的支票，按表里备注的大架号补上了车', { n: result.cars_added })}</div>}
+                    {t('跳过的支票号：{list}', { list: result.skipped.map((s) => s.cheque_no).join('、') })}
+                  </div>
+                ) : undefined
+              }
             />
           )}
           <Table rowKey={(r) => `${r.src}-${r.row}`} size="small" columns={columns} dataSource={shown} scroll={{ x: 1700 }} pagination={{ defaultPageSize: 50, showSizeChanger: true }} />

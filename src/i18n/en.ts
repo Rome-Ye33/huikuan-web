@@ -1497,6 +1497,7 @@ const UI: Record<string, string> = {
   "要导入 {n} 张：待存 {pending}、等业务确认 {confirming}、已存 {deposited}、退票 {bounced}、已取消 {cancelled}": "{n} to import: {pending} to deposit, {confirming} awaiting confirmation, {deposited} deposited, {bounced} bounced, {cancelled} cancelled",
   "导入 {n} 张": "Import {n}",
   "导入完成：新增 {created} 张，跳过已录过的 {skipped} 张，新建客户 {customers} 个": "Done: {created} added, {skipped} already entered and skipped, {customers} customers created",
+  "其中 {n} 张已录过的支票，按表里备注的大架号补上了车": "{n} cheques that were already entered got their missing vehicles added from the VINs in the sheet",
   "跳过的支票号：{list}": "Skipped cheque numbers: {list}",
   "到账已保存，但没对上支票：{err}": "The receipt is saved, but it was not matched to the cheque: {err}",
   "没写": "Not set",
