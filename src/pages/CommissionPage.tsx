@@ -8,6 +8,7 @@ import { printVoucher, useVoucherTodo, VOUCHER_STATUS_LABEL, voucherTodoIds } fr
 import type { VoucherStatus } from '../lib/commission'
 import { useFlow } from '../lib/flow'
 import type { CommissionVoucher } from '../lib/commission'
+import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { supabase } from '../lib/supabase'
@@ -51,13 +52,15 @@ export default function CommissionPage() {
       width: 140,
       fixed: 'left',
       render: (no: string | null, r) => no ?? <span className="hint">{t('草稿 #{id}', { id: r.id ?? '' })}</span>,
+      ...textCol<CommissionVoucher>((r) => r.voucher_no ?? `#${r.id ?? ''}`),
     },
-    { title: t('日期'), dataIndex: 'voucher_date', width: 100 },
-    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true },
-    ...(showSp ? [{ title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true }] : []),
+    { title: t('日期'), dataIndex: 'voucher_date', width: 100, ...textCol<CommissionVoucher>((r) => r.voucher_date) },
+    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true, ...textCol<CommissionVoucher>((r) => r.customer_name) },
+    ...(showSp ? [{ title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true, ...pickCol(rows, (r) => r.salesperson_name) }] : []),
     {
       title: t('车辆'),
       width: 200,
+      ...textCol<CommissionVoucher>((r) => r.vins),
       render: (_, r) => (
         <div>
           <div>{t('{n} 台', { n: r.vehicle_count ?? 0 })}</div>
@@ -83,6 +86,30 @@ export default function CommissionPage() {
       dataIndex: 'status',
       width: 150,
       render: (x: string | null, r) => <Tag color={flow.stageColor(x, r.step)}>{flow.stageLabel(x, r.step)}</Tag>,
+      ...pickCol(rows, (r) => flow.stageLabel(r.status, r.step)),
+    },
+    {
+      // 审批结束（已批准、已发放）的单子：直接打印，上面有审批过程。固定在右边，表格横向滚动时也一直看得到
+      title: t('打印'),
+      width: 64,
+      align: 'center',
+      fixed: 'right',
+      render: (_, r) =>
+        (r.status === 'approved' || r.status === 'paid') && r.id != null ? (
+          <Tooltip title={t('打印（带审批过程）')}>
+            <Button
+              type="text"
+              size="small"
+              className="cv-print-btn"
+              icon={<PrinterOutlined />}
+              aria-label={t('打印')}
+              onClick={(e) => {
+                e.stopPropagation()
+                printVoucher(r.id as number)
+              }}
+            />
+          </Tooltip>
+        ) : null,
     },
     {
       // 审批结束（已批准、已发放）的单子：直接打印，上面有审批过程。固定在右边，表格横向滚动时也一直看得到

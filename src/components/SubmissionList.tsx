@@ -2,6 +2,7 @@ import { PaperClipOutlined, ReloadOutlined } from '@ant-design/icons'
 import { Button, Segmented, Select, Space, Table, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useCallback, useEffect, useState } from 'react'
+import { pickCol, textCol } from '../lib/colFilter'
 import { dateTime, money, num, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
@@ -63,9 +64,16 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
 
   const columns: ColumnsType<Submission> = [
     { title: t('提交时间'), dataIndex: 'submitted_at', width: 140, render: (v: string) => dateTime(v) },
-    { title: t('业务员'), dataIndex: 'salesperson_id', width: 120, ellipsis: true, render: (v: number) => spName(v) },
-    { title: t('到账日期'), dataIndex: 'receipt_date', width: 104 },
-    { title: t('收款账户'), dataIndex: 'account_id', width: 200, ellipsis: true, render: (v: number) => accountById.get(v)?.short_name ?? '' },
+    { title: t('业务员'), dataIndex: 'salesperson_id', width: 120, ellipsis: true, render: (v: number) => spName(v), ...pickCol(rows, (r) => spName(r.salesperson_id)) },
+    { title: t('到账日期'), dataIndex: 'receipt_date', width: 104, ...textCol<Submission>((r) => r.receipt_date) },
+    {
+      title: t('收款账户'),
+      dataIndex: 'account_id',
+      width: 200,
+      ellipsis: true,
+      render: (v: number) => accountById.get(v)?.short_name ?? '',
+      ...pickCol(rows, (r) => accountById.get(r.account_id)?.short_name ?? ''),
+    },
     {
       title: t('金额'),
       width: 150,
@@ -75,6 +83,7 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
           {r.currency} {money(r.amount_orig)}
         </span>
       ),
+      ...textCol<Submission>((r) => `${r.currency} ${money(r.amount_orig)}`),
     },
     {
       title: 'USD',
@@ -84,6 +93,7 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
     },
     {
       title: t('业务员说是哪台车的'),
+      ...textCol<Submission>((r) => `${claimsSummary(r, t).join(' ')} ${r.request_note ?? ''}`),
       render: (_, r) =>
         isFillRequest(r) && r.status === 'requested' ? (
           <div className="hint" style={{ fontSize: 12 }}>
@@ -113,6 +123,7 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
     {
       title: t('状态'),
       width: 160,
+      ...pickCol(rows, (r) => STATUS_LABEL[r.status as SubmissionStatus], t),
       render: (_, r) => (
         <div>
           <Tag color={STATUS_COLOR[r.status as SubmissionStatus]}>{t(STATUS_LABEL[r.status as SubmissionStatus])}</Tag>
