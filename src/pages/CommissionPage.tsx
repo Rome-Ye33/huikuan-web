@@ -111,29 +111,6 @@ export default function CommissionPage() {
           </Tooltip>
         ) : null,
     },
-    {
-      // 审批结束（已批准、已发放）的单子：直接打印，上面有审批过程。固定在右边，表格横向滚动时也一直看得到
-      title: t('打印'),
-      width: 64,
-      align: 'center',
-      fixed: 'right',
-      render: (_, r) =>
-        (r.status === 'approved' || r.status === 'paid') && r.id != null ? (
-          <Tooltip title={t('打印（带审批过程）')}>
-            <Button
-              type="text"
-              size="small"
-              className="cv-print-btn"
-              icon={<PrinterOutlined />}
-              aria-label={t('打印')}
-              onClick={(e) => {
-                e.stopPropagation()
-                printVoucher(r.id as number)
-              }}
-            />
-          </Tooltip>
-        ) : null,
-    },
   ]
 
   const statusOption = (s: VoucherStatus) => ({ value: s, label: t(VOUCHER_STATUS_LABEL[s]) })
