@@ -2,6 +2,7 @@ import {
   AppstoreOutlined,
   BankOutlined,
   CarOutlined,
+  CreditCardOutlined,
   DatabaseOutlined,
   FileDoneOutlined,
   LogoutOutlined,
@@ -17,6 +18,7 @@ import LangSwitch from './components/LangSwitch'
 import Logo from './components/Logo'
 import NotifySettings from './components/NotifySettings'
 import { ROLE_LABEL, useAuth } from './lib/auth'
+import { useChequeAlert } from './lib/cheques'
 import { useVoucherTodo } from './lib/commission'
 import { useI18n } from './lib/i18n'
 import { goPath, takeGo } from './lib/notify'
@@ -25,6 +27,7 @@ import { useTodoCount } from './lib/workbench'
 import LoginPage from './pages/LoginPage'
 
 const ReceiptsPage = lazy(() => import('./pages/ReceiptsPage'))
+const ChequesPage = lazy(() => import('./pages/ChequesPage'))
 const VehiclesPage = lazy(() => import('./pages/VehiclesPage'))
 const ReconcilePage = lazy(() => import('./pages/ReconcilePage'))
 const BaseDataPage = lazy(() => import('./pages/BaseDataPage'))
@@ -70,6 +73,8 @@ export default function App() {
   const voucherTodo = useVoucherTodo(!!auth.role)
   // 工作台：到账提交、提成单里等我处理的一共几件
   const todo = useTodoCount(!!auth.role)
+  // 支票：到期还没存的 + 存了 3 天还没到账的
+  const chequeAlert = useChequeAlert(auth.isStaff)
 
   // 登录后换成这个人上次选的语言
   useEffect(() => {
@@ -121,6 +126,7 @@ export default function App() {
     ? [
         workbench,
         { key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) },
+        { key: '/cheques', icon: <CreditCardOutlined />, label: withCount(t('支票管理'), chequeAlert) },
         { key: '/vehicles', icon: <CarOutlined />, label: t('车辆台账') },
         { key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) },
         { key: '/reconcile', icon: <BankOutlined />, label: t('银行对账') },
@@ -195,6 +201,7 @@ export default function App() {
               <Routes>
                 <Route path="/workbench" element={<WorkbenchPage />} />
                 {auth.isStaff && <Route path="/receipts" element={<ReceiptsPage />} />}
+                {auth.isStaff && <Route path="/cheques" element={<ChequesPage />} />}
                 {isSales && <Route path="/submit" element={<SubmitPage />} />}
                 <Route path="/vehicles" element={<VehiclesPage />} />
                 <Route path="/commission" element={<CommissionPage />} />

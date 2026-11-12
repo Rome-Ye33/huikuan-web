@@ -371,6 +371,128 @@ export type Database = {
           },
         ]
       }
+      cheque_logs: {
+        Row: {
+          action: string
+          actor: string | null
+          actor_name: string | null
+          at: string
+          cheque_id: number
+          from_status: string | null
+          id: number
+          note: string | null
+          to_status: string | null
+        }
+        Insert: {
+          action: string
+          actor?: string | null
+          actor_name?: string | null
+          at?: string
+          cheque_id: number
+          from_status?: string | null
+          id?: never
+          note?: string | null
+          to_status?: string | null
+        }
+        Update: {
+          action?: string
+          actor?: string | null
+          actor_name?: string | null
+          at?: string
+          cheque_id?: number
+          from_status?: string | null
+          id?: never
+          note?: string | null
+          to_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cheque_logs_cheque_id_fkey"
+            columns: ["cheque_id"]
+            isOneToOne: false
+            referencedRelation: "cheques"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cheques: {
+        Row: {
+          amount: number | null
+          cheque_key: string | null
+          cheque_no: string
+          created_at: string
+          created_by: string | null
+          currency: string
+          customer_id: number
+          deposit_account_id: number | null
+          deposit_date: string | null
+          drawer_bank: string | null
+          drawer_name: string | null
+          due_date: string | null
+          id: number
+          installment_usd: number | null
+          note: string | null
+          plan_date: string | null
+          purpose: string
+          reason: string | null
+          receipt_id: number | null
+          salesperson_id: number | null
+          status: string
+          updated_at: string
+          vehicle_id: number | null
+        }
+        Insert: {
+          amount?: number | null
+          cheque_key?: never
+          cheque_no: string
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          customer_id: number
+          deposit_account_id?: number | null
+          deposit_date?: string | null
+          drawer_bank?: string | null
+          drawer_name?: string | null
+          due_date?: string | null
+          id?: never
+          installment_usd?: number | null
+          note?: string | null
+          plan_date?: string | null
+          purpose?: string
+          reason?: string | null
+          receipt_id?: number | null
+          salesperson_id?: number | null
+          status?: string
+          updated_at?: string
+          vehicle_id?: number | null
+        }
+        Update: {
+          amount?: number | null
+          cheque_key?: never
+          cheque_no?: string
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          customer_id?: number
+          deposit_account_id?: number | null
+          deposit_date?: string | null
+          drawer_bank?: string | null
+          drawer_name?: string | null
+          due_date?: string | null
+          id?: never
+          installment_usd?: number | null
+          note?: string | null
+          plan_date?: string | null
+          purpose?: string
+          reason?: string | null
+          receipt_id?: number | null
+          salesperson_id?: number | null
+          status?: string
+          updated_at?: string
+          vehicle_id?: number | null
+        }
+        Relationships: []
+      }
       commission_vouchers: {
         Row: {
           ar_at: string | null
@@ -1265,6 +1387,48 @@ export type Database = {
           },
         ]
       }
+      v_cheques: {
+        Row: {
+          amount: number | null
+          cheque_key: string | null
+          cheque_no: string | null
+          created_at: string | null
+          created_by: string | null
+          currency: string | null
+          customer_id: number | null
+          customer_name: string | null
+          days_deposited: number | null
+          days_to_due: number | null
+          deposit_account_id: number | null
+          deposit_account_name: string | null
+          deposit_date: string | null
+          drawer_bank: string | null
+          drawer_name: string | null
+          due_date: string | null
+          id: number | null
+          installment_usd: number | null
+          is_reported: boolean | null
+          last_note: string | null
+          last_note_at: string | null
+          last_note_by: string | null
+          model: string | null
+          note: string | null
+          plan_date: string | null
+          purpose: string | null
+          reason: string | null
+          receipt_date: string | null
+          receipt_id: number | null
+          receipt_no: string | null
+          receipt_status: string | null
+          salesperson_id: number | null
+          salesperson_name: string | null
+          status: string | null
+          updated_at: string | null
+          vehicle_id: number | null
+          vin: string | null
+        }
+        Relationships: []
+      }
       v_commission_vouchers: {
         Row: {
           ar_at: string | null
@@ -1596,6 +1760,11 @@ export type Database = {
     }
     Functions: {
       cn_num: { Args: { n: number }; Returns: string }
+      cheque_action: {
+        Args: { p?: Json; p_action: string; p_id: number }
+        Returns: Json
+      }
+      cheque_alert_count: { Args: never; Returns: number }
       commission_voucher_action: {
         Args: {
           p_action: string
@@ -1621,6 +1790,7 @@ export type Database = {
         }
         Returns: Json
       }
+      import_cheques: { Args: { p_rows: Json }; Returns: Json }
       import_vehicles: {
         Args: { p_opening_date: string; p_rows: Json; p_update?: boolean }
         Returns: Json
@@ -1697,6 +1867,7 @@ export type Database = {
         Returns: undefined
       }
       save_commission_voucher: { Args: { p: Json }; Returns: number }
+      save_cheques: { Args: { p_rows: Json }; Returns: Json }
       save_receipt: {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number
