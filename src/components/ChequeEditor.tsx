@@ -11,7 +11,7 @@ import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Vehicle } from '../lib/supabase'
 import CustomerSelect from './CustomerSelect'
-import VehicleSelect from './VehicleSelect'
+import { VehicleMultiSelect } from './VehicleSelect'
 
 // 录支票：一张，或客户一次给的一叠分期支票（填第一张的号码、张数、第一个到期日，按月生成，再逐张改）；也用来修改一张支票
 
@@ -24,7 +24,8 @@ type Props = {
 
 type FormValues = {
   customer_id?: number | null
-  vehicle_id?: number | null
+  /** 这张支票对应的车：一张销售订单可能几台（按选的顺序，第一台决定客户、业务员） */
+  vehicle_ids?: number[]
   salesperson_id?: number | null
   drawer_name?: string
   drawer_bank?: string
@@ -56,7 +57,7 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
   const dueDate = Form.useWatch('due_date', form)
   const amount = Form.useWatch('amount', form)
   const customerId = Form.useWatch('customer_id', form)
-  const vehicleId = Form.useWatch('vehicle_id', form)
+  const vehicleIds = Form.useWatch('vehicle_ids', form)
   const editing = !!cheque
   const locked = cheque?.status === 'cleared'
 
@@ -67,7 +68,7 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
     if (cheque) {
       form.setFieldsValue({
         customer_id: cheque.customer_id,
-        vehicle_id: cheque.vehicle_id,
+        vehicle_ids: cheque.vehicle_ids ?? (cheque.vehicle_id ? [cheque.vehicle_id] : []),
         salesperson_id: cheque.salesperson_id,
         drawer_name: cheque.drawer_name ?? '',
         drawer_bank: cheque.drawer_bank ?? '',
@@ -80,10 +81,12 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
         count: 1,
         note: cheque.note ?? '',
       })
-      if (cheque.vehicle_id) void supabase.from('v_vehicle_ledger').select('*').eq('id', cheque.vehicle_id).then((r) => setKnown(r.data ?? []))
+      const ids = cheque.vehicle_ids ?? (cheque.vehicle_id ? [cheque.vehicle_id] : [])
+      if (ids.length) void supabase.from('v_vehicle_ledger').select('*').in('id', ids).then((r) => setKnown(r.data ?? []))
+      else setKnown([])
     } else {
       setKnown([])
-      form.setFieldsValue({ currency: 'GHS', purpose: '分期款', count: 1 })
+      form.setFieldsValue({ currency: 'GHS', purpose: '分期款', count: 1, vehicle_ids: [] })
     }
   }, [open, cheque, form])
 
@@ -103,12 +106,24 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
     setLines(generated)
   }, [generated])
 
-  const onVehicle = (id: number | null, v: Vehicle | null) => {
-    form.setFieldValue('vehicle_id', id)
-    if (v) {
-      if (v.id != null) setKnown((k) => (k.some((x) => x.id === v.id) ? k : [...k, v]))
-      form.setFieldsValue({ customer_id: v.customer_id ?? undefined, salesperson_id: v.salesperson_id ?? form.getFieldValue('salesperson_id') })
-      if (!form.getFieldValue('drawer_name')) form.setFieldValue('drawer_name', v.customer_name ?? '')
+  // 选了几台车：客户、业务员、支票名称按第一台带出来；几台车必须是同一个客户的（数据库也会拦）
+  const onVehicles = (ids: number[], vs: Vehicle[]) => {
+    const list = ids.map((id) => vs.find((x) => x.id === id) ?? known.find((x) => x.id === id)).filter((x): x is Vehicle => !!x)
+    const first = list[0]
+    let keep = ids
+    if (first && list.some((x) => x.customer_id !== first.customer_id)) {
+      message.error(t('一张支票上的车要是同一个客户的'))
+      keep = list.filter((x) => x.customer_id === first.customer_id).map((x) => x.id as number)
+    }
+    form.setFieldValue('vehicle_ids', keep)
+    setKnown((k) => {
+      const m = new Map(k.map((x) => [x.id, x]))
+      for (const v of list) if (v.id != null) m.set(v.id, v)
+      return [...m.values()]
+    })
+    if (first) {
+      form.setFieldsValue({ customer_id: first.customer_id ?? undefined, salesperson_id: first.salesperson_id ?? form.getFieldValue('salesperson_id') })
+      if (!form.getFieldValue('drawer_name')) form.setFieldValue('drawer_name', first.customer_name ?? '')
     }
   }
   const onCustomer = (id: number | null) => {
@@ -129,7 +144,7 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
     }
     const base = {
       customer_id: v.customer_id ?? null,
-      vehicle_id: v.vehicle_id ?? null,
+      vehicle_ids: v.vehicle_ids ?? [],
       salesperson_id: v.salesperson_id ?? null,
       drawer_name: v.drawer_name?.trim() || null,
       drawer_bank: v.drawer_bank?.trim() || null,
@@ -185,8 +200,8 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
       <Form form={form} layout="vertical" size="middle">
         <Row gutter={12}>
           <Col xs={24} md={12}>
-            <Form.Item name="vehicle_id" label={t('哪台车的（可不选）')}>
-              <VehicleSelect value={vehicleId ?? null} known={known} onChange={onVehicle} placeholder={t('搜大架号或客户')} style={{ width: '100%' }} />
+            <Form.Item name="vehicle_ids" label={t('哪几台车的（可不选）')} tooltip={t('一张销售订单几台车、支票是整张订单的，就把这几台都选上；客户、业务员按第一台')}>
+              <VehicleMultiSelect value={vehicleIds ?? []} known={known} onChange={onVehicles} placeholder={t('搜大架号或客户')} style={{ width: '100%' }} />
             </Form.Item>
           </Col>
           <Col xs={24} md={12}>

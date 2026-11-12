@@ -13,7 +13,8 @@ export type ChequeImportRow = {
   drawer_bank: string | null
   drawer_name: string | null
   customer_name: string
-  vin: string | null
+  /** 合同备注里的大架号：一张合同可能几台车，支票是整张合同的，所以全部带上 */
+  vins: string[]
   salesperson_name: string | null
   purpose: string
   currency: 'GHS' | 'USD'
@@ -206,7 +207,6 @@ export function parseMainSheet(rows: unknown[][], memo: Map<string, Memo>, accou
       if (amount == null) warnings.push('已存的支票没有金额，先按待存导入')
       if (!(depDate ?? due) || !acc2 || amount == null) status = 'pending'
     }
-    if (vins.length > 1) warnings.push(`合同备注里有 ${vins.length} 个大架号，按第一个对车`)
     out.push({
       src: '主表',
       row: i + 1,
@@ -214,7 +214,7 @@ export function parseMainSheet(rows: unknown[][], memo: Map<string, Memo>, accou
       drawer_bank: clean(cell(r, iBank)).toUpperCase() || null,
       drawer_name: name || null,
       customer_name: cust,
-      vin: vins[0] ?? null,
+      vins,
       salesperson_name: sp || null,
       purpose: '分期款',
       currency,
@@ -288,7 +288,7 @@ export function parseOtherSheet(rows: unknown[][], accounts: Account[]): ChequeI
       drawer_bank: bank || null,
       drawer_name: clean(cell(r, iName)) || null,
       customer_name: cust,
-      vin: null,
+      vins: [],
       salesperson_name: clean(cell(r, iSp)) || null,
       purpose,
       currency,

@@ -27,7 +27,7 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
   const [fileName, setFileName] = useState('')
   const [sheets, setSheets] = useState<string[]>([])
   const [parsed, setParsed] = useState<ChequeImportRow[]>([])
-  const [vehicleByVin, setVehicleByVin] = useState<Map<string, number> | null>(new Map())
+  const [vehicleByVin, setVehicleByVin] = useState<Map<string, { id: number; customer_id: number | null }> | null>(new Map())
   const [filter, setFilter] = useState<Filter>('all')
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
@@ -79,22 +79,22 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
   }
 
   // ---------- 备注里的大架号 → 车 ----------
-  const vinKey = useMemo(() => [...new Set(parsed.map((r) => r.vin).filter((v): v is string => !!v))].join(','), [parsed])
+  const vinKey = useMemo(() => [...new Set(parsed.flatMap((r) => r.vins))].join(','), [parsed])
   useEffect(() => {
     let stop = false
     const vins = vinKey ? vinKey.split(',') : []
     setVehicleByVin(vins.length ? null : new Map())
     if (!vins.length) return
     void (async () => {
-      const found = new Map<string, number>()
+      const found = new Map<string, { id: number; customer_id: number | null }>()
       for (let i = 0; i < vins.length; i += 150) {
-        const { data, error } = await supabase.from('vehicles').select('id, vin').in('vin', vins.slice(i, i + 150))
+        const { data, error } = await supabase.from('vehicles').select('id, vin, customer_id').in('vin', vins.slice(i, i + 150))
         if (stop) return
         if (error) {
           message.error(errorText(error))
           return
         }
-        for (const v of data ?? []) found.set(v.vin, v.id)
+        for (const v of data ?? []) found.set(v.vin, { id: v.id, customer_id: v.customer_id })
       }
       setVehicleByVin(found)
     })()
@@ -103,12 +103,23 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
     }
   }, [vinKey, message])
 
+  // 合同备注里的几个大架号 → 系统里的车（一张支票对整张合同的几台车）；对不上的、不是同一个客户的提醒一下
   const rows = useMemo(
     () =>
       parsed.map((r) => {
-        const vehicle_id = r.vin ? (vehicleByVin?.get(r.vin) ?? null) : null
-        const warnings = r.vin && vehicleByVin && !vehicle_id ? [...r.warnings, `大架号 ${r.vin} 系统里没有这台车，只按客户导入`] : r.warnings
-        return { ...r, vehicle_id, warnings }
+        if (!r.vins.length || !vehicleByVin) return { ...r, vehicle_ids: [] as number[] }
+        const hit = r.vins.map((vin) => ({ vin, v: vehicleByVin.get(vin) }))
+        const missing = hit.filter((x) => !x.v).map((x) => x.vin)
+        let found = hit.filter((x) => !!x.v).map((x) => x.v!)
+        const warnings = [...r.warnings]
+        if (missing.length) warnings.push(`大架号 ${missing.join('、')} 系统里没有这台车，${found.length ? '只对上找到的车' : '只按客户导入'}`)
+        const first = found[0]
+        if (first && found.some((v) => v.customer_id !== first.customer_id)) {
+          const n = found.length
+          found = found.filter((v) => v.customer_id === first.customer_id)
+          warnings.push(`备注里这 ${n} 台车在系统里不是同一个客户的，只对上第一台那个客户的 ${found.length} 台`)
+        }
+        return { ...r, vehicle_ids: found.map((v) => v.id), warnings }
       }),
     [parsed, vehicleByVin],
   )
@@ -123,7 +134,7 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
     drawer_bank: r.drawer_bank,
     drawer_name: r.drawer_name,
     customer_name: r.customer_name,
-    vehicle_id: r.vehicle_id,
+    vehicle_ids: r.vehicle_ids,
     salesperson_name: r.salesperson_name,
     purpose: r.purpose,
     currency: r.currency,
@@ -186,7 +197,18 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
     },
     { title: t('支票号'), dataIndex: 'cheque_no', width: 110, render: (v: string, r) => <span className="num">{v}{r.drawer_bank ? <div className="hint">{r.drawer_bank}</div> : null}</span> },
     { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true, render: (v: string, r) => <span>{v}{r.drawer_name && r.drawer_name !== v ? <div className="hint">{r.drawer_name}</div> : null}</span> },
-    { title: t('大架号'), width: 180, render: (_, r) => (r.vin ? <span className={r.vehicle_id ? 'cv-vin' : 'cv-vin text-warn'}>{r.vin}</span> : '') },
+    {
+      title: t('大架号'),
+      width: 180,
+      render: (_, r) =>
+        r.vins.length
+          ? r.vins.map((vin) => (
+              <div key={vin} className={vehicleByVin?.has(vin) ? 'cv-vin' : 'cv-vin text-warn'}>
+                {vin}
+              </div>
+            ))
+          : '',
+    },
     { title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true },
     { title: t('用途'), dataIndex: 'purpose', width: 90, render: (v: string) => t(v) },
     { title: t('金额'), width: 130, align: 'right', render: (_, r) => <span className="num">{r.amount == null ? <span className="hint">{t('空白')}</span> : `${r.currency} ${money(r.amount)}`}</span> },
