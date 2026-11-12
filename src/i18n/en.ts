@@ -201,6 +201,11 @@ const VALUES: Record<string, string> = {
   "这笔到账现在不能撤回，请刷新后再看": "This receipt can't be withdrawn right now. Refresh and check again.",
   "只有录入的人或管理员可以撤回": "Only the person who entered it or an admin can withdraw it",
   "到账审批通过后才能报款": "A receipt can only be reported after its approval is complete",
+  // 到账互审（SQL 25）：业务员本人确认的一级
+  "这一步要由这笔到账的业务员本人确认": "This step must be confirmed by the salesperson this receipt belongs to",
+  "只有到账的审批流能设“业务员本人确认”": "Only the receipt approval flow can have a “confirmed by the salesperson” level",
+  "“业务员本人确认”只能有一级": "Only one level can be “confirmed by the salesperson”",
+  "他填写（提交）的内容财务已采用，算作本人确认": "Finance used what this salesperson filled in (or submitted), which counts as their confirmation",
   // 批量导入车辆和期初
   "{field}不是数字": "{field} is not a number",
   "{field}认不出来，按空的导入": "Couldn't read {field}; imported as blank",
@@ -1297,6 +1302,37 @@ const UI: Record<string, string> = {
   "生效": "In effect",
   "已生效。改了日期、账户、金额或汇率会回到审批中，重新批完才再算到账。": "In effect. Changing the date, account, amount or rate sends it back into approval; it counts as received again once re-approved.",
   "审批通过（生效）后才能报款。": "It can be reported once approval is complete (in effect).",
+  // 到账互审（SQL 25）
+  "待{name}确认": "Awaiting {name}'s confirmation",
+  "业务员本人确认": "Confirmed by the salesperson",
+  "这一级由业务员本人确认": "This level is confirmed by the salesperson",
+  "不用选人：财务录入的到账由拆分里的业务员本人确认；业务员自己提交的跳过这一级；业务员没有登录账号时管理员代办。":
+    "No reviewers to pick: a receipt entered by finance is confirmed by the salesperson in its split; receipts from a salesperson's own submission skip this level; if the salesperson has no login, an admin acts for them.",
+  "把“{name}”改成业务员本人确认？": "Make “{name}” a salesperson-confirmation level?",
+  "这一级不再选人，上面的 {n} 个人会去掉这个审批岗位。": "This level will no longer have assigned reviewers; the {n} person(s) on it will lose this approval post.",
+  "要财务和业务员互相把关：把第一级勾成“由业务员本人确认”（业务员提交的本来就由财务审核）。":
+    "For finance and salespeople to check each other: tick “confirmed by the salesperson” on the first level (a salesperson's own submission is already reviewed by finance).",
+  "确认无误": "Confirm",
+  "{name}已确认": "Confirmed by {name}",
+  "已确认，等{name}审批": "Confirmed. Waiting for {name}.",
+  "已确认，这笔到账生效了": "Confirmed. This receipt is now in effect.",
+  "已通过，等业务员确认": "Approved. Waiting for the salesperson to confirm.",
+  "已重新提交，等业务员确认": "Submitted again. Waiting for the salesperson to confirm.",
+  "已保存，等业务员确认": "Saved. Waiting for the salesperson to confirm.",
+  "已保存，等业务员确认，全部批完才算到账": "Saved. Waiting for the salesperson to confirm; it counts as received only once every level has approved.",
+  "已保存，这笔到账回到审批中，等业务员确认": "Saved. This receipt is back in approval, waiting for the salesperson to confirm.",
+  "代业务员确认": "Confirm for the salesperson",
+  "财务录了这笔到账，请你确认是不是你客户的钱": "Finance entered this receipt. Please confirm it is your customer's money.",
+  "等业务员 {name} 确认，管理员可以代办": "Waiting for salesperson {name} to confirm. An admin can act for them.",
+  "等业务员确认：还没拆分到业务员，由管理员代办": "Waiting for the salesperson: not split to a salesperson yet, so an admin acts",
+  "核对日期、金额和拆到哪台车，没问题点“确认无误”，不对点“退回”写明原因。确认后才到下一级审批。":
+    "Check the date, the amount and which vehicles it is split to. If it is right, click “Confirm”; if not, click “Return” and say why. It moves to the next level only after you confirm.",
+  "业务员有登录账号的，这笔在他的待办里，等他自己确认；没有账号或还没拆分的由你代办。确实和业务员核对过了再点“代业务员确认”。":
+    "If the salesperson has a login, this is in their to-dos and waits for them; if they have none, or the receipt is not split yet, it falls to you. Click “Confirm for the salesperson” only after you have actually checked with them.",
+  "审批中，等业务员 {name} 确认": "In approval. Waiting for salesperson {name} to confirm.",
+  "审批中，等业务员确认（还没拆分到业务员，由管理员代办）": "In approval. Waiting for the salesperson (not split to a salesperson yet, so an admin acts).",
+  "业务员确认后才到下一级审批，全部批完才算到账。不知道是谁的钱可以点“请业务员填写”，他填好、你采用就算他确认了。":
+    "It moves to the next level after the salesperson confirms, and counts as received only once every level has approved. If you don't know whose money it is, click “Ask salesperson to fill in”: once they fill it in and you use it, that counts as their confirmation.",
   "退回这笔到账": "Return this receipt",
   "写清楚哪里不对、要怎么改，录入的人会看到，改好后重新提交。": "Say what is wrong and how to fix it. The person who entered it will see it and submit it again.",
 }

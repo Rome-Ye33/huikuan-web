@@ -59,6 +59,7 @@ export type Database = {
       approval_steps: {
         Row: {
           active: boolean
+          by_salesperson: boolean
           created_at: string
           doc_type: string
           key: string
@@ -68,6 +69,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          by_salesperson?: boolean
           created_at?: string
           doc_type?: string
           key: string
@@ -77,6 +79,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          by_salesperson?: boolean
           created_at?: string
           doc_type?: string
           key?: string
@@ -1569,6 +1572,7 @@ export type Database = {
           initiated_at: string | null
           is_ended: boolean | null
           is_request: boolean | null
+          step_by_salesperson: boolean | null
           last_action: string | null
           last_actor_name: string | null
           last_at: string | null

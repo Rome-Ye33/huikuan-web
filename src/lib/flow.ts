@@ -37,8 +37,8 @@ export function receiptStatus(s: string | null | undefined): ReceiptStatus {
   return s === 'pending' || s === 'rejected' || s === 'withdrawn' ? s : 'approved'
 }
 
-/** 提成单 flow 里的一级：哪一级，谁、什么时候通过的（还没通过为空） */
-export type FlowItem = { step: string; by: string | null; by_name: string | null; at: string | null }
+/** flow 里的一级：哪一级，谁、什么时候通过的（还没通过为空）；sp = 到账的“业务员本人确认”那一级（25，录入时记下的） */
+export type FlowItem = { step: string; by: string | null; by_name: string | null; at: string | null; sp?: boolean }
 
 export function parseFlow(j: Json | null | undefined): FlowItem[] {
   if (!Array.isArray(j)) return []
@@ -47,7 +47,7 @@ export function parseFlow(j: Json | null | undefined): FlowItem[] {
     if (!x || typeof x !== 'object' || Array.isArray(x)) return []
     const o = x as Record<string, Json | undefined>
     const step = str(o.step)
-    return step ? [{ step, by: str(o.by), by_name: str(o.by_name), at: str(o.at) }] : []
+    return step ? [{ step, by: str(o.by), by_name: str(o.by_name), at: str(o.at), ...(o.sp === true ? { sp: true } : {}) }] : []
   })
 }
 
@@ -114,7 +114,9 @@ export function useFlow(docType: FlowDocType = 'voucher'): FlowApi {
       stageLabel: (status, step) => {
         if (docType === 'receipt') {
           const s = receiptStatus(status)
-          if (s === 'pending' && step) return t('待{name}审批', { name: name(step) })
+          // “业务员本人确认”的一级（25）：写“待…确认”
+          if (s === 'pending' && step)
+            return byKey.get(step)?.by_salesperson ? t('待{name}确认', { name: name(step) }) : t('待{name}审批', { name: name(step) })
           return t(RECEIPT_STATUS_LABEL[s])
         }
         const s = voucherStatus(status)

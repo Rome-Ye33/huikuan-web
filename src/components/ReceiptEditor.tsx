@@ -115,6 +115,9 @@ type FormValues = {
 let keySeq = 0
 const newKey = () => `k${++keySeq}`
 
+/** 这笔到账现在等的是“业务员本人确认”的一级（25，录入时记在 flow 里） */
+const nowSp = (r: Receipt | null): boolean => !!r?.step && parseFlow(r.flow).some((f) => f.step === r.step && f.sp)
+
 export default function ReceiptEditor({ open, receiptId, prefill, submission, onClose }: Props) {
   const t = useT()
   const { isStaff, isAdmin, posts, profile } = useAuth()
@@ -171,7 +174,20 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const rFlowItems = useMemo(() => parseFlow(receipt?.flow), [receipt?.flow])
   /** 这笔到账走审批（录入时有审批级别）；没走的录入就生效 */
   const inFlow = !!currentId && rFlowItems.length > 0
-  const holdsStep = !!rStep && posts.includes(rStep)
+  /** 现在这一级是“业务员本人确认”（25）：不看岗位，由拆分里的业务员本人确认，管理员可以代办 */
+  const stepIsSp = !!rStep && rFlowItems.some((f) => f.step === rStep && f.sp)
+  /** 拆分里的业务员（车的业务员，没锁车的看拆分上填的） */
+  const claimSpIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const c of claims) {
+      const id = (c.vehicle_id ? vehicles.get(c.vehicle_id)?.salesperson_id : null) ?? c.salesperson_id ?? null
+      if (id) ids.add(id)
+    }
+    return [...ids]
+  }, [claims, vehicles])
+  const mySp = profile?.role === 'sales' ? profile.salesperson_id : null
+  const isClaimSp = !!mySp && claimSpIds.includes(mySp)
+  const holdsStep = stepIsSp ? isClaimSp : !!rStep && posts.includes(rStep)
   const canApprove = !!currentId && rStatus === 'pending' && !!rStep && (holdsStep || isAdmin)
   const canResubmit = !!currentId && (rStatus === 'rejected' || rStatus === 'withdrawn') && isStaff
   /** 第一级还没人批：录入的人或管理员可以撤回（撤回后不算到账，改好再重新提交；批过一级就只能请审核人退回） */
@@ -555,6 +571,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     const name = rflow.name(now?.step)
     if (opts?.accept) message.success(t('已采用并通过，{name} 填的拆分存到了这笔到账', { name: spName(opts.accept.salesperson_id) }))
     else if (wasReview) message.success(pending ? t('已通过，生成了到账，等{name}审批', { name }) : t('已通过，生成了正式到账，报款文字在下面'))
+    // 现在等的是“业务员本人确认”的一级（25）：提示写等业务员确认
+    else if (pending && nowSp(now)) message.success(!currentId ? t('已保存，等业务员确认，全部批完才算到账') : wasApproved ? t('已保存，这笔到账回到审批中，等业务员确认') : t('已保存，等业务员确认'))
     else if (!currentId) message.success(pending ? t('已保存，等{name}审批，批完才算到账', { name }) : t('已保存，报款文字在下面'))
     else if (pending) message.success(wasApproved ? t('已保存，这笔到账回到审批中，等{name}审批', { name }) : t('已保存，等{name}审批', { name }))
     else message.success(t('已保存'))
@@ -564,6 +582,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   /** 到账的审批动作：通过这一级 / 退回 / 重新提交（receipt_action） */
   const act = async (action: string, note?: string): Promise<boolean> => {
     if (!currentId) return false
+    const wasSp = stepIsSp
     setActing(action)
     const { error } = await supabase.rpc('receipt_action', { p_id: currentId, p_action: action, p_note: note })
     setActing(null)
@@ -576,9 +595,14 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     const now = await load(currentId)
     const pending = receiptStatus(now?.status) === 'pending'
     const name = rflow.name(now?.step)
-    if (action.startsWith('approve_')) message.success(pending ? t('已通过，等{name}审批', { name }) : t('已通过，这笔到账生效了'))
-    else if (action === 'reject') message.success(t('已退回'))
+    if (action.startsWith('approve_')) {
+      // 业务员本人确认的一级（25）写“已确认”；下一级是它的写“等业务员确认”
+      if (wasSp) message.success(pending ? t('已确认，等{name}审批', { name }) : t('已确认，这笔到账生效了'))
+      else if (pending && nowSp(now)) message.success(t('已通过，等业务员确认'))
+      else message.success(pending ? t('已通过，等{name}审批', { name }) : t('已通过，这笔到账生效了'))
+    } else if (action === 'reject') message.success(t('已退回'))
     else if (action === 'withdraw') message.success(t('已撤回，不算到账了。改好后点“重新提交”'))
+    else if (pending && nowSp(now)) message.success(t('已重新提交，等业务员确认'))
     else message.success(pending ? t('已重新提交，等{name}审批', { name }) : t('已重新提交，这笔到账生效了'))
     return true
   }
@@ -653,6 +677,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   /** 还在请他填（没填 / 填好了等核对 / 退回了等他改） */
   const openFill = !!fillReq && ['requested', 'pending', 'rejected'].includes(fillReq.status)
   const fillName = spName(fillReq?.salesperson_id)
+  /** 等哪些业务员确认（名字） */
+  const claimSpNames = claimSpIds.map((id) => salespersons.find((x) => x.id === id)?.name ?? `#${id}`).join('、')
   /** 业务员自己传的、还没挂到到账上的凭证 */
   const fillNewFiles = fillReq ? fillReq.attachments.filter((a) => !attachments.includes(a)).length : 0
 
@@ -1043,7 +1069,13 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
           )}
           {canApprove && rStep && (
             <Button type="primary" loading={acting === `approve_${rStep}`} onClick={() => void act(`approve_${rStep}`)}>
-              {holdsStep ? t('{name}审核通过', { name: rflow.name(rStep) }) : t('代{post}通过', { post: rflow.name(rStep) })}
+              {stepIsSp
+                ? holdsStep
+                  ? t('确认无误')
+                  : t('代业务员确认')
+                : holdsStep
+                  ? t('{name}审核通过', { name: rflow.name(rStep) })
+                  : t('代{post}通过', { post: rflow.name(rStep) })}
             </Button>
           )}
           {canResubmit && (
@@ -1124,8 +1156,22 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            title={t('轮到你审批了：这一级是{name}', { name: rflow.name(rStep) })}
-            description={t('核对凭证、金额和拆分，没问题点“通过”，不对点“退回”写明原因。')}
+            title={
+              stepIsSp
+                ? holdsStep
+                  ? t('财务录了这笔到账，请你确认是不是你客户的钱')
+                  : claimSpNames
+                    ? t('等业务员 {name} 确认，管理员可以代办', { name: claimSpNames })
+                    : t('等业务员确认：还没拆分到业务员，由管理员代办')
+                : t('轮到你审批了：这一级是{name}', { name: rflow.name(rStep) })
+            }
+            description={
+              stepIsSp
+                ? holdsStep
+                  ? t('核对日期、金额和拆到哪台车，没问题点“确认无误”，不对点“退回”写明原因。确认后才到下一级审批。')
+                  : t('业务员有登录账号的，这笔在他的待办里，等他自己确认；没有账号或还没拆分的由你代办。确实和业务员核对过了再点“代业务员确认”。')
+                : t('核对凭证、金额和拆分，没问题点“通过”，不对点“退回”写明原因。')
+            }
           />
         )}
         {currentId && receipt && rStatus === 'pending' && !canApprove && (
@@ -1133,8 +1179,20 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             type="info"
             showIcon
             style={{ marginBottom: 12 }}
-            title={t('审批中，等{name}审批', { name: rflow.name(rStep) })}
-            description={isStaff ? t('批完才算到账（才进余额和报表、才能报款）。改了日期、账户、金额或汇率会从第一级重新审批。') : undefined}
+            title={
+              stepIsSp
+                ? claimSpNames
+                  ? t('审批中，等业务员 {name} 确认', { name: claimSpNames })
+                  : t('审批中，等业务员确认（还没拆分到业务员，由管理员代办）')
+                : t('审批中，等{name}审批', { name: rflow.name(rStep) })
+            }
+            description={
+              isStaff
+                ? stepIsSp
+                  ? t('业务员确认后才到下一级审批，全部批完才算到账。不知道是谁的钱可以点“请业务员填写”，他填好、你采用就算他确认了。')
+                  : t('批完才算到账（才进余额和报表、才能报款）。改了日期、账户、金额或汇率会从第一级重新审批。')
+                : undefined
+            }
           />
         )}
         {inFlow && (

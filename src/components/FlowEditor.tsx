@@ -1,5 +1,5 @@
 import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons'
-import { Alert, App, Button, Input, Modal, Tooltip } from 'antd'
+import { Alert, App, Button, Checkbox, Input, Modal, Tooltip } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { errorText } from '../lib/errors'
 import { parseFlow, useFlow } from '../lib/flow'
@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase'
 // 调整审批流（管理员）：提成单的或到账的，加一级、删一级、改名字（中文、英文）、调顺序，一次保存（save_approval_flow）。
 // 提成单：开头“业务员开单提交”、最后“财务发放”不变，至少一级。到账：开头“财务录入”、最后“生效”不变，可以一级都不留（录入就生效）。
 // 改了只影响之后提交（录入）的单据；审批中的按记下的流程走完。每一级由谁审不在这里改，在“用户与权限”的审批流卡片上选人。
+// 到账的审批流可以把一级设成“业务员本人确认”（25，最多一级）：财务录入的到账由拆分里的业务员本人确认，不用选人。
 
 type Props = {
   open: boolean
@@ -20,7 +21,7 @@ type Props = {
   onClose: (saved: boolean) => void
 }
 
-type Row = { id: string; key: string | null; name: string; name_en: string }
+type Row = { id: string; key: string | null; name: string; name_en: string; sp: boolean }
 
 const MAX_STEPS = 10
 const MAX_NAME = 20
@@ -48,7 +49,7 @@ export default function FlowEditor({ open, docType, peopleOn, onClose }: Props) 
   // 打开时从现在的审批流开始改
   useEffect(() => {
     if (!open) return
-    setRows(flow.active.map((s) => ({ id: s.key, key: s.key, name: s.name, name_en: s.name_en ?? '' })))
+    setRows(flow.active.map((s) => ({ id: s.key, key: s.key, name: s.name, name_en: s.name_en ?? '', sp: s.by_salesperson === true })))
     setTried(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在打开时取一次
   }, [open])
@@ -63,9 +64,11 @@ export default function FlowEditor({ open, docType, peopleOn, onClose }: Props) 
       return next
     })
   const remove = (i: number) => setRows((rs) => rs.filter((_, j) => j !== i))
+  /** “业务员本人确认”最多一级：勾了这一级，别的就去掉 */
+  const setSp = (i: number, on: boolean) => setRows((rs) => rs.map((r, j) => ({ ...r, sp: j === i ? on : on ? false : r.sp })))
   const add = () => {
     seq.current += 1
-    setRows((rs) => [...rs, { id: `new-${seq.current}`, key: null, name: '', name_en: '' }])
+    setRows((rs) => [...rs, { id: `new-${seq.current}`, key: null, name: '', name_en: '', sp: false }])
   }
 
   /** 每一行的问题（没有就是 null） */
@@ -83,7 +86,7 @@ export default function FlowEditor({ open, docType, peopleOn, onClose }: Props) 
     setBusy(true)
     const { error } = await supabase.rpc('save_approval_flow', {
       p_doc_type: docType,
-      p_steps: rows.map((r) => ({ key: r.key, name: clean(r.name), name_en: clean(r.name_en) })),
+      p_steps: rows.map((r) => ({ key: r.key, name: clean(r.name), name_en: clean(r.name_en), ...(isReceipt ? { by_salesperson: r.sp } : {}) })),
     })
     if (error) {
       setBusy(false)
@@ -105,8 +108,20 @@ export default function FlowEditor({ open, docType, peopleOn, onClose }: Props) 
     if (problems.some(Boolean)) return
     // 删掉的级别：提醒上面的人会去掉岗位、审批中还要经过这一级的单由管理员代办
     const removed = flow.active.filter((s) => !rows.some((r) => r.key === s.key))
-    if (!removed.length) {
+    // 改成“业务员本人确认”的一级不再选人：上面原来的人会去掉这个岗位
+    const turned = rows.filter((r) => r.sp && r.key && !flow.byKey.get(r.key)?.by_salesperson && peopleOn(r.key) > 0)
+    if (!removed.length && !turned.length) {
       await doSave()
+      return
+    }
+    if (!removed.length) {
+      modal.confirm({
+        title: t('把“{name}”改成业务员本人确认？', { name: flow.name(turned[0].key) }),
+        content: t('这一级不再选人，上面的 {n} 个人会去掉这个审批岗位。', { n: peopleOn(turned[0].key ?? '') }),
+        okText: t('保存'),
+        cancelText: t('再想想'),
+        onOk: doSave,
+      })
       return
     }
     setBusy(true)
@@ -167,7 +182,8 @@ export default function FlowEditor({ open, docType, peopleOn, onClose }: Props) 
         style={{ marginBottom: 12 }}
         title={
           isReceipt
-            ? t('开头“财务录入到账”和最后“生效”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后录入（包括重新提交、重审）的到账，已经在审批中的按记下的流程走完。一级都不留就是到账录入后直接生效。每一级由谁审，保存后在审批流卡片上选。')
+            ? t('开头“财务录入到账”和最后“生效”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后录入（包括重新提交、重审）的到账，已经在审批中的按记下的流程走完。一级都不留就是到账录入后直接生效。每一级由谁审，保存后在审批流卡片上选。') +
+              t('要财务和业务员互相把关：把第一级勾成“由业务员本人确认”（业务员提交的本来就由财务审核）。')
             : t('开头“业务员开单提交”和最后“财务发放”不变，这里改中间的审批级别：加一级、删一级、改名字、调顺序。保存后只影响之后提交（包括退回后重新提交）的提成单，已经在审批中的按提交时的流程走完。每一级由谁审，保存后在审批流卡片上选。')
         }
       />
@@ -222,6 +238,18 @@ export default function FlowEditor({ open, docType, peopleOn, onClose }: Props) 
                 />
               </Tooltip>
             </span>
+            {isReceipt && (
+              <div className="flow-edit-sp">
+                <Checkbox checked={r.sp} onChange={(e) => setSp(i, e.target.checked)}>
+                  {t('这一级由业务员本人确认')}
+                </Checkbox>
+                {r.sp && (
+                  <div className="hint">
+                    {t('不用选人：财务录入的到账由拆分里的业务员本人确认；业务员自己提交的跳过这一级；业务员没有登录账号时管理员代办。')}
+                  </div>
+                )}
+              </div>
+            )}
             {bad && <div className="flow-edit-err text-danger">{bad.text}</div>}
           </div>
         )
