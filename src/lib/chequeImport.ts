@@ -15,6 +15,11 @@ export type ChequeImportRow = {
   customer_name: string
   /** 合同备注里的大架号：一张合同可能几台车，支票是整张合同的，所以全部带上 */
   vins: string[]
+  /** 主表第一列的 序号：一个合同一个，照原样带上（其他支票明细没有这一列） */
+  contract_no: string | null
+  /** 第几期 / 共几期：同一个序号下按表里的行序算 */
+  installment_no: number | null
+  installment_count: number | null
   salesperson_name: string | null
   purpose: string
   currency: 'GHS' | 'USD'
@@ -143,14 +148,19 @@ export function parseMainSheet(rows: unknown[][], memo: Map<string, Memo>, accou
   const out: ChequeImportRow[] = []
   const h = (rows[0] ?? []).map(clean)
   const col = (names: string[]) => h.findIndex((x) => names.some((n) => x.replace(/\s/g, '').startsWith(n)))
+  const iSeq = col(['序号']), iQty = col(['支票数量'])
   const iCust = col(['客户名称']), iName = col(['支票名称']), iInst = col(['分期款/月']), iNote = col(['备注']), iF = col(['是否存票']), iDep = col(['已存银行']),
     iRep = col(['已报回款']), iDepDate = col(['存票日期']), iDepBank = col(['存票银行']), iBank = col(['支票银行']), iNo = col(['支票号码']),
     iDue = col(['支票/合同到期日期', '到期日期']), iAmt = col(['支票金额塞地', '支票金额']), iUsd = h.findIndex((x) => /支票金额\s*美元/.test(x)), iSp = col(['业务员'])
   if (iNo < 0 || iCust < 0) return out
   let cust = '', name = '', note = '', sp = '', inst: number | null = null
+  // 序号和支票数量写在合同那一行，下面的支票行空着，所以往下带
+  let seq = '', qty: number | null = null
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i]
     const c = clean(cell(r, iCust))
+    if (iSeq >= 0 && clean(cell(r, iSeq))) seq = clean(cell(r, iSeq))
+    if (iQty >= 0 && toNumber(cell(r, iQty)) != null) qty = toNumber(cell(r, iQty))
     if (c) {
       cust = c
       name = clean(cell(r, iName)) || cust
@@ -232,11 +242,37 @@ export function parseMainSheet(rows: unknown[][], memo: Map<string, Memo>, accou
         .filter(Boolean)
         .join('；') || null,
       notes: m?.notes ?? [],
+      contract_no: seq || null,
+      installment_no: null,
+      installment_count: qty,
       warnings,
       skip,
     })
   }
+  numberInstallments(out)
   return out
+}
+
+/**
+ * 第几期：同一个合同序号下按表里的行序排（**已报回款的那些行也一起数**，所以第一张导进来的
+ * 可能就是第 5 期，不会从 1 开始数错）。共几期取 支票数量 和实际行数里大的那个。
+ */
+function numberInstallments(rows: ChequeImportRow[]) {
+  const groups = new Map<string, ChequeImportRow[]>()
+  for (const r of rows) {
+    if (!r.contract_no) continue
+    const g = groups.get(r.contract_no)
+    if (g) g.push(r)
+    else groups.set(r.contract_no, [r])
+  }
+  for (const g of groups.values()) {
+    g.sort((a, b) => a.row - b.row)
+    const count = Math.max(g.length, g[0].installment_count ?? 0)
+    g.forEach((r, i) => {
+      r.installment_no = i + 1
+      r.installment_count = count
+    })
+  }
 }
 
 /** 其他支票明细 */
@@ -304,6 +340,10 @@ export function parseOtherSheet(rows: unknown[][], accounts: Account[]): ChequeI
       note: use && use.length <= 120 ? use : null,
       import_note: [keep ? `存取：${keep}` : null, use.length > 120 ? `用途：${use.slice(0, 300)}` : null].filter(Boolean).join('；') || null,
       notes: [],
+      // 其他支票明细是一行一张的零散支票，没有合同序号、也不分期
+      contract_no: null,
+      installment_no: null,
+      installment_count: null,
       warnings,
       skip,
     })

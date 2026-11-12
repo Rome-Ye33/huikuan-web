@@ -75,7 +75,7 @@ export default function ChequesPage() {
       } else if (status !== 'all' && c.status !== status) return false
       if (salespersonId && c.salesperson_id !== salespersonId) return false
       if (accountId && c.deposit_account_id !== accountId) return false
-      if (s && !`${c.cheque_no ?? ''} ${c.customer_name ?? ''} ${c.drawer_name ?? ''} ${c.vins ?? c.vin ?? ''} ${c.drawer_bank ?? ''}`.toLowerCase().includes(s))
+      if (s && !`${c.cheque_no ?? ''} ${c.customer_name ?? ''} ${c.drawer_name ?? ''} ${c.vins ?? c.vin ?? ''} ${c.drawer_bank ?? ''} ${c.contract_no ?? ''}`.toLowerCase().includes(s))
         return false
       return true
     })
@@ -162,6 +162,22 @@ export default function ChequesPage() {
       width: 110,
       render: (_, c) => <Tag color={CHEQUE_STATUS_COLOR[chequeStatus(c.status)]}>{t(CHEQUE_STATUS_LABEL[chequeStatus(c.status)])}</Tag>,
       ...pickCol(rows, (c) => CHEQUE_STATUS_LABEL[chequeStatus(c.status)], t),
+    },
+    {
+      title: t('序号'),
+      width: 100,
+      render: (_, c) =>
+        c.contract_no || c.installment_no ? (
+          <span className="num">
+            {c.contract_no ?? ''}
+            {c.installment_no ? (
+              <div className="hint">{t('第 {n}/{m} 期', { n: c.installment_no, m: c.installment_count ?? c.installment_no })}</div>
+            ) : null}
+          </span>
+        ) : (
+          ''
+        ),
+      ...textCol<Cheque>((c) => `${c.contract_no ?? ''} ${c.installment_no ?? ''}`),
     },
     {
       title: t('支票号'),
@@ -317,7 +333,7 @@ export default function ChequesPage() {
           value={accountId}
           onChange={setAccountId}
         />
-        <Input.Search allowClear placeholder={t('支票号、客户、户名、大架号')} style={{ width: 240 }} onSearch={setQ} />
+        <Input.Search allowClear placeholder={t('支票号、客户、户名、大架号、合同序号')} style={{ width: 240 }} onSearch={setQ} />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
         {isStaff && chosen.length > 0 && (
           <Popconfirm
