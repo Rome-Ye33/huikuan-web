@@ -766,6 +766,10 @@ html[lang='en'] .logo-name {
   grid-column: 2 / -1;
   font-size: 12px;
 }
+.flow-edit-sp {
+  grid-column: 2 / -1;
+  font-size: 12px;
+}
 @media (max-width: 575px) {
   .flow-edit-head {
     display: none;

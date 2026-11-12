@@ -138,21 +138,33 @@ export default function UsersPage() {
                 <div className="flow-name">
                   {n + 1}. {f.name(post)}
                 </div>
-                <Select
-                  mode="multiple"
-                  style={{ width: '100%' }}
-                  placeholder={t('选审核人')}
-                  loading={postBusy === post}
-                  disabled={postBusy !== null}
-                  showSearch={{ optionFilterProp: 'label' }}
-                  value={postValue(post)}
-                  options={postOptions(post)}
-                  onChange={(v: string[]) => void setPost(post, v)}
-                />
-                {on.length === 0 && (
-                  <div className="hint text-warn" style={{ marginTop: 2 }}>
-                    {pending ? t('等对方注册；在这之前由管理员代办') : t('还没指定人，暂由管理员代办')}
+                {s.by_salesperson ? (
+                  // “业务员本人确认”的一级（25）：不选人，由每笔到账拆分里的业务员本人确认
+                  <div className="flow-sp">
+                    <Tag color="blue">{t('业务员本人确认')}</Tag>
+                    <div className="hint" style={{ marginTop: 2 }}>
+                      {t('不用选人：财务录入的到账由拆分里的业务员本人确认；业务员自己提交的跳过这一级；业务员没有登录账号时管理员代办。')}
+                    </div>
                   </div>
+                ) : (
+                  <>
+                    <Select
+                      mode="multiple"
+                      style={{ width: '100%' }}
+                      placeholder={t('选审核人')}
+                      loading={postBusy === post}
+                      disabled={postBusy !== null}
+                      showSearch={{ optionFilterProp: 'label' }}
+                      value={postValue(post)}
+                      options={postOptions(post)}
+                      onChange={(v: string[]) => void setPost(post, v)}
+                    />
+                    {on.length === 0 && (
+                      <div className="hint text-warn" style={{ marginTop: 2 }}>
+                        {pending ? t('等对方注册；在这之前由管理员代办') : t('还没指定人，暂由管理员代办')}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

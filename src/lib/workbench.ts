@@ -103,6 +103,8 @@ export function useDocLabels() {
             : (STATUS_COLOR[(status ?? 'pending') as SubmissionStatus] ?? 'default'),
       action: (action: string | null | undefined, step?: string | null, type?: DocType): string => {
         if (!action) return ''
+        // 到账“业务员本人确认”的一级（25）写“已确认”
+        if (action === 'approve' && step && rflow.byKey.get(step)?.by_salesperson) return t('{name}已确认', { name: rflow.name(step) })
         if (action === 'approve' && step) return t('{name}已通过', { name: vflow.name(step) })
         // 到账：录入就是开始审批；改了钱的事重审也记成“重新提交”
         if (type === 'receipt' && action === 'submit') return t('已录入，开始审批')

@@ -1,7 +1,7 @@
 import { Card, Spin, Timeline } from 'antd'
 import { useEffect, useState } from 'react'
 import { dateTime } from '../lib/format'
-import { useT } from '../lib/i18n'
+import { trServer, useT } from '../lib/i18n'
 import { ACTION_COLOR, fetchTrail, useDocLabels } from '../lib/workbench'
 import type { ApprovalLog, DocType } from '../lib/workbench'
 
@@ -57,7 +57,11 @@ export default function ApprovalTrail({ docType, docId, version }: Props) {
                 </div>
                 {r.note && (
                   <div className={r.action === 'reject' ? 'text-danger' : undefined}>
-                    {r.action === 'request' ? t('财务说：{note}', { note: r.note }) : t('原因：{note}', { note: r.note })}
+                    {r.action === 'request'
+                      ? t('财务说：{note}', { note: r.note })
+                      : r.action === 'approve'
+                        ? trServer(r.note)
+                        : t('原因：{note}', { note: r.note })}
                   </div>
                 )}
               </div>
