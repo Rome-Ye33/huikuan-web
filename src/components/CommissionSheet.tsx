@@ -7,17 +7,21 @@ import {
   payStateEn,
   payStateVars,
   savedTotals,
+  TRAIL_PRINT,
   VOUCHER_STATUS_EN,
   VOUCHER_STATUS_LABEL,
   voucherStatus,
 } from '../lib/commission'
 import type { CommissionVoucher } from '../lib/commission'
 import { stepPrintNames, voucherFlow } from '../lib/flow'
-import { money, num, shortDate } from '../lib/format'
+import { dateTime, money, num, shortDate } from '../lib/format'
 import { useRefData } from '../lib/refdata'
+import type { ApprovalLog } from '../lib/workbench'
 
 // 打印的提成单：照 Excel 模板（提成单模板 Commission Voucher Template）的版式，中英文都印，A4 竖版。
 // 内容是提交时存下的车和付款，审批后再改到账也不会变。签名栏是这张单走的审批流（提交时记下的；草稿是现在的审批流）。
+// 签名栏下面是“审批过程”（Rome 2026-11-12：打印上要体现审批的过程）：approval_logs 里这张单的每一步，
+// 谁、什么时候、做了什么（提交、哪一级通过、退回和原因、重新提交、撤回、发放），按时间先后。还没提交过的草稿没有这一栏。
 
 /** 中文 + 英文（对照表里有英文的才加） */
 function bi(zh: string | null | undefined): string {
@@ -35,7 +39,7 @@ function amt(v: unknown): string {
   return v === null || v === undefined || v === '' || num(v) === 0 ? '' : money(v)
 }
 
-export default function CommissionSheet({ v }: { v: CommissionVoucher }) {
+export default function CommissionSheet({ v, trail = [] }: { v: CommissionVoucher; trail?: ApprovalLog[] }) {
   const vehicles = parseVehicles(v.vehicles)
   const payments = parsePayments(v.payments)
   const tt = savedTotals(v)
@@ -381,6 +385,72 @@ export default function CommissionSheet({ v }: { v: CommissionVoucher }) {
           已发放 PAID OUT：{v.paid_on}
           {v.paid_name ? ` · ${v.paid_name}` : ''}
         </div>
+      )}
+
+      {trail.length > 0 && (
+        <table className="cv-table cv-trail">
+          <colgroup>
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '37%' }} />
+            <col style={{ width: '18%' }} />
+            <col style={{ width: '17%' }} />
+            <col style={{ width: '21%' }} />
+          </colgroup>
+          <tbody>
+            <tr>
+              <td colSpan={5} className="cv-section">
+                审批过程&nbsp;&nbsp;APPROVAL RECORD
+              </td>
+            </tr>
+            <tr className="cv-head">
+              <th>
+                序号
+                <br />
+                NO.
+              </th>
+              <th>
+                步骤
+                <br />
+                STEP
+              </th>
+              <th>
+                处理人
+                <br />
+                BY
+              </th>
+              <th>
+                时间
+                <br />
+                TIME
+              </th>
+              <th>
+                意见
+                <br />
+                NOTE
+              </th>
+            </tr>
+            {trail.map((r, i) => {
+              const a = TRAIL_PRINT[r.action] ?? { zh: r.action, en: '' }
+              // 通过、退回写明是哪一级
+              const lv = r.step ? stepPrintNames(byKey.get(r.step), r.step) : null
+              return (
+                <tr key={r.id}>
+                  <td className="c">{i + 1}</td>
+                  <td>
+                    {lv ? `${lv.zh} ` : ''}
+                    {a.zh}
+                    <span className="cv-trail-en">
+                      {lv?.en ? ` ${lv.en}` : ''} {a.en}
+                    </span>
+                  </td>
+                  <td>{r.actor_name ?? ''}</td>
+                  <td className="c">{dateTime(r.at)}</td>
+                  <td>{r.note ?? ''}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       )}
     </div>
   )

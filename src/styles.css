@@ -630,6 +630,21 @@ html[lang='en'] .logo-name {
   margin-top: 12px;
   font-weight: 600;
 }
+/* 打印的提成单：签名栏下面的“审批过程” */
+.cv-trail {
+  margin-top: 12px;
+  font-size: 10px;
+}
+.cv-trail td {
+  padding: 2px 4px;
+}
+.cv-trail-en {
+  color: #444;
+  font-size: 9px;
+}
+.cv-trail tr {
+  break-inside: avoid;
+}
 @page {
   size: A4 portrait;
   margin: 10mm;

@@ -1,10 +1,10 @@
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { Button, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { PlusOutlined, PrinterOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Button, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useCallback, useEffect, useState } from 'react'
 import CommissionEditor from '../components/CommissionEditor'
 import { useAuth } from '../lib/auth'
-import { useVoucherTodo, VOUCHER_STATUS_LABEL, voucherTodoIds } from '../lib/commission'
+import { printVoucher, useVoucherTodo, VOUCHER_STATUS_LABEL, voucherTodoIds } from '../lib/commission'
 import type { VoucherStatus } from '../lib/commission'
 import { useFlow } from '../lib/flow'
 import type { CommissionVoucher } from '../lib/commission'
@@ -30,9 +30,8 @@ export default function CommissionPage() {
   const load = useCallback(async () => {
     setLoading(true)
     let query = supabase.from('v_commission_vouchers').select('*').order('created_at', { ascending: false }).limit(2000)
-    // 筛选：todo 待我处理 / all 全部 / step:<级别> 等某一级审批 / 其余是状态
+    // 筛选：todo 待我处理 / all 全部 / 其余是状态（等哪一级看列表里的状态一列，不单独列出来筛）
     if (filter === 'todo') query = query.in('id', await voucherTodoIds())
-    else if (filter.startsWith('step:')) query = query.eq('status', 'submitted').eq('step', filter.slice(5))
     else if (filter !== 'all') query = query.eq('status', filter)
     const s = cleanSearch(q)
     if (s) query = query.or(`voucher_no.ilike.%${s}%,customer_name.ilike.%${s}%,salesperson_name.ilike.%${s}%,vins.ilike.%${s}%`)
@@ -85,6 +84,29 @@ export default function CommissionPage() {
       width: 150,
       render: (x: string | null, r) => <Tag color={flow.stageColor(x, r.step)}>{flow.stageLabel(x, r.step)}</Tag>,
     },
+    {
+      // 审批结束（已批准、已发放）的单子：直接打印，上面有审批过程。固定在右边，表格横向滚动时也一直看得到
+      title: t('打印'),
+      width: 64,
+      align: 'center',
+      fixed: 'right',
+      render: (_, r) =>
+        (r.status === 'approved' || r.status === 'paid') && r.id != null ? (
+          <Tooltip title={t('打印（带审批过程）')}>
+            <Button
+              type="text"
+              size="small"
+              className="cv-print-btn"
+              icon={<PrinterOutlined />}
+              aria-label={t('打印')}
+              onClick={(e) => {
+                e.stopPropagation()
+                printVoucher(r.id as number)
+              }}
+            />
+          </Tooltip>
+        ) : null,
+    },
   ]
 
   const statusOption = (s: VoucherStatus) => ({ value: s, label: t(VOUCHER_STATUS_LABEL[s]) })
@@ -93,7 +115,6 @@ export default function CommissionPage() {
     { value: 'all', label: t('全部') },
     statusOption('draft'),
     statusOption('submitted'),
-    ...flow.active.map((s) => ({ value: 'step:' + s.key, label: flow.stageLabel('submitted', s.key) })),
     statusOption('approved'),
     statusOption('paid'),
     statusOption('rejected'),
@@ -116,8 +137,8 @@ export default function CommissionPage() {
         })}
       </Typography.Paragraph>
       <Space wrap className="filters">
-        {/* 选项随审批流的级别变多：不用虚拟列表，全部放进下拉框（多了就滚动） */}
-        <Select style={{ width: 190 }} value={filter} onChange={setFilter} options={options} virtual={false} />
+        {/* 只留必要的几种状态（Rome 2026-11-12）；等哪一级看列表的状态一列 */}
+        <Select style={{ width: 190 }} value={filter} onChange={setFilter} options={options} virtual={false} listHeight={320} />
         <Input.Search allowClear placeholder={t('编号、客户、业务员、大架号')} style={{ width: 260 }} onSearch={setQ} />
       </Space>
       <Table

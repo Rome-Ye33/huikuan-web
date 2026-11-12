@@ -117,7 +117,7 @@ const newKey = () => `k${++keySeq}`
 
 export default function ReceiptEditor({ open, receiptId, prefill, submission, onClose }: Props) {
   const t = useT()
-  const { isStaff, isAdmin, posts } = useAuth()
+  const { isStaff, isAdmin, posts, profile } = useAuth()
   const rflow = useFlow('receipt')
   const { accounts, accountById, natures, natureByName, salespersons, customers } = useRefData()
   const { message, modal } = App.useApp()
@@ -173,7 +173,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const inFlow = !!currentId && rFlowItems.length > 0
   const holdsStep = !!rStep && posts.includes(rStep)
   const canApprove = !!currentId && rStatus === 'pending' && !!rStep && (holdsStep || isAdmin)
-  const canResubmit = !!currentId && rStatus === 'rejected' && isStaff
+  const canResubmit = !!currentId && (rStatus === 'rejected' || rStatus === 'withdrawn') && isStaff
+  /** 第一级还没人批：录入的人或管理员可以撤回（撤回后不算到账，改好再重新提交；批过一级就只能请审核人退回） */
+  const canWithdraw =
+    !!currentId && rStatus === 'pending' && isStaff && (isAdmin || (!!profile && receipt?.created_by === profile.id)) && rFlowItems.length > 0 && rStep === rFlowItems[0].step
 
   const rememberVehicles = useCallback((list: (Vehicle | null | undefined)[]) => {
     setVehicles((m) => {
@@ -575,8 +578,22 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     const name = rflow.name(now?.step)
     if (action.startsWith('approve_')) message.success(pending ? t('已通过，等{name}审批', { name }) : t('已通过，这笔到账生效了'))
     else if (action === 'reject') message.success(t('已退回'))
+    else if (action === 'withdraw') message.success(t('已撤回，不算到账了。改好后点“重新提交”'))
     else message.success(pending ? t('已重新提交，等{name}审批', { name }) : t('已重新提交，这笔到账生效了'))
     return true
+  }
+
+  /** 撤回审批中的到账（第一级还没人批）：确认后 receipt_action withdraw */
+  const withdraw = () => {
+    modal.confirm({
+      title: t('撤回这笔到账？'),
+      content: t('撤回后不算到账（不进余额和报表、不能报款）。改好后可以重新提交；不要了请管理员删掉。'),
+      okText: t('撤回'),
+      cancelText: t('返回'),
+      onOk: async () => {
+        await act('withdraw')
+      },
+    })
   }
 
   /** 被退回的到账：有改动先保存，再重新提交（按现在的审批流从第一级开始） */
@@ -973,8 +990,11 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
         ) + 1
       : rStatus === 'approved'
         ? rFlowItems.length + 1
-        : // 退回在哪一级：第一个还没通过的
-          rFlowItems.findIndex((f) => !f.at) + 1 || rFlowItems.length
+        : rStatus === 'withdrawn'
+          ? // 撤回：回到“录入”，等改好重新提交
+            0
+          : // 退回在哪一级：第一个还没通过的
+            rFlowItems.findIndex((f) => !f.at) + 1 || rFlowItems.length
   const signed = (name: string | null | undefined, at: string | null | undefined) => (name ? `${name} · ${dateTime(at)}` : '')
   const stepTag = inFlow && (
     <Tag color={rflow.stageColor(receipt?.status, receipt?.step)}>{rflow.stageLabel(receipt?.status, receipt?.step)}</Tag>
@@ -1013,6 +1033,13 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             >
               {t('退回')}
             </Button>
+          )}
+          {canWithdraw && (
+            <Tooltip title={t('第一级还没人批，可以撤回；撤回后不算到账')}>
+              <Button loading={acting === 'withdraw'} onClick={withdraw}>
+                {t('撤回')}
+              </Button>
+            </Tooltip>
           )}
           {canApprove && rStep && (
             <Button type="primary" loading={acting === `approve_${rStep}`} onClick={() => void act(`approve_${rStep}`)}>
@@ -1081,6 +1108,15 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                 ? t('{name} 于 {when} 退回。改好后点“重新提交”。', { name: receipt.rejected_name ?? '', when: dateTime(receipt.rejected_at) })
                 : t('{name} 于 {when} 退回，等财务改好后重新提交。', { name: receipt.rejected_name ?? '', when: dateTime(receipt.rejected_at) })
             }
+          />
+        )}
+        {currentId && receipt && rStatus === 'withdrawn' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('已撤回，不算到账')}
+            description={isStaff ? t('改好后点“重新提交”，按现在的审批流从第一级开始；不要了请管理员删掉。') : t('等财务重新提交。')}
           />
         )}
         {currentId && receipt && rStatus === 'pending' && canApprove && (

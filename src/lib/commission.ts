@@ -310,6 +310,19 @@ export async function voucherTodoIds(): Promise<number[]> {
   return (data ?? []).map((r) => r.doc_id).filter((x): x is number => x != null)
 }
 
+/** 打印的提成单上“审批过程”里每一步的说法（中英都印）。通过、退回前面带哪一级 */
+export const TRAIL_PRINT: Record<string, { zh: string; en: string }> = {
+  submit: { zh: '提交', en: 'SUBMITTED' },
+  resubmit: { zh: '重新提交', en: 'RESUBMITTED' },
+  withdraw: { zh: '撤回', en: 'WITHDRAWN' },
+  approve: { zh: '通过', en: 'APPROVED' },
+  finance_approve: { zh: '财务审核通过', en: 'FINANCE APPROVED' },
+  gm_approve: { zh: '总经理批准', en: 'GM APPROVED' },
+  reject: { zh: '退回', en: 'RETURNED' },
+  pay: { zh: '发放', en: 'PAID OUT' },
+  unpay: { zh: '取消发放', en: 'PAYOUT CANCELLED' },
+}
+
 /** 把提成单打开成可以打印的页面（新窗口） */
 export function printVoucher(id: number) {
   const base = window.location.href.split('#')[0]
