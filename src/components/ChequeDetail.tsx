@@ -3,7 +3,7 @@ import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
 import type { Json } from '../lib/database.types'
 import { useAuth } from '../lib/auth'
-import { CHEQUE_ACTION_COLOR, CHEQUE_ACTION_LABEL, CHEQUE_STATUS_COLOR, CHEQUE_STATUS_LABEL, chequeAction, chequeStatus, fetchChequeLogs, notifyChequesChanged } from '../lib/cheques'
+import { CHEQUE_ACTION_COLOR, CHEQUE_ACTION_LABEL, CHEQUE_STATUS_COLOR, CHEQUE_STATUS_LABEL, chequeAction, chequeStatus, chequeVins, fetchChequeLogs, notifyChequesChanged } from '../lib/cheques'
 import type { Cheque, ChequeAction, ChequeLog } from '../lib/cheques'
 import { errorText } from '../lib/errors'
 import { useFlow } from '../lib/flow'
@@ -48,6 +48,8 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
   const id = cheque?.id ?? null
   const status = chequeStatus(cheque?.status)
   const version = cheque?.updated_at
+  const vins = cheque ? chequeVins(cheque) : []
+  const models = (cheque?.models ?? cheque?.model ?? '').split(' / ')
 
   const loadLogs = useCallback(async () => {
     if (!id) return
@@ -240,7 +242,18 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
               {c.due_date && canOpen && c.days_to_due != null && c.days_to_due < 0 && <Tag color="red" style={{ marginInlineStart: 8 }}>{t('已过期 {n} 天', { n: -c.days_to_due })}</Tag>}
             </Descriptions.Item>
             <Descriptions.Item label={t('分期款/月')}>{c.installment_usd != null ? usd(c.installment_usd) : ''}</Descriptions.Item>
-            <Descriptions.Item label={t('哪台车的')}>{c.vin ? `${c.vin} · ${c.model ?? ''}` : t('没选车')}</Descriptions.Item>
+            <Descriptions.Item label={t('哪几台车的')} span={vins.length > 1 ? 2 : 1}>
+              {vins.length ? (
+                vins.map((vin, i) => (
+                  <div key={vin}>
+                    <span className="cv-vin">{vin}</span>
+                    {models[i] ? ` · ${models[i]}` : ''}
+                  </div>
+                ))
+              ) : (
+                t('没选车')
+              )}
+            </Descriptions.Item>
             <Descriptions.Item label={t('业务员')}>{c.salesperson_name ?? ''}</Descriptions.Item>
             <Descriptions.Item label={t('用途')}>{t(c.purpose ?? '')}</Descriptions.Item>
             <Descriptions.Item label={t('计划存票日期')}>{c.plan_date ?? ''}</Descriptions.Item>

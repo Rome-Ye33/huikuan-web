@@ -440,6 +440,7 @@ export type Database = {
           status: string
           updated_at: string
           vehicle_id: number | null
+          vehicle_ids: number[]
         }
         Insert: {
           amount?: number | null
@@ -465,6 +466,7 @@ export type Database = {
           status?: string
           updated_at?: string
           vehicle_id?: number | null
+          vehicle_ids?: number[]
         }
         Update: {
           amount?: number | null
@@ -490,6 +492,7 @@ export type Database = {
           status?: string
           updated_at?: string
           vehicle_id?: number | null
+          vehicle_ids?: number[]
         }
         Relationships: []
       }
@@ -1412,6 +1415,7 @@ export type Database = {
           last_note_at: string | null
           last_note_by: string | null
           model: string | null
+          models: string | null
           note: string | null
           plan_date: string | null
           purpose: string | null
@@ -1424,8 +1428,11 @@ export type Database = {
           salesperson_name: string | null
           status: string | null
           updated_at: string | null
+          vehicle_count: number | null
           vehicle_id: number | null
+          vehicle_ids: number[] | null
           vin: string | null
+          vins: string | null
         }
         Relationships: []
       }

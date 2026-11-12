@@ -8,7 +8,7 @@ import ChequeImport from '../components/ChequeImport'
 import ReceiptEditor from '../components/ReceiptEditor'
 import type { ReceiptPrefill } from '../components/ReceiptEditor'
 import { useAuth } from '../lib/auth'
-import { CHEQUE_ALERT_LABEL, CHEQUE_ALERTS, CHEQUE_STATUS_COLOR, CHEQUE_STATUS_LABEL, CHEQUE_STATUSES, chequeStatus, inAlert } from '../lib/cheques'
+import { CHEQUE_ALERT_LABEL, CHEQUE_ALERTS, CHEQUE_STATUS_COLOR, CHEQUE_STATUS_LABEL, CHEQUE_STATUSES, chequeStatus, chequeVehicleIds, chequeVins, inAlert } from '../lib/cheques'
 import type { Cheque, ChequeAlert, ChequeStatus } from '../lib/cheques'
 import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money, shortDate, usd } from '../lib/format'
@@ -70,7 +70,8 @@ export default function ChequesPage() {
       } else if (status !== 'all' && c.status !== status) return false
       if (salespersonId && c.salesperson_id !== salespersonId) return false
       if (accountId && c.deposit_account_id !== accountId) return false
-      if (s && !`${c.cheque_no ?? ''} ${c.customer_name ?? ''} ${c.drawer_name ?? ''} ${c.vin ?? ''} ${c.drawer_bank ?? ''}`.toLowerCase().includes(s)) return false
+      if (s && !`${c.cheque_no ?? ''} ${c.customer_name ?? ''} ${c.drawer_name ?? ''} ${c.vins ?? c.vin ?? ''} ${c.drawer_bank ?? ''}`.toLowerCase().includes(s))
+        return false
       return true
     })
   }, [rows, alert, status, salespersonId, accountId, q])
@@ -78,6 +79,9 @@ export default function ChequesPage() {
   const detail = detailId == null ? null : (rows.find((c) => c.id === detailId) ?? null)
 
   const createReceipt = (c: Cheque) => {
+    const ids = chequeVehicleIds(c)
+    const amt = c.amount != null ? Number(c.amount) : null
+    const per = amt != null && ids.length ? Math.floor((amt / ids.length) * 100) / 100 : 0
     setReceipt({
       open: true,
       id: null,
@@ -88,8 +92,14 @@ export default function ChequesPage() {
         cheque_no: c.cheque_no,
         payer_summary: c.drawer_name ?? c.customer_name,
         cheque_id: c.id ?? undefined,
-        claims: c.vehicle_id
-          ? [{ nature: c.purpose === '配件款' ? '配件款' : c.purpose === '预付款' ? '预付款' : '分期款', vehicle_id: c.vehicle_id, customer_id: c.customer_id, amount_orig: c.amount != null ? Number(c.amount) : null }]
+        // 几台车：一台一行，金额先按台数平均分（分不均的分差放第一台），不对就在拆分里改
+        claims: ids.length
+          ? ids.map((vid, i) => ({
+              nature: c.purpose === '配件款' ? '配件款' : c.purpose === '预付款' ? '预付款' : '分期款',
+              vehicle_id: vid,
+              customer_id: c.customer_id,
+              amount_orig: amt == null ? null : i === 0 ? Math.round((amt - per * (ids.length - 1)) * 100) / 100 : per,
+            }))
           : c.customer_id
             ? [{ customer_id: c.customer_id, amount_orig: c.amount != null ? Number(c.amount) : null }]
             : [],
@@ -145,16 +155,22 @@ export default function ChequesPage() {
       title: t('车'),
       width: 190,
       ellipsis: true,
-      render: (_, c) =>
-        c.vin ? (
-          <span>
-            <span className="cv-vin">{c.vin}</span>
-            {c.model && <div className="hint">{c.model}</div>}
-          </span>
-        ) : (
-          ''
-        ),
-      ...textCol<Cheque>((c) => `${c.vin ?? ''} ${c.model ?? ''}`),
+      render: (_, c) => {
+        const vins = chequeVins(c)
+        if (!vins.length) return ''
+        // 几台车是同一个车型（常见）就只写一次
+        const models = [...new Set((c.models ?? c.model ?? '').split(' / ').filter(Boolean))]
+        return (
+          <Tooltip title={vins.length > 1 ? vins.join('、') : null}>
+            <span>
+              <span className="cv-vin">{vins[0]}</span>
+              {vins.length > 1 && <span className="hint"> {t('等 {n} 台', { n: vins.length })}</span>}
+              {models.length > 0 && <div className="hint">{models.join(' / ')}</div>}
+            </span>
+          </Tooltip>
+        )
+      },
+      ...textCol<Cheque>((c) => `${c.vins ?? c.vin ?? ''} ${c.models ?? c.model ?? ''}`),
     },
     { title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true, ...pickCol(rows, (c) => c.salesperson_name) },
     { title: t('用途'), dataIndex: 'purpose', width: 90, render: (v: string) => t(v), ...pickCol(rows, (c) => c.purpose, t) },

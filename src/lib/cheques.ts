@@ -63,6 +63,18 @@ export function chequeStatus(s: string | null | undefined): ChequeStatus {
   return (CHEQUE_STATUSES as string[]).includes(s ?? '') ? (s as ChequeStatus) : 'pending'
 }
 
+/** 这张支票对应的车（一张销售订单可能几台，按录入的顺序）；老数据只有 vehicle_id 时也认 */
+export function chequeVehicleIds(c: Cheque): number[] {
+  if (c.vehicle_ids?.length) return c.vehicle_ids
+  return c.vehicle_id ? [c.vehicle_id] : []
+}
+
+/** 这张支票对应的大架号（视图里是空格拼起来的） */
+export function chequeVins(c: Cheque): string[] {
+  const s = c.vins ?? c.vin ?? ''
+  return s.split(' ').filter(Boolean)
+}
+
 /** 页面顶部的提醒：今天到期 / 7 天内到期 / 到期没存 / 已存没到账 / 已到账没报回款 */
 export type ChequeAlert = 'due_today' | 'due_week' | 'overdue' | 'deposited' | 'unreported'
 export const CHEQUE_ALERTS: ChequeAlert[] = ['due_today', 'due_week', 'overdue', 'deposited', 'unreported']
