@@ -7,6 +7,7 @@ import ReceiptEditor from '../components/ReceiptEditor'
 import SubmissionList from '../components/SubmissionList'
 import { RECEIPT_STATUS_LABEL, receiptStatus, useFlow } from '../lib/flow'
 import type { ReceiptStatus } from '../lib/flow'
+import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money, todayAccra, usd } from '../lib/format'
 import { tr, useT } from '../lib/i18n'
 import { accountOptions, useRefData } from '../lib/refdata'
@@ -37,6 +38,8 @@ function ReceiptList() {
   const [bankStatus, setBankStatus] = useState<string | undefined>()
   const [q, setQ] = useState('')
   const [editor, setEditor] = useState<{ open: boolean; id: number | null }>({ open: false, id: null })
+  /** 列头筛选后表里实际显示的行（合计按它算） */
+  const [shown, setShown] = useState<Receipt[] | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,6 +62,7 @@ function ReceiptList() {
     if (s) query = query.or(`receipt_no.ilike.%${s}%,payer_summary.ilike.%${s}%,note.ilike.%${s}%,bank_ref.ilike.%${s}%,cheque_no.ilike.%${s}%`)
     const { data } = await query
     setRows(data ?? [])
+    setShown(null)
     setLoading(false)
   }, [range, accountId, approval, claimStatus, reportStatus, bankStatus, q])
 
@@ -74,14 +78,15 @@ function ReceiptList() {
   }, [load])
 
   const columns: ColumnsType<Receipt> = [
-    { title: t('编号'), dataIndex: 'receipt_no', width: 150 },
+    { title: t('编号'), dataIndex: 'receipt_no', width: 150, ...textCol<Receipt>((r) => r.receipt_no) },
     {
       title: t('审批'),
       width: 120,
       render: (_, r) => <Tag color={rflow.stageColor(r.status, r.step)}>{rflow.stageLabel(r.status, r.step)}</Tag>,
+      ...pickCol(rows, (r) => rflow.stageLabel(r.status, r.step)),
     },
-    { title: t('到账日期'), dataIndex: 'receipt_date', width: 104 },
-    { title: t('收款账户'), dataIndex: 'account_name', width: 210, ellipsis: true },
+    { title: t('到账日期'), dataIndex: 'receipt_date', width: 104, ...textCol<Receipt>((r) => r.receipt_date) },
+    { title: t('收款账户'), dataIndex: 'account_name', width: 210, ellipsis: true, ...pickCol(rows, (r) => r.account_name) },
     {
       title: t('金额'),
       width: 150,
@@ -91,6 +96,7 @@ function ReceiptList() {
           {r.currency} {money(r.amount_orig)}
         </span>
       ),
+      ...textCol<Receipt>((r) => `${r.currency} ${money(r.amount_orig)}`),
     },
     { title: t('汇率'), dataIndex: 'fx_rate', width: 76, align: 'right', render: (v: number) => (v == 1 ? '' : Number(v)) },
     { title: 'USD', dataIndex: 'amount_usd', width: 96, align: 'right', render: (v: number) => <span className="num">{usd(v)}</span> },
@@ -103,15 +109,17 @@ function ReceiptList() {
           {r.claim_status === '部分认领' && <span className="hint">{t('剩 {amt}', { amt: money(r.pending_orig) })}</span>}
         </Space>
       ),
+      ...pickCol(rows, (r) => r.claim_status, t),
     },
-    { title: t('报款'), width: 100, render: (_, r) => reportTag(r) },
+    { title: t('报款'), width: 100, render: (_, r) => reportTag(r), ...pickCol(rows, (r) => (r.needs_correction ? '需发修改' : r.is_reported ? '已报' : '未报'), t) },
     {
       title: t('银行核对'),
       dataIndex: 'bank_status',
       width: 96,
       render: (v: string) => <Tag color={BANK_COLOR[v]}>{t(v)}</Tag>,
+      ...pickCol(rows, (r) => r.bank_status, t),
     },
-    { title: t('付款方 / 摘要'), dataIndex: 'payer_summary', ellipsis: true },
+    { title: t('付款方 / 摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<Receipt>((r) => `${r.payer_summary ?? ''} ${r.bank_ref ?? ''} ${r.cheque_no ?? ''}`) },
     {
       title: '',
       width: 36,
@@ -125,7 +133,7 @@ function ReceiptList() {
   ]
 
   // 合计只算已生效的（审批中、退回的还不算到账）
-  const total = rows.filter((r) => receiptStatus(r.status) === 'approved').reduce((s, r) => s + Number(r.amount_usd ?? 0), 0)
+  const total = (shown ?? rows).filter((r) => receiptStatus(r.status) === 'approved').reduce((s, r) => s + Number(r.amount_usd ?? 0), 0)
   const opts = (list: string[]) => list.map((x) => ({ value: x, label: t(x) }))
 
   return (
@@ -185,6 +193,7 @@ function ReceiptList() {
         pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 笔，已生效合计 {usd}', { n, usd: usd(total) }) }}
         rowClassName={() => 'clickable-row'}
         onRow={(r) => ({ onClick: () => setEditor({ open: true, id: r.id }) })}
+        onChange={(_, __, ___, extra) => setShown(extra.currentDataSource)}
       />
       <ReceiptEditor
         open={editor.open}
