@@ -1430,6 +1430,13 @@ const UI: Record<string, string> = {
   "哪几台车的": "Vehicles",
   "没选车": "No vehicle",
   "等 {n} 台": "{n} vehicles",
+  "删除选中 {n} 张": "Delete {n} selected",
+  "删除选中的 {n} 张支票？": "Delete the {n} selected cheques?",
+  "已到账的不会删。删掉的支票不能恢复，重新导入表格可以再导进来。":
+    "Cheques already matched to a receipt are kept. Deleted cheques cannot be restored, but importing the sheet again brings them back.",
+  "已删除 {n} 张支票": "{n} cheques deleted",
+  "已删除 {n} 张；{m} 张没删：{list}（已到账的要先取消和到账的关联）":
+    "{n} deleted; {m} kept: {list} (unlink the receipt first to delete a matched cheque)",
   "用途": "Purpose",
   "计划存票日期": "Planned deposit date",
   "存票日期": "Deposit date",
