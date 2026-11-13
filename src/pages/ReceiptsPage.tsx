@@ -1,9 +1,10 @@
-import { PaperClipOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { PaperClipOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { Badge, Button, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
 import ReceiptEditor from '../components/ReceiptEditor'
+import ReceiptImport from '../components/ReceiptImport'
 import SubmissionList from '../components/SubmissionList'
 import { RECEIPT_STATUS_LABEL, receiptStatus, useFlow } from '../lib/flow'
 import type { ReceiptStatus } from '../lib/flow'
@@ -41,6 +42,7 @@ function ReceiptList() {
   const [bankStatus, setBankStatus] = useState<string | undefined>()
   const [q, setQ] = useState('')
   const [editor, setEditor] = useState<{ open: boolean; id: number | null }>({ open: false, id: null })
+  const [importOpen, setImportOpen] = useState(false)
   /** 列头筛选后表里实际显示的行（合计按它算） */
   const [shown, setShown] = useState<Receipt[] | null>(null)
 
@@ -187,6 +189,11 @@ function ReceiptList() {
             {t('新建到账')}
           </Button>
         )}
+        {rxEdit && (
+          <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
+            {t('批量导入')}
+          </Button>
+        )}
       </Space>
       <Table
         rowKey="id"
@@ -206,6 +213,18 @@ function ReceiptList() {
         onClose={(changed) => {
           setEditor({ open: false, id: null })
           if (changed) void load()
+        }}
+      />
+      <ReceiptImport
+        open={importOpen}
+        onClose={(changed, dates) => {
+          setImportOpen(false)
+          if (!changed) return
+          // 导进来的日期不在现在的日期范围里：把范围放宽到包含它们，不然列表里看不见（范围没变就直接重新读）
+          const lo = dates && dayjs(dates[0]).isBefore(range[0], 'day') ? dayjs(dates[0]) : range[0]
+          const hi = dates && dayjs(dates[1]).isAfter(range[1], 'day') ? dayjs(dates[1]) : range[1]
+          if (lo !== range[0] || hi !== range[1]) setRange([lo, hi])
+          else void load()
         }}
       />
     </div>
