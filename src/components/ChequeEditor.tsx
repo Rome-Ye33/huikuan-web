@@ -2,7 +2,7 @@ import { App, Col, DatePicker, Form, Input, InputNumber, Modal, Radio, Row, Sele
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import type { Json } from '../lib/database.types'
-import { CHEQUE_PURPOSES, nextChequeNo, notifyChequesChanged } from '../lib/cheques'
+import { CHEQUE_PURPOSES, CHEQUE_STATUS_LABEL, chequeStatus, nextChequeNo, notifyChequesChanged } from '../lib/cheques'
 import type { Cheque } from '../lib/cheques'
 import { errorText } from '../lib/errors'
 import { money } from '../lib/format'
@@ -14,6 +14,16 @@ import CustomerSelect from './CustomerSelect'
 import { VehicleMultiSelect } from './VehicleSelect'
 
 // 录支票：一张，或客户一次给的一叠分期支票（填第一张的号码、张数、第一个到期日，按月生成，再逐张改）；也用来修改一张支票
+//
+// 老票转到新单（33）：这个客户同一家银行、同一个号码的票已经录过、而且还没进银行时，
+// 保存不会新建，而是把那一张改成这次录的（本来就是同一张纸）。保存前先问一句，列出是哪几张。
+
+/** 支票号比对用：只留字母数字、去掉前面的 0（和数据库 private.cheque_key 一样） */
+const chequeKey = (s: string | null) => (s ?? '').replace(/[^0-9A-Za-z]/g, '').toUpperCase().replace(/^0+/, '')
+/** 银行比对用：大写、中间空白压成一个（和数据库一样） */
+const bankKey = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim().toUpperCase()
+/** 还没进银行的，才能转到新单 */
+const REUSABLE = ['pending', 'confirming', 'cancelled']
 
 type Props = {
   open: boolean
@@ -48,7 +58,7 @@ type Line = { key: number; cheque_no: string; due_date: dayjs.Dayjs | null; amou
 
 export default function ChequeEditor({ open, cheque, onClose }: Props) {
   const t = useT()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const { salespersons, customers, chequeBanks } = useRefData()
   const [form] = Form.useForm<FormValues>()
   const [saving, setSaving] = useState(false)
@@ -194,16 +204,56 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
       message.error(t('第 {n} 张没有支票号', { n: bad + 1 }))
       return
     }
+    // 录新票时：这个客户有没有同号、还没进银行的老票？有就是「老票转到新单」，先问一句
+    if (!editing && !(await confirmReuse(rows))) return
     setSaving(true)
-    const { error } = await supabase.rpc('save_cheques', { p_rows: rows as Json })
+    const { data, error } = await supabase.rpc('save_cheques', { p_rows: rows as Json })
     setSaving(false)
     if (error) {
       message.error(errorText(error))
       return
     }
-    message.success(editing ? t('已保存') : rows.length > 1 ? t('已录入 {n} 张支票', { n: rows.length }) : t('已录入'))
+    const reused = (data as { reused?: string[] } | null)?.reused ?? []
+    const fresh = rows.length - reused.length
+    message.success(
+      editing
+        ? t('已保存')
+        : reused.length === 0
+          ? rows.length > 1
+            ? t('已录入 {n} 张支票', { n: rows.length })
+            : t('已录入')
+          : fresh > 0
+            ? t('新录 {n} 张，另外 {m} 张老票改成了这一单的', { n: fresh, m: reused.length })
+            : t('{m} 张老票改成了这一单的', { m: reused.length }),
+    )
     notifyChequesChanged()
     onClose(true)
+  }
+
+  /** 要改的老票：同客户、同银行、同号码，而且还没进银行。有就弹一句问清楚 */
+  const confirmReuse = async (rows: Record<string, Json | undefined>[]) => {
+    const customerId = rows[0]?.customer_id
+    if (!customerId) return true
+    const { data } = await supabase.from('v_cheques').select('cheque_no, drawer_bank, status').eq('customer_id', customerId as number)
+    const bank = bankKey(rows[0]?.drawer_bank as string | null)
+    const keys = new Set(rows.map((r) => chequeKey(String(r.cheque_no ?? ''))))
+    const hits = (data ?? []).filter(
+      (c) => keys.has(chequeKey(c.cheque_no)) && bankKey(c.drawer_bank) === bank && REUSABLE.includes(c.status ?? ''),
+    )
+    if (hits.length === 0) return true
+    const list = hits.map((c) => `${c.cheque_no}（${t(CHEQUE_STATUS_LABEL[chequeStatus(c.status)])}）`).join('、')
+    return await new Promise<boolean>((resolve) => {
+      modal.confirm({
+        title: t('{list} 这个客户已经录过了', { list }),
+        content: t(
+          '这几张还没进银行，保存后不会新建，而是把它们改成这次录的：车、金额、到期日、序号、备注都按这次的，状态回到待存，原来的取消原因和计划存票日期清掉。',
+        ),
+        okText: t('改成这一单的'),
+        cancelText: t('返回'),
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      })
+    })
   }
 
   const spOptions = salespersons.filter((s) => s.active || s.id === form.getFieldValue('salesperson_id')).map((s) => ({ value: s.id, label: s.name }))
