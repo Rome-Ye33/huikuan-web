@@ -13,7 +13,8 @@ import { accountOptions, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Receipt } from '../lib/supabase'
 
-// 一张支票：信息、状态操作（沟通、请业务确认、定计划、存票、退票、取消、恢复、生成到账、对上到账、取消关联、删除）、记录
+// 一张支票：信息、状态操作（定计划、存票、退票、取消、恢复、生成到账、对上到账、取消关联、删除）、记录
+// 「记一条沟通」「请业务确认」两个按钮 Rome 2026-11-13 去掉了：导表格带进来的沟通记录、等业务确认状态照旧，只是不再手工记新的。
 
 type Props = {
   open: boolean
@@ -28,7 +29,7 @@ type Props = {
   onOpenReceipt: (id: number) => void
 }
 
-type Dialog = 'note' | 'confirm' | 'plan' | 'deposit' | 'bounce' | 'cancel' | 'reopen' | 'link' | 'unlink' | null
+type Dialog = 'plan' | 'deposit' | 'bounce' | 'cancel' | 'reopen' | 'link' | 'unlink' | null
 
 type DialogValues = { note?: string; plan_date?: dayjs.Dayjs | null; deposit_date?: dayjs.Dayjs | null; deposit_account_id?: number; amount?: number | null; receipt_id?: number }
 
@@ -131,9 +132,7 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
     }
     const note = v.note?.trim() || undefined
     let ok = false
-    if (dialog === 'note') ok = await run('note', { note })
-    else if (dialog === 'confirm') ok = await run('confirm', { note })
-    else if (dialog === 'plan') ok = await run('plan', { note, plan_date: v.plan_date ? v.plan_date.format('YYYY-MM-DD') : null })
+    if (dialog === 'plan') ok = await run('plan', { note, plan_date: v.plan_date ? v.plan_date.format('YYYY-MM-DD') : null })
     else if (dialog === 'deposit')
       ok = await run('deposit', {
         note,
@@ -149,13 +148,11 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
     if (ok) {
       setDialog(null)
       message.success(
-        dialog === 'note'
-          ? t('已记下')
-          : dialog === 'deposit'
-            ? t('已记为已存。钱到了以后点“生成到账”，或在到账录入里填这个支票号，系统会自动对上')
-            : dialog === 'link'
-              ? t('已对上到账')
-              : t('已更新'),
+        dialog === 'deposit'
+          ? t('已记为已存。钱到了以后点“生成到账”，或在到账录入里填这个支票号，系统会自动对上')
+          : dialog === 'link'
+            ? t('已对上到账')
+            : t('已更新'),
       )
     }
   }
@@ -183,8 +180,6 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
   }
 
   const dialogTitle: Record<NonNullable<Dialog>, string> = {
-    note: '记一条沟通',
-    confirm: '请业务确认',
     plan: '定计划存票日期',
     deposit: '存票',
     bounce: '退票',
@@ -301,13 +296,11 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
 
           {chEdit && (
             <Space wrap style={{ marginTop: 14 }} className="cheque-actions">
-              <Button onClick={() => openDialog('note')}>{t('记一条沟通')}</Button>
               {canOpen && (
                 <Button type="primary" onClick={() => openDialog('deposit')}>
                   {t('存票')}
                 </Button>
               )}
-              {status === 'pending' && <Button onClick={() => openDialog('confirm')}>{t('请业务确认')}</Button>}
               {canOpen && <Button onClick={() => openDialog('plan')}>{t('定计划存票日期')}</Button>}
               {status === 'deposited' && rxEdit && (
                 <Button type="primary" onClick={() => onCreateReceipt(c)}>
@@ -321,12 +314,9 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
                 </Button>
               )}
               {status === 'bounced' && (
-                <>
-                  <Button type="primary" onClick={() => openDialog('deposit')}>
-                    {t('再存')}
-                  </Button>
-                  <Button onClick={() => openDialog('confirm')}>{t('请业务确认')}</Button>
-                </>
+                <Button type="primary" onClick={() => openDialog('deposit')}>
+                  {t('再存')}
+                </Button>
               )}
               {status === 'cleared' && <Button onClick={() => openDialog('unlink')}>{t('取消和到账的关联')}</Button>}
               {(canOpen || status === 'deposited' || status === 'bounced') && (
@@ -403,9 +393,9 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
           {dialog !== 'link' && (
             <Form.Item
               name="note"
-              label={dialog === 'bounce' ? t('退票原因') : dialog === 'cancel' ? t('取消原因') : dialog === 'note' ? t('沟通内容') : t('说明（可不写）')}
-              rules={dialog === 'bounce' || dialog === 'cancel' || dialog === 'note' ? [{ required: true, message: t('请写一下') }] : []}
-              extra={dialog === 'cancel' ? t('比如：客户转账了、客户付现金拿走支票、已结清、写错换新票') : dialog === 'confirm' ? t('比如：问业务员这张能不能存、客户账上有没有钱') : undefined}
+              label={dialog === 'bounce' ? t('退票原因') : dialog === 'cancel' ? t('取消原因') : t('说明（可不写）')}
+              rules={dialog === 'bounce' || dialog === 'cancel' ? [{ required: true, message: t('请写一下') }] : []}
+              extra={dialog === 'cancel' ? t('比如：客户转账了、客户付现金拿走支票、已结清、写错换新票') : undefined}
             >
               <Input.TextArea rows={3} maxLength={500} />
             </Form.Item>
