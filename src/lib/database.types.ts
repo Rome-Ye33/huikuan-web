@@ -602,6 +602,7 @@ export type Database = {
           paid_on: string | null
           payments: Json
           payout_ratio: number | null
+          payout_rate: number | null
           per_term_usd: number | null
           prepared_at: string | null
           prepared_by: string | null
@@ -652,6 +653,7 @@ export type Database = {
           paid_on?: string | null
           payments?: Json
           payout_ratio?: number | null
+          payout_rate?: number | null
           per_term_usd?: number | null
           prepared_at?: string | null
           prepared_by?: string | null
@@ -702,6 +704,7 @@ export type Database = {
           paid_on?: string | null
           payments?: Json
           payout_ratio?: number | null
+          payout_rate?: number | null
           per_term_usd?: number | null
           prepared_at?: string | null
           prepared_by?: string | null
@@ -1559,6 +1562,8 @@ export type Database = {
           paid_on: string | null
           paid_usd: number | null
           payments: Json | null
+          payout_ghs: number | null
+          payout_rate: number | null
           payout_ratio: number | null
           payout_usd: number | null
           per_term_usd: number | null

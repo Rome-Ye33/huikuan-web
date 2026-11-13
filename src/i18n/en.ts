@@ -1272,6 +1272,13 @@ const UI: Record<string, string> = {
   "本次发放比例": "Payout ratio",
   "按公司规定": "Per company policy",
   "本次发放提成合计": "Total payout",
+  "转赛地汇率": "USD to GHS rate",
+  "1 美元 = ? 赛地": "1 USD = ? GHS",
+  "1 美元 = ? 赛地。默认取基础资料里当天的汇率，不填就只印美元":
+    "How many cedis one US dollar buys. Defaults to the day's rate in Master data; leave it empty to show US dollars only.",
+  "折合赛地": "In cedis",
+  "有人要美元、有人要赛地，打印的单子上两个金额都印，汇率按 1 美元 = {rate} 赛地":
+    "Some want US dollars and some want cedis, so the printed voucher shows both, at 1 USD = {rate} GHS.",
   "第 {n} 笔付款：本单金额要大于 0，且不超过这笔付款的金额": "Payment {n}: the amount for this voucher must be above 0 and not more than the payment",
   "请至少选一台车（大架号必填）": "Choose at least one vehicle (VIN required)",
   "请勾选客户的付款": "Tick the customer's payments",
