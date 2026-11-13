@@ -46,7 +46,7 @@ import type { Json } from '../lib/database.types'
 import { errorText } from '../lib/errors'
 import { dateTime, money, num, round2, todayAccra } from '../lib/format'
 import { useT } from '../lib/i18n'
-import { useRefData } from '../lib/refdata'
+import { lookupRate, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Claim, Vehicle } from '../lib/supabase'
 import ApprovalTrail from './ApprovalTrail'
@@ -81,6 +81,8 @@ type Head = {
   commission_usd: number | null
   /** 本次发放比例，界面上用百分数 */
   payout_pct: number | null
+  /** 美元转赛地汇率（1 美元 = ? 赛地）：有人要美元、有人要赛地，打印时两个金额都印 */
+  payout_rate: number | null
   remarks: string
 }
 
@@ -89,14 +91,15 @@ type PayRow = { claim_id: number; share_usd: number | null; note: string }
 type Sel = { veh: VehRow[]; pay: PayRow[] }
 /** 同一个客户的其他提成单（提示重复算） */
 type Other = { id: number; no: string; status: string | null; step: string | null; vehicleIds: Set<number>; shares: Map<number, number> }
-type Touched = { qty: boolean; discount: boolean; terms: boolean; ratio: boolean }
+type Touched = { qty: boolean; discount: boolean; terms: boolean; ratio: boolean; rate: boolean }
 
 const EMPTY_SEL: Sel = { veh: [], pay: [] }
-const ALL_TOUCHED: Touched = { qty: true, discount: true, terms: true, ratio: true }
-const NONE_TOUCHED: Touched = { qty: false, discount: false, terms: false, ratio: false }
+const ALL_TOUCHED: Touched = { qty: true, discount: true, terms: true, ratio: true, rate: true }
+const NONE_TOUCHED: Touched = { qty: false, discount: false, terms: false, ratio: false, rate: false }
 
 const optNum = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : num(v))
 const usd2 = (v: unknown): string => (v === null || v === undefined || v === '' ? '' : '$ ' + money(v))
+const ghs2 = (v: unknown): string => (v === null || v === undefined || v === '' ? '' : 'GH₵ ' + money(v))
 const isPayKind = (c: Claim) => c.nature_kind === 'payment' || c.nature_kind === 'opening'
 
 function newHead(spId: number | null, dept: string): Head {
@@ -115,6 +118,7 @@ function newHead(spId: number | null, dept: string): Head {
     per_term_usd: null,
     commission_usd: null,
     payout_pct: 100,
+    payout_rate: null,
     remarks: '',
   }
 }
@@ -135,6 +139,7 @@ function headFrom(v: CommissionVoucher): Head {
     per_term_usd: optNum(v.per_term_usd),
     commission_usd: optNum(v.commission_usd),
     payout_pct: v.payout_ratio != null ? round2(num(v.payout_ratio) * 100) : null,
+    payout_rate: optNum(v.payout_rate),
     remarks: v.remarks ?? '',
   }
 }
@@ -233,7 +238,8 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
         pay: parsePayments(data.payments).map((p) => ({ claim_id: p.claim_id, share_usd: p.share_usd, note: p.note ?? '' })),
       })
       setAtts(data.attachments ?? [])
-      touched.current = { ...ALL_TOUCHED }
+      // 没填过汇率的老单子，下面的 effect 会带出基础资料里的汇率
+      touched.current = { ...ALL_TOUCHED, rate: data.payout_rate != null }
       noticePrune.current = true
       setDropped(null)
       setDirty(false)
@@ -266,6 +272,19 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     noticePrune.current = false
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在打开时取一次语言
   }, [open, voucherId, loadVoucher, cvEdit, mySp])
+
+  // 转赛地的汇率：自己没填过就取基础资料里单据日期（或之前最近一天）的汇率
+  const vdate = head.voucher_date.format('YYYY-MM-DD')
+  useEffect(() => {
+    if (!open || touched.current.rate) return
+    let alive = true
+    void lookupRate('GHS', vdate).then((r) => {
+      if (alive && r != null && !touched.current.rate) setHead((h) => ({ ...h, payout_rate: r }))
+    })
+    return () => {
+      alive = false
+    }
+  }, [open, vdate])
 
   // 同一个客户的其他提成单：同一台车、同一笔付款算进了几张单
   useEffect(() => {
@@ -409,6 +428,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       payments: sel.pay.map((p) => ({ share_usd: num(p.share_usd), nature: claimById.get(p.claim_id)?.nature ?? null })),
       commission: head.commission_usd,
       payoutRatio: head.payout_pct == null ? null : head.payout_pct / 100,
+      payoutRate: head.payout_rate,
     })
   }, [editable, voucher, sel, ledgerById, claimById, head])
 
@@ -529,6 +549,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     per_term_usd: head.full_payment ? null : head.per_term_usd,
     commission_usd: head.commission_usd,
     payout_ratio: head.payout_pct == null ? null : Math.round(head.payout_pct * 100) / 10000,
+    payout_rate: head.payout_rate,
     remarks: head.remarks,
     vehicles: sel.veh.map((r) => ({ vehicle_id: r.vehicle_id, note: r.note })),
     payments: sel.pay.map((p) => ({ claim_id: p.claim_id, share_usd: p.share_usd, note: p.note })),
@@ -1300,7 +1321,19 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
                   />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={12}>
+              <Col xs={12} md={6}>
+                <Form.Item label={t('转赛地汇率')} tooltip={t('1 美元 = ? 赛地。默认取基础资料里当天的汇率，不填就只印美元')}>
+                  <InputNumber
+                    min={0.0001}
+                    precision={4}
+                    style={{ width: '100%' }}
+                    placeholder={t('1 美元 = ? 赛地')}
+                    value={head.payout_rate}
+                    onChange={(x) => edit({ payout_rate: x == null ? null : Number(x) }, 'rate')}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
                 <Form.Item label={t('备注')}>
                   <Input value={head.remarks} onChange={(e) => edit({ remarks: e.target.value })} />
                 </Form.Item>
@@ -1309,7 +1342,16 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
           </Form>
           <Typography.Text strong>
             {t('本次发放提成合计')}：<span className="num">{totals.payout == null ? '—' : usd2(totals.payout)}</span>
+            {totals.payoutGhs != null && (
+              <>
+                <span style={{ margin: '0 6px' }}>·</span>
+                {t('折合赛地')}：<span className="num">{ghs2(totals.payoutGhs)}</span>
+              </>
+            )}
           </Typography.Text>
+          {totals.payoutGhs != null && (
+            <div className="hint">{t('有人要美元、有人要赛地，打印的单子上两个金额都印，汇率按 1 美元 = {rate} 赛地', { rate: totals.payoutRate ?? 0 })}</div>
+          )}
         </Card>
         <Card size="small" title={t('附件')} className="cv-attachments" style={{ marginTop: 12 }}>
           <Vouchers
@@ -1369,6 +1411,12 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       >
         <Typography.Paragraph>
           {t('本次发放提成合计')}：<b className="num">{usd2(totals.payout)}</b>
+          {totals.payoutGhs != null && (
+            <>
+              <span style={{ margin: '0 6px' }}>·</span>
+              <b className="num">{ghs2(totals.payoutGhs)}</b>
+            </>
+          )}
         </Typography.Paragraph>
         <div className="field-label">{t('发放日期')}</div>
         <DatePicker value={payDate} allowClear={false} onChange={(d) => d && setPayDate(d)} style={{ width: '100%' }} />

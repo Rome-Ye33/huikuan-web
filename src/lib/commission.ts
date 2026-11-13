@@ -153,6 +153,10 @@ export type VoucherTotals = {
   termsLeft: number | null
   state: PayState
   payout: number | null
+  /** 美元转赛地的汇率（1 美元 = ? 赛地），没填为 null */
+  payoutRate: number | null
+  /** 本次发放提成折合赛地，没填汇率为 null */
+  payoutGhs: number | null
 }
 
 type TotalsInput = {
@@ -167,6 +171,8 @@ type TotalsInput = {
   commission: number | null | undefined
   /** 0–1 */
   payoutRatio: number | null | undefined
+  /** 美元转赛地汇率（1 美元 = ? 赛地），不填就不换算 */
+  payoutRate?: number | null
 }
 
 /** 余额差 1 美元以内算付清（系统里美元保留两位小数，模板是四舍五入到整数） */
@@ -200,6 +206,8 @@ export function voucherTotals(i: TotalsInput): VoucherTotals {
   else state = { kind: 'terms', paid: termsPaid, total: terms }
 
   const ratio = i.payoutRatio
+  const payout = i.commission != null && ratio != null ? round2(num(i.commission) * num(ratio)) : null
+  const rate = num(i.payoutRate) > 0 ? num(i.payoutRate) : null
   return {
     units: i.vehiclePrices.length,
     vehiclesUsd,
@@ -210,7 +218,9 @@ export function voucherTotals(i: TotalsInput): VoucherTotals {
     termsPaid,
     termsLeft: termsPaid === null ? null : terms - termsPaid,
     state,
-    payout: i.commission != null && ratio != null ? round2(num(i.commission) * num(ratio)) : null,
+    payout,
+    payoutRate: rate,
+    payoutGhs: payout != null && rate != null ? round2(payout * rate) : null,
   }
 }
 
@@ -227,6 +237,7 @@ export function savedTotals(v: CommissionVoucher): VoucherTotals {
     payments: parsePayments(v.payments),
     commission: v.commission_usd,
     payoutRatio: v.payout_ratio,
+    payoutRate: v.payout_rate,
   })
 }
 
