@@ -20,6 +20,8 @@ import type { ApprovalLog } from '../lib/workbench'
 
 // 打印的提成单：照 Excel 模板（提成单模板 Commission Voucher Template）的版式，中英文都印，A4 竖版。
 // 发的提成有人要美元、有人要赛地，所以填了汇率的单子在合计下面多印一行汇率和折合赛地（没填的照旧只印美元）。
+// 一张单上可以混着结清和没结清的车（Rome 2026-11-13），所以车辆那一栏印每台车现在的“已到账 / 余额”：
+// 这个数来自车辆台账（这台车收到的所有钱），不是这张单勾的那几笔，所以和下面“客户已支付金额合计”不一定对得上。
 // 内容是提交时存下的车和付款，审批后再改到账也不会变。签名栏是这张单走的审批流（提交时记下的；草稿是现在的审批流）。
 // 签名栏下面是“审批过程”（Rome 2026-11-12：打印上要体现审批的过程）：approval_logs 里这张单的每一步，
 // 谁、什么时候、做了什么（提交、哪一级通过、退回和原因、重新提交、撤回、发放），按时间先后。还没提交过的草稿没有这一栏。
@@ -40,7 +42,16 @@ function amt(v: unknown): string {
   return v === null || v === undefined || v === '' || num(v) === 0 ? '' : money(v)
 }
 
-export default function CommissionSheet({ v, trail = [] }: { v: CommissionVoucher; trail?: ApprovalLog[] }) {
+export default function CommissionSheet({
+  v,
+  trail = [],
+  ledger,
+}: {
+  v: CommissionVoucher
+  trail?: ApprovalLog[]
+  /** 每台车现在的到账情况（车辆台账里的数，不是这张单上的）：结清了没有、还差多少 */
+  ledger?: Map<number, { received: number; balance: number }>
+}) {
   const vehicles = parseVehicles(v.vehicles)
   const payments = parsePayments(v.payments)
   const tt = savedTotals(v)
@@ -135,7 +146,7 @@ export default function CommissionSheet({ v, trail = [] }: { v: CommissionVouche
               <br />
               NO.
             </th>
-            <th colSpan={3}>
+            <th colSpan={2}>
               大架号
               <br />
               CHASSIS NO.
@@ -151,22 +162,39 @@ export default function CommissionSheet({ v, trail = [] }: { v: CommissionVouche
               UNIT PRICE (USD)
             </th>
             <th>
+              本车已到账 / 余额
+              <br />
+              PAID / BALANCE
+            </th>
+            <th>
               备注
               <br />
               NOTE
             </th>
           </tr>
-          {vehicles.map((x, i) => (
-            <tr key={x.vehicle_id}>
-              <td className="c">{i + 1}</td>
-              <td colSpan={3} className="cv-vin">
-                {x.vin}
-              </td>
-              <td colSpan={2}>{x.model}</td>
-              <td className="r">{money(x.unit_price_usd)}</td>
-              <td>{[bi(x.payment_method), x.note].filter(Boolean).join('; ')}</td>
-            </tr>
-          ))}
+          {vehicles.map((x, i) => {
+            const paid = ledger?.get(x.vehicle_id)
+            return (
+              <tr key={x.vehicle_id}>
+                <td className="c">{i + 1}</td>
+                <td colSpan={2} className="cv-vin">
+                  {x.vin}
+                </td>
+                <td colSpan={2}>{x.model}</td>
+                <td className="r">{money(x.unit_price_usd)}</td>
+                <td className="r">
+                  {paid && (
+                    <>
+                      {money(paid.received)}
+                      <br />
+                      <span className="cv-trail-en">{paid.balance < 1 ? '已结清 PAID OFF' : `还差 ${money(paid.balance)}`}</span>
+                    </>
+                  )}
+                </td>
+                <td>{[bi(x.payment_method), x.note].filter(Boolean).join('; ')}</td>
+              </tr>
+            )
+          })}
           <tr>
             <th>
               台数合计
@@ -174,9 +202,9 @@ export default function CommissionSheet({ v, trail = [] }: { v: CommissionVouche
               TOTAL UNITS
             </th>
             <td className="c b">{tt.units}</td>
-            <th colSpan={4}>车辆合计&nbsp;&nbsp;VEHICLES TOTAL (USD)</th>
+            <th colSpan={3}>车辆合计&nbsp;&nbsp;VEHICLES TOTAL (USD)</th>
             <td className="r b">{money(tt.vehiclesUsd)}</td>
-            <td />
+            <td colSpan={2} />
           </tr>
 
           <tr>
