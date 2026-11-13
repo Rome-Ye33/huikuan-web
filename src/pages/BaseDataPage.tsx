@@ -1,11 +1,19 @@
-import { PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { App, Button, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag } from 'antd'
+import type { Key } from 'react'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
+import MasterImport from '../components/MasterImport'
+import type { ParseResult } from '../components/MasterImport'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { todayAccra } from '../lib/format'
+import { deleteByIds, findInUse, setActive } from '../lib/masterDelete'
+import type { MasterKind } from '../lib/masterDelete'
+import { normKey, parseBool } from '../lib/masterImport'
+import type { MField, MRow } from '../lib/masterImport'
 import { useRefData } from '../lib/refdata'
+import { parseAmount, parseDate } from '../lib/statement'
 import { supabase } from '../lib/supabase'
 import type { Account, Customer, FxRate, Salesperson } from '../lib/supabase'
 import { useT } from '../lib/i18n'
@@ -31,18 +39,114 @@ export default function BaseDataPage() {
   )
 }
 
+const CHUNK = 200
+async function insertChunks<T extends object>(table: 'customers' | 'salespersons' | 'bank_accounts', rows: T[]) {
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const { error } = await supabase.from(table).insert(rows.slice(i, i + CHUNK) as never)
+    if (error) throw error
+  }
+}
+
+/** 勾选后的批量操作：先查还被谁用着（删不掉的列出原因），其余删掉；业务员、账户还能批量停用 / 启用（Rome 2026-11-11） */
+function useBulk(kind: MasterKind, nameOf: (id: number) => string, after: () => Promise<void>) {
+  const t = useT()
+  const { message } = App.useApp()
+  const [sel, setSel] = useState<number[]>([])
+  const [busy, setBusy] = useState(false)
+
+  const remove = async () => {
+    setBusy(true)
+    try {
+      const used = await findInUse(kind, sel)
+      const ok = sel.filter((id) => !used.has(id))
+      const n = ok.length ? await deleteByIds(kind, ok) : 0
+      if (used.size) {
+        const list = [...used.entries()].slice(0, 10).map(([id, why]) => `${nameOf(id)}（${t(why)}）`).join('、') + (used.size > 10 ? '…' : '')
+        message.warning(t('已删除 {n} 条；{m} 条没删：{list}', { n, m: used.size, list }), 8)
+      } else {
+        message.success(t('已删除 {n} 条', { n }))
+      }
+    } catch (e) {
+      message.error(errorText(e))
+    } finally {
+      setBusy(false)
+      setSel([])
+      await after()
+    }
+  }
+
+  const activate = async (active: boolean) => {
+    if (kind === 'customers') return
+    setBusy(true)
+    try {
+      const n = await setActive(kind, sel, active)
+      message.success(active ? t('已启用 {n} 条', { n }) : t('已停用 {n} 条', { n }))
+    } catch (e) {
+      message.error(errorText(e))
+    } finally {
+      setBusy(false)
+      setSel([])
+      await after()
+    }
+  }
+
+  const rowSelection = {
+    selectedRowKeys: sel,
+    onChange: (keys: Key[]) => setSel(keys as number[]),
+    selections: [Table.SELECTION_ALL, Table.SELECTION_NONE],
+    columnWidth: 40,
+  }
+  return { sel, busy, remove, activate, rowSelection }
+}
+
+function BulkBar({ count, busy, onDelete, onActive }: { count: number; busy: boolean; onDelete: () => void; onActive?: (active: boolean) => void }) {
+  const t = useT()
+  if (!count) return null
+  return (
+    <>
+      <Popconfirm title={t('删除选中的 {n} 条？还被车辆、到账等记录用着的不会删。', { n: count })} okButtonProps={{ danger: true }} onConfirm={onDelete}>
+        <Button danger icon={<DeleteOutlined />} loading={busy}>
+          {t('删除选中 {n} 条', { n: count })}
+        </Button>
+      </Popconfirm>
+      {onActive && (
+        <Button disabled={busy} onClick={() => onActive(false)}>
+          {t('停用选中')}
+        </Button>
+      )}
+      {onActive && (
+        <Button disabled={busy} onClick={() => onActive(true)}>
+          {t('启用选中')}
+        </Button>
+      )}
+    </>
+  )
+}
+
 // ---------------------------------------------------------------------------
+type FxIn = { rate_date: string; currency: string; rate: number; source: string | null }
+const FX_FIELDS: MField[] = [
+  { key: 'rate_date', label: '日期', required: true, alias: /date/ },
+  { key: 'currency', label: '币种', alias: /curr/ },
+  { key: 'rate', label: '汇率', required: true, alias: /rate/ },
+  { key: 'source', label: '来源', alias: /source/ },
+]
+
 function FxRates() {
   const t = useT()
   const { isAdmin } = useAuth()
   const { message } = App.useApp()
   const [rows, setRows] = useState<FxRate[]>([])
   const [open, setOpen] = useState(false)
+  const [imp, setImp] = useState(false)
+  const [sel, setSel] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
   const [form] = Form.useForm<{ rate_date: dayjs.Dayjs; currency: string; rate: number; source?: string }>()
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('fx_rates').select('*').order('rate_date', { ascending: false }).limit(300)
     setRows(data ?? [])
+    setSel([])
   }, [])
   useEffect(() => {
     void load()
@@ -65,6 +169,44 @@ function FxRates() {
     else void load()
   }
 
+  // 汇率没有别的记录引用，直接按（日期, 币种）删
+  const removeSelected = async () => {
+    setBusy(true)
+    try {
+      let n = 0
+      for (let i = 0; i < sel.length; i += 100) {
+        const cond = sel
+          .slice(i, i + 100)
+          .map((k) => {
+            const [d, c] = k.split('|')
+            return `and(rate_date.eq.${d},currency.eq.${c})`
+          })
+          .join(',')
+        const { data, error } = await supabase.from('fx_rates').delete().or(cond).select('rate_date')
+        if (error) throw error
+        n += data?.length ?? 0
+      }
+      message.success(t('已删除 {n} 条', { n }))
+    } catch (e) {
+      message.error(errorText(e))
+    } finally {
+      setBusy(false)
+      await load()
+    }
+  }
+
+  const keyOf = (r: { rate_date: string; currency: string }) => `${r.rate_date}|${r.currency}`
+  const existing = new Set(rows.map(keyOf))
+  const parseFx = (cells: MRow, raw: Record<string, unknown>): ParseResult<FxIn> => {
+    const d = parseDate(raw.rate_date, 'YYYY-MM-DD')
+    if (!d) return { issue: t('日期认不出') }
+    const cur = (cells.currency || 'GHS').toUpperCase()
+    if (!/^[A-Z]{3}$/.test(cur) || cur === 'USD') return { issue: t('币种要是 3 个字母，如 GHS（不能是 USD）') }
+    const rate = parseAmount(raw.rate)
+    if (rate == null || rate <= 0) return { issue: t('汇率要是大于 0 的数字') }
+    return { key: `${d}|${cur}`, data: { rate_date: d, currency: cur, rate, source: cells.source || null } }
+  }
+
   return (
     <div>
       <Space wrap style={{ marginBottom: 8 }}>
@@ -79,13 +221,24 @@ function FxRates() {
         >
           {t('录汇率')}
         </Button>
+        <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+          {t('批量导入')}
+        </Button>
+        {isAdmin && sel.length > 0 && (
+          <Popconfirm title={t('删除选中的 {n} 条汇率？', { n: sel.length })} okButtonProps={{ danger: true }} onConfirm={() => void removeSelected()}>
+            <Button danger icon={<DeleteOutlined />} loading={busy}>
+              {t('删除选中 {n} 条', { n: sel.length })}
+            </Button>
+          </Popconfirm>
+        )}
         <span className="hint">{t('录到账时，没有约定汇率就自动取这里当天（或之前最近一天）的汇率。1 美元 = ? 原币。')}</span>
       </Space>
       <Table
-        rowKey={(r) => `${r.rate_date}-${r.currency}`}
+        rowKey={keyOf}
         size="small"
         dataSource={rows}
         pagination={{ defaultPageSize: 30 }}
+        rowSelection={isAdmin ? { selectedRowKeys: sel, onChange: (k) => setSel(k as string[]), selections: [Table.SELECTION_ALL, Table.SELECTION_NONE], columnWidth: 40 } : undefined}
         columns={[
           { title: t('日期'), dataIndex: 'rate_date', width: 120 },
           { title: t('币种'), dataIndex: 'currency', width: 80 },
@@ -130,11 +283,40 @@ function FxRates() {
           </Form.Item>
         </Form>
       </Modal>
+      <MasterImport<FxIn>
+        open={imp}
+        title={t('批量导入汇率')}
+        fields={FX_FIELDS}
+        example={['2026-11-01', 'GHS', '12.5', t('公司约定汇率')]}
+        parse={parseFx}
+        exists={(k) => existing.has(k)}
+        existing="update"
+        save={async (list) => {
+          for (let i = 0; i < list.length; i += CHUNK) {
+            const { error } = await supabase.from('fx_rates').upsert(list.slice(i, i + CHUNK))
+            if (error) throw error
+          }
+        }}
+        onClose={(changed) => {
+          setImp(false)
+          if (changed) void load()
+        }}
+      />
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
+type CustomerIn = { name: string; salesperson_id: number | null; phone: string | null; country: string | null; crm_id: string | null; note: string | null }
+const CUSTOMER_FIELDS: MField[] = [
+  { key: 'name', label: '客户名称', required: true, alias: /^(客户|customer|name)$/ },
+  { key: 'salesperson', label: '业务员', alias: /sales/ },
+  { key: 'phone', label: '电话', alias: /tel|mobile/ },
+  { key: 'country', label: '国家' },
+  { key: 'crm_id', label: 'CRM 编号', alias: /crm/ },
+  { key: 'note', label: '备注', alias: /remark/ },
+]
+
 function Customers() {
   const t = useT()
   const { isAdmin } = useAuth()
@@ -142,8 +324,10 @@ function Customers() {
   const { message } = App.useApp()
   const [q, setQ] = useState('')
   const [edit, setEdit] = useState<Customer | null | 'new'>(null)
+  const [imp, setImp] = useState(false)
   const [form] = Form.useForm<{ name: string; salesperson_id?: number | null; phone?: string; country?: string; crm_id?: string; note?: string }>()
   const spName = new Map(salespersons.map((s) => [s.id, s.name]))
+  const bulk = useBulk('customers', (id) => customers.find((c) => c.id === id)?.name ?? String(id), reload)
 
   const openEdit = (c: Customer | 'new') => {
     form.resetFields()
@@ -175,6 +359,18 @@ function Customers() {
     else void reload()
   }
 
+  const existing = new Set(customers.map((c) => normKey(c.name)))
+  const parseCustomer = (c: MRow): ParseResult<CustomerIn> => {
+    if (!c.name) return { issue: t('{label}不能为空', { label: t('客户名称') }) }
+    let spId: number | null = null
+    if (c.salesperson) {
+      const sp = salespersons.find((s) => normKey(s.name) === normKey(c.salesperson))
+      if (!sp) return { issue: t('业务员系统里没有：{name}', { name: c.salesperson }) }
+      spId = sp.id
+    }
+    return { key: normKey(c.name), data: { name: c.name, salesperson_id: spId, phone: c.phone || null, country: c.country || 'Ghana', crm_id: c.crm_id || null, note: c.note || null } }
+  }
+
   const list = customers.filter((c) => !q || c.name.toLowerCase().includes(q.toLowerCase()))
   return (
     <div>
@@ -183,12 +379,17 @@ function Customers() {
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
           {t('新增客户')}
         </Button>
+        <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+          {t('批量导入')}
+        </Button>
+        {isAdmin && <BulkBar count={bulk.sel.length} busy={bulk.busy} onDelete={() => void bulk.remove()} />}
       </Space>
       <Table
         rowKey="id"
         size="small"
         dataSource={list}
         pagination={{ defaultPageSize: 30 }}
+        rowSelection={isAdmin ? bulk.rowSelection : undefined}
         columns={[
           { title: t('客户名称'), dataIndex: 'name' },
           { title: t('业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
@@ -232,18 +433,39 @@ function Customers() {
           </Form.Item>
         </Form>
       </Modal>
+      <MasterImport<CustomerIn>
+        open={imp}
+        title={t('批量导入客户')}
+        fields={CUSTOMER_FIELDS}
+        example={['PEAK STEEL GHANA LTD', 'Ibrahim kumasi', '0244000000', 'Ghana', '', '']}
+        parse={parseCustomer}
+        exists={(k) => existing.has(k)}
+        save={(list) => insertChunks('customers', list)}
+        onClose={(changed) => {
+          setImp(false)
+          if (changed) void reload()
+        }}
+      />
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
+type SalespersonIn = { name: string; active: boolean }
+const SP_FIELDS: MField[] = [
+  { key: 'name', label: '名字', required: true, alias: /^(业务员|salesperson|name)$/ },
+  { key: 'active', label: '在职', alias: /active|status|状态/ },
+]
+
 function Salespersons() {
   const t = useT()
   const { isAdmin } = useAuth()
   const { salespersons, reload } = useRefData()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<Salesperson | null | 'new'>(null)
+  const [imp, setImp] = useState(false)
   const [form] = Form.useForm<{ name: string; active: boolean }>()
+  const bulk = useBulk('salespersons', (id) => salespersons.find((s) => s.id === id)?.name ?? String(id), reload)
 
   const save = async () => {
     const v = await form.validateFields()
@@ -255,27 +477,41 @@ function Salespersons() {
     void reload()
   }
 
+  const existing = new Set(salespersons.map((s) => normKey(s.name)))
+  const parseSp = (c: MRow): ParseResult<SalespersonIn> => {
+    if (!c.name) return { issue: t('{label}不能为空', { label: t('名字') }) }
+    const active = parseBool(c.active ?? '', true)
+    if (active == null) return { issue: t('在职只能填 是 或 否') }
+    return { key: normKey(c.name), data: { name: c.name, active } }
+  }
+
   return (
     <div>
       {isAdmin && (
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          style={{ marginBottom: 8 }}
-          onClick={() => {
-            form.resetFields()
-            form.setFieldsValue({ active: true })
-            setEdit('new')
-          }}
-        >
-          {t('新增业务员')}
-        </Button>
+        <Space wrap style={{ marginBottom: 8 }}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              form.resetFields()
+              form.setFieldsValue({ active: true })
+              setEdit('new')
+            }}
+          >
+            {t('新增业务员')}
+          </Button>
+          <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+            {t('批量导入')}
+          </Button>
+          <BulkBar count={bulk.sel.length} busy={bulk.busy} onDelete={() => void bulk.remove()} onActive={(a) => void bulk.activate(a)} />
+        </Space>
       )}
       <Table
         rowKey="id"
         size="small"
         dataSource={salespersons}
         pagination={false}
+        rowSelection={isAdmin ? bulk.rowSelection : undefined}
         columns={[
           { title: t('名字（报款署名）'), dataIndex: 'name' },
           { title: t('状态'), dataIndex: 'active', width: 80, render: (v: boolean) => (v ? <Tag color="green">{t('在职')}</Tag> : <Tag>{t('停用')}</Tag>) },
@@ -309,17 +545,44 @@ function Salespersons() {
           </Form.Item>
         </Form>
       </Modal>
+      <MasterImport<SalespersonIn>
+        open={imp}
+        title={t('批量导入业务员')}
+        fields={SP_FIELDS}
+        example={['Ibrahim kumasi', t('是')]}
+        parse={parseSp}
+        exists={(k) => existing.has(k)}
+        save={(list) => insertChunks('salespersons', list)}
+        onClose={(changed) => {
+          setImp(false)
+          if (changed) void reload()
+        }}
+      />
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
+type AccountIn = { short_name: string; list_name: string | null; company: string | null; bank: string | null; currency: string; last4: string | null; kind: string; active: boolean }
+const ACCOUNT_FIELDS: MField[] = [
+  { key: 'short_name', label: '报款简称', required: true, alias: /^(简称|账户|account|name)$/ },
+  { key: 'list_name', label: '清单写法', alias: /list/ },
+  { key: 'company', label: '公司' },
+  { key: 'bank', label: '银行' },
+  { key: 'currency', label: '币种', required: true, alias: /curr/ },
+  { key: 'last4', label: '尾号', alias: /last/ },
+  { key: 'kind', label: '类型', alias: /kind|type/ },
+  { key: 'active', label: '在用', alias: /active|status|状态/ },
+]
+const KIND_WORDS: Record<string, string> = { bank: 'bank', 银行: 'bank', momo: 'momo', cash: 'cash', 现金: 'cash' }
+
 function Accounts() {
   const t = useT()
   const { isAdmin } = useAuth()
   const { accounts, reload } = useRefData()
   const { message } = App.useApp()
   const [edit, setEdit] = useState<Account | null | 'new'>(null)
+  const [imp, setImp] = useState(false)
   const [form] = Form.useForm<{
     short_name: string
     list_name?: string
@@ -330,6 +593,7 @@ function Accounts() {
     kind: string
     active: boolean
   }>()
+  const bulk = useBulk('bank_accounts', (id) => accounts.find((a) => a.id === id)?.short_name ?? String(id), reload)
 
   const save = async () => {
     const v = await form.validateFields()
@@ -350,21 +614,41 @@ function Accounts() {
     void reload()
   }
 
+  const existing = new Set(accounts.map((a) => normKey(a.short_name)))
+  const parseAccount = (c: MRow): ParseResult<AccountIn> => {
+    if (!c.short_name) return { issue: t('{label}不能为空', { label: t('报款简称') }) }
+    const currency = c.currency.toUpperCase()
+    if (!/^[A-Z]{3}$/.test(currency)) return { issue: t('币种要是 3 个字母，如 GHS、USD') }
+    const kind = KIND_WORDS[normKey(c.kind || 'bank')]
+    if (!kind) return { issue: t('类型只能填 银行、momo、现金') }
+    const active = parseBool(c.active ?? '', true)
+    if (active == null) return { issue: t('在用只能填 是 或 否') }
+    return {
+      key: normKey(c.short_name),
+      data: { short_name: c.short_name, list_name: c.list_name || null, company: c.company || null, bank: c.bank || null, currency, last4: c.last4 || null, kind, active },
+    }
+  }
+
   return (
     <div>
       {isAdmin && (
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          style={{ marginBottom: 8 }}
-          onClick={() => {
-            form.resetFields()
-            form.setFieldsValue({ currency: 'GHS', kind: 'bank', active: true })
-            setEdit('new')
-          }}
-        >
-          {t('新增账户')}
-        </Button>
+        <Space wrap style={{ marginBottom: 8 }}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              form.resetFields()
+              form.setFieldsValue({ currency: 'GHS', kind: 'bank', active: true })
+              setEdit('new')
+            }}
+          >
+            {t('新增账户')}
+          </Button>
+          <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+            {t('批量导入')}
+          </Button>
+          <BulkBar count={bulk.sel.length} busy={bulk.busy} onDelete={() => void bulk.remove()} onActive={(a) => void bulk.activate(a)} />
+        </Space>
       )}
       <Table
         rowKey="id"
@@ -372,6 +656,7 @@ function Accounts() {
         dataSource={accounts}
         pagination={false}
         scroll={{ y: 560 }}
+        rowSelection={isAdmin ? bulk.rowSelection : undefined}
         columns={[
           { title: t('报款简称'), dataIndex: 'short_name' },
           { title: t('公司'), dataIndex: 'company', width: 120 },
@@ -447,6 +732,19 @@ function Accounts() {
           </Space>
         </Form>
       </Modal>
+      <MasterImport<AccountIn>
+        open={imp}
+        title={t('批量导入收款账户')}
+        fields={ACCOUNT_FIELDS}
+        example={['FET AUTO ECO GHS-8651', 'ECO-FET AUTO-GHS-8651', 'FET AUTO', 'ECO', 'GHS', '8651', t('银行'), t('是')]}
+        parse={parseAccount}
+        exists={(k) => existing.has(k)}
+        save={(list) => insertChunks('bank_accounts', list)}
+        onClose={(changed) => {
+          setImp(false)
+          if (changed) void reload()
+        }}
+      />
     </div>
   )
 }

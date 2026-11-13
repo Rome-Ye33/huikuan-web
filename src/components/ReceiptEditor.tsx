@@ -1,4 +1,4 @@
-import { DeleteOutlined, LinkOutlined, PlusOutlined } from '@ant-design/icons'
+import { DeleteOutlined, LinkOutlined, PlusOutlined, SendOutlined } from '@ant-design/icons'
 import {
   Alert,
   App,
@@ -10,10 +10,12 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Row,
   Select,
   Space,
   Spin,
+  Steps,
   Table,
   Tag,
   Tooltip,
@@ -24,12 +26,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { aiSession } from '../lib/aiFill'
 import type { AiFilled } from '../lib/aiFill'
 import { useAuth } from '../lib/auth'
+import { notifyChequesChanged } from '../lib/cheques'
 import { errorText } from '../lib/errors'
+import { parseFlow, receiptStatus, useFlow } from '../lib/flow'
 import { dateTime, money, num, round2, todayAccra, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { defaultNature, receiptNatures } from '../lib/natures'
 import { accountOptions, lookupRate, useRefData } from '../lib/refdata'
-import { notifySubmissionsChanged, parseClaims } from '../lib/submissions'
+import { claimsSummary, notifySubmissionsChanged, parseClaims } from '../lib/submissions'
 import type { Submission, SubmissionClaim } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
 import type { Receipt, Vehicle } from '../lib/supabase'
@@ -51,7 +55,30 @@ export type ReceiptPrefill = {
   cheque_no?: string | null
   /** 由哪条银行对账单流水生成 */
   line_id?: number
+  /** 由哪张支票生成（26）：保存后把到账对到这张支票上 */
+  cheque_id?: number
+  /** 预填的拆分（支票上选了车就带一行） */
+  claims?: { nature?: string; vehicle_id?: number | null; customer_id?: number | null; amount_orig?: number | null }[]
 }
+
+/** 配对的银行流水里，按银行为准的几项 */
+type BankFacts = {
+  line_date: string | null
+  amount_orig: number | null
+  currency?: string | null
+  payer_summary?: string | null
+  bank_ref?: string | null
+  cheque_no?: string | null
+}
+type BankSource = { line_date?: string | null; amount_orig?: number | string | null; currency?: string | null; payer_summary?: string | null; bank_ref?: string | null; cheque_no?: string | null }
+const bankFacts = (l: BankSource): BankFacts => ({
+  line_date: l.line_date ?? null,
+  amount_orig: l.amount_orig != null ? num(l.amount_orig) : null,
+  currency: l.currency ?? null,
+  payer_summary: l.payer_summary ?? null,
+  bank_ref: l.bank_ref ?? null,
+  cheque_no: l.cheque_no ?? null,
+})
 
 type Props = {
   open: boolean
@@ -93,9 +120,13 @@ type FormValues = {
 let keySeq = 0
 const newKey = () => `k${++keySeq}`
 
+/** 这笔到账现在等的是“业务员本人确认”的一级（25，录入时记在 flow 里） */
+const nowSp = (r: Receipt | null): boolean => !!r?.step && parseFlow(r.flow).some((f) => f.step === r.step && f.sp)
+
 export default function ReceiptEditor({ open, receiptId, prefill, submission, onClose }: Props) {
   const t = useT()
-  const { isStaff, isAdmin } = useAuth()
+  const { isStaff, isAdmin, posts, profile } = useAuth()
+  const rflow = useFlow('receipt')
   const { accounts, accountById, natures, natureByName, salespersons, customers } = useRefData()
   const { message, modal } = App.useApp()
   const [form] = Form.useForm<FormValues>()
@@ -108,16 +139,28 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const [attachments, setAttachments] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  /** 正在做的审批动作（approve_<级别> / reject / resubmit） */
+  const [acting, setActing] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [changed, setChanged] = useState(false)
   const [newVehicleFor, setNewVehicleFor] = useState<string | null>(null)
   /** 正在审核的业务员提交（通过后清空，变成普通的到账） */
   const [review, setReview] = useState<Submission | null>(null)
   const [dupes, setDupes] = useState<Receipt[]>([])
-  const [rejecting, setRejecting] = useState(false)
+  /** 退回的是什么：审批中的到账 / 正在审核的业务员提交 / 业务员填好的（财务请他填的） */
+  const [rejecting, setRejecting] = useState<'receipt' | 'review' | 'fill' | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  /** 财务请业务员填写：这笔到账上最近的一条请填写记录（没有就是 null）。等他填 / 填好了等核对 / 退回了 / 已采用 / 已取消 */
+  const [fillReq, setFillReq] = useState<Submission | null>(null)
+  /** 业务员填的拆分已经放进下面的表里了 */
+  const [fillApplied, setFillApplied] = useState(false)
+  const [requesting, setRequesting] = useState(false)
+  const [reqSp, setReqSp] = useState<number | undefined>()
+  const [reqNote, setReqNote] = useState('')
   /** 表里的内容是智能填表认出来的第几笔（保存后记成已录） */
   const [aiIndex, setAiIndex] = useState<number | null>(null)
+  /** 配对上的银行流水（由流水生成的新到账按预填算）：账户、日期、金额和银行给的摘要、参考号、支票号按银行为准，锁住不能改 */
+  const [bankLine, setBankLine] = useState<BankFacts | null>(null)
   const rateTouched = useRef(false)
 
   const accountId = Form.useWatch('account_id', form)
@@ -127,6 +170,34 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const currency = account?.currency ?? ''
   const isUsd = currency === 'USD'
   const readOnly = !isStaff
+  const bankLocked = !!bankLine
+  /** 银行流水里有这一项（非空）就不让改；银行没给的可以补 */
+  const bankGave = (k: 'payer_summary' | 'bank_ref' | 'cheque_no') => !!bankLine?.[k]?.trim()
+  // 到账自己的审批：录入后按录入时的审批流一级一级审，批完才算到账（才进余额、报表，才能报款）
+  const rStatus = receiptStatus(receipt?.status)
+  const rStep = receipt?.step ?? null
+  const rFlowItems = useMemo(() => parseFlow(receipt?.flow), [receipt?.flow])
+  /** 这笔到账走审批（录入时有审批级别）；没走的录入就生效 */
+  const inFlow = !!currentId && rFlowItems.length > 0
+  /** 现在这一级是“业务员本人确认”（25）：不看岗位，由拆分里的业务员本人确认，管理员可以代办 */
+  const stepIsSp = !!rStep && rFlowItems.some((f) => f.step === rStep && f.sp)
+  /** 拆分里的业务员（车的业务员，没锁车的看拆分上填的） */
+  const claimSpIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const c of claims) {
+      const id = (c.vehicle_id ? vehicles.get(c.vehicle_id)?.salesperson_id : null) ?? c.salesperson_id ?? null
+      if (id) ids.add(id)
+    }
+    return [...ids]
+  }, [claims, vehicles])
+  const mySp = profile?.role === 'sales' ? profile.salesperson_id : null
+  const isClaimSp = !!mySp && claimSpIds.includes(mySp)
+  const holdsStep = stepIsSp ? isClaimSp : !!rStep && posts.includes(rStep)
+  const canApprove = !!currentId && rStatus === 'pending' && !!rStep && (holdsStep || isAdmin)
+  const canResubmit = !!currentId && (rStatus === 'rejected' || rStatus === 'withdrawn') && isStaff
+  /** 第一级还没人批：录入的人或管理员可以撤回（撤回后不算到账，改好再重新提交；批过一级就只能请审核人退回） */
+  const canWithdraw =
+    !!currentId && rStatus === 'pending' && isStaff && (isAdmin || (!!profile && receipt?.created_by === profile.id)) && rFlowItems.length > 0 && rStep === rFlowItems[0].step
 
   const rememberVehicles = useCallback((list: (Vehicle | null | undefined)[]) => {
     setVehicles((m) => {
@@ -136,9 +207,25 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     })
   }, [])
 
+  /** 这笔到账上最近的一条“请业务员填写”记录（财务才看） */
+  const loadFill = useCallback(async (id: number): Promise<Submission | null> => {
+    const { data } = await supabase
+      .from('receipt_submissions')
+      .select('*')
+      .eq('receipt_id', id)
+      .not('requested_by', 'is', null)
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    setFillReq(data ?? null)
+    setFillApplied(false)
+    return data ?? null
+  }, [])
+
   const load = useCallback(
-    async (id: number) => {
+    async (id: number): Promise<Receipt | null> => {
       setLoading(true)
+      if (isStaff) void loadFill(id)
       const [r, c, tx] = await Promise.all([
         supabase.from('v_bank_receipts').select('*').eq('id', id).single(),
         supabase.from('v_receipt_claims').select('*').eq('receipt_id', id).order('id'),
@@ -147,11 +234,15 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       if (r.error) {
         message.error(errorText(r.error))
         setLoading(false)
-        return
+        return null
       }
       const rec = r.data
       setReceipt(rec)
       setCurrentId(id)
+      if (rec.bank_line_id) {
+        const l = await supabase.from('v_statement_lines').select('*').eq('id', rec.bank_line_id).maybeSingle()
+        setBankLine(l.data ? bankFacts(l.data) : { line_date: null, amount_orig: null })
+      } else setBankLine(null)
       setReportText(tx.data ?? '')
       setAttachments(rec.attachments ?? [])
       rateTouched.current = true
@@ -184,8 +275,9 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       }
       setDirty(false)
       setLoading(false)
+      return rec
     },
-    [form, message, rememberVehicles],
+    [form, message, rememberVehicles, isStaff, loadFill],
   )
 
   // 打开时：编辑 → 读数据；审核提交 → 按提交预填；新建 → 清空并预填
@@ -196,6 +288,9 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     setDupes([])
     setReview(null)
     setAiIndex(null)
+    setFillReq(null)
+    setFillApplied(false)
+    setRequesting(false)
     if (receiptId) {
       void load(receiptId)
       return
@@ -205,6 +300,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     setReportText('')
     setVehicles(new Map())
     form.resetFields()
+    setBankLine(prefill?.line_id ? bankFacts({ ...prefill, line_date: prefill.receipt_date ?? null }) : null)
     if (submission) {
       setReview(submission)
       rateTouched.current = submission.fx_rate != null
@@ -250,7 +346,11 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       bank_ref: prefill?.bank_ref ?? '',
       cheque_no: prefill?.cheque_no ?? '',
     })
-    setClaims([{ key: newKey() }])
+    if (prefill?.claims?.length) {
+      setClaims(prefill.claims.map((c) => ({ key: newKey(), nature: c.nature, vehicle_id: c.vehicle_id ?? null, customer_id: c.customer_id ?? null, amount_orig: c.amount_orig ?? null })))
+      const vids = prefill.claims.map((c) => c.vehicle_id).filter((x): x is number => !!x)
+      if (vids.length) void supabase.from('v_vehicle_ledger').select('*').in('id', vids).then((v) => rememberVehicles(v.data ?? []))
+    } else setClaims([{ key: newKey() }])
   }, [open, receiptId, prefill, submission, load, form, rememberVehicles])
 
   // 审核时：看看财务是不是已经录过这笔（同账户、同金额、日期相差 3 天内，还没关联别的提交）
@@ -413,18 +513,19 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     return null
   }
 
-  const save = async () => {
+  /** 保存。accept：采用业务员填的（财务请他填的那条记录）——拆分按 rows 存，那条记录标为已通过 */
+  const save = async (opts?: { rows?: ClaimDraft[]; accept?: Submission }): Promise<boolean> => {
     let v: FormValues
     try {
       v = await form.validateFields()
     } catch {
-      return
+      return false
     }
-    const rows = claims.filter((c) => c.nature || c.vehicle_id || c.customer_id || num(c.amount_orig) > 0)
+    const rows = (opts?.rows ?? claims).filter((c) => c.nature || c.vehicle_id || c.customer_id || num(c.amount_orig) > 0)
     const err = validateClaims(rows)
     if (err) {
       message.error(err)
-      return
+      return false
     }
     const p_receipt: { [k: string]: Json | undefined } = {
       receipt_date: v.receipt_date!.format('YYYY-MM-DD'),
@@ -437,8 +538,13 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       note: v.note ?? '',
       attachments,
     }
-    if (currentId) p_receipt.id = currentId
-    else if (review) {
+    if (currentId) {
+      p_receipt.id = currentId
+      if (opts?.accept) {
+        p_receipt.submission_id = opts.accept.id
+        p_receipt.submission_updated_at = opts.accept.updated_at
+      }
+    } else if (review) {
       p_receipt.submission_id = review.id
       p_receipt.submission_updated_at = review.updated_at
     } else if (prefill?.line_id) p_receipt.line_id = prefill.line_id
@@ -456,43 +562,241 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     const { data, error } = await supabase.rpc('save_receipt', { p_receipt, p_claims: p_claims as Json })
     setSaving(false)
     if (error) {
-      message.error((review ? t('通过失败：') : t('保存失败：')) + errorText(error))
-      return
+      message.error((review ? t('通过失败：') : opts?.accept ? t('采用失败：') : t('保存失败：')) + errorText(error))
+      return false
     }
-    if (review) {
-      message.success(t('已通过，生成了正式到账，报款文字在下面'))
-      setReview(null)
-      notifySubmissionsChanged()
-    } else message.success(currentId ? t('已保存') : t('已保存，报款文字在下面'))
+    const wasReview = !!review
+    const wasApproved = !!currentId && rStatus === 'approved'
+    // 由支票生成的：对到那张支票上（到账录入时填了支票号、同账户同金额的，数据库已经自动对上，再对一次不会重复）
+    if (!currentId && prefill?.cheque_id && data) {
+      const link = await supabase.rpc('cheque_action', { p_id: prefill.cheque_id, p_action: 'link', p: { receipt_id: data } })
+      if (link.error) message.warning(t('到账已保存，但没对上支票：{err}', { err: errorText(link.error) }))
+      notifyChequesChanged()
+    }
+    if (review) setReview(null)
     if (aiIndex !== null) {
       aiSession.markSaved(aiIndex)
       setAiIndex(null)
     }
     setChanged(true)
-    await load(data)
+    // 到账的状态、进度、待办都可能变了（新录的开始审批、改了关键内容重新审批）
+    notifySubmissionsChanged()
+    const now = await load(data)
+    const pending = receiptStatus(now?.status) === 'pending'
+    const name = rflow.name(now?.step)
+    if (opts?.accept) message.success(t('已采用并通过，{name} 填的拆分存到了这笔到账', { name: spName(opts.accept.salesperson_id) }))
+    else if (wasReview) message.success(pending ? t('已通过，生成了到账，等{name}审批', { name }) : t('已通过，生成了正式到账，报款文字在下面'))
+    // 现在等的是“业务员本人确认”的一级（25）：提示写等业务员确认
+    else if (pending && nowSp(now)) message.success(!currentId ? t('已保存，等业务员确认，全部批完才算到账') : wasApproved ? t('已保存，这笔到账回到审批中，等业务员确认') : t('已保存，等业务员确认'))
+    else if (!currentId) message.success(pending ? t('已保存，等{name}审批，批完才算到账', { name }) : t('已保存，报款文字在下面'))
+    else if (pending) message.success(wasApproved ? t('已保存，这笔到账回到审批中，等{name}审批', { name }) : t('已保存，等{name}审批', { name }))
+    else message.success(t('已保存'))
+    return true
+  }
+
+  /** 到账的审批动作：通过这一级 / 退回 / 重新提交（receipt_action） */
+  const act = async (action: string, note?: string): Promise<boolean> => {
+    if (!currentId) return false
+    const wasSp = stepIsSp
+    setActing(action)
+    const { error } = await supabase.rpc('receipt_action', { p_id: currentId, p_action: action, p_note: note })
+    setActing(null)
+    if (error) {
+      message.error(errorText(error))
+      return false
+    }
+    setChanged(true)
+    notifySubmissionsChanged()
+    const now = await load(currentId)
+    const pending = receiptStatus(now?.status) === 'pending'
+    const name = rflow.name(now?.step)
+    if (action.startsWith('approve_')) {
+      // 业务员本人确认的一级（25）写“已确认”；下一级是它的写“等业务员确认”
+      if (wasSp) message.success(pending ? t('已确认，等{name}审批', { name }) : t('已确认，这笔到账生效了'))
+      else if (pending && nowSp(now)) message.success(t('已通过，等业务员确认'))
+      else message.success(pending ? t('已通过，等{name}审批', { name }) : t('已通过，这笔到账生效了'))
+    } else if (action === 'reject') message.success(t('已退回'))
+    else if (action === 'withdraw') message.success(t('已撤回，不算到账了。改好后点“重新提交”'))
+    else if (pending && nowSp(now)) message.success(t('已重新提交，等业务员确认'))
+    else message.success(pending ? t('已重新提交，等{name}审批', { name }) : t('已重新提交，这笔到账生效了'))
+    return true
+  }
+
+  /** 撤回审批中的到账（第一级还没人批）：确认后 receipt_action withdraw */
+  const withdraw = () => {
+    modal.confirm({
+      title: t('撤回这笔到账？'),
+      content: t('撤回后不算到账（不进余额和报表、不能报款）。改好后可以重新提交；不要了请管理员删掉。'),
+      okText: t('撤回'),
+      cancelText: t('返回'),
+      onOk: async () => {
+        await act('withdraw')
+      },
+    })
+  }
+
+  /** 被退回的到账：有改动先保存，再重新提交（按现在的审批流从第一级开始） */
+  const resubmit = async () => {
+    if (dirty && !readOnly) {
+      const ok = await save()
+      if (!ok) return
+    }
+    await act('resubmit')
   }
 
   const reject = async () => {
-    if (!review) return
     const reason = rejectReason.trim()
+    if (rejecting === 'receipt') {
+      // 退回审批中的到账
+      if (!canApprove) return
+      if (!reason) {
+        message.error(t('请写退回原因，录入的人会看到'))
+        return
+      }
+      if (await act('reject', reason)) setRejecting(null)
+      return
+    }
+    // 退回业务员的提交 / 业务员填好的
+    const target = rejecting === 'fill' ? fillReq : review
+    if (!target) return
     if (!reason) {
       message.error(t('请写退回原因，业务员会看到'))
       return
     }
+    setActing('reject')
     const { data, error } = await supabase
       .from('receipt_submissions')
       .update({ status: 'rejected', review_note: reason })
-      .eq('id', review.id)
+      .eq('id', target.id)
       .eq('status', 'pending')
       .select('id')
+    setActing(null)
     if (error || !data?.length) {
       message.error(error ? errorText(error) : t('这条提交已经处理过了，请刷新后再看'))
       return
     }
-    setRejecting(false)
-    message.success(t('已退回给业务员'))
+    setRejecting(null)
     notifySubmissionsChanged()
+    if (rejecting === 'fill') {
+      message.success(t('已退回给 {name}，等他改好重新提交', { name: spName(target.salesperson_id) }))
+      setChanged(true)
+      if (currentId) await loadFill(currentId)
+      return
+    }
+    message.success(t('已退回给业务员'))
     onClose(true)
+  }
+
+  // ---------------- 财务请业务员填写（这笔钱是哪个客户哪台车的）
+  const spName = (id: number | null | undefined) => salespersons.find((s) => s.id === id)?.name ?? t('业务员')
+  /** 还在请他填（没填 / 填好了等核对 / 退回了等他改） */
+  const openFill = !!fillReq && ['requested', 'pending', 'rejected'].includes(fillReq.status)
+  const fillName = spName(fillReq?.salesperson_id)
+  /** 等哪些业务员确认（名字） */
+  const claimSpNames = claimSpIds.map((id) => salespersons.find((x) => x.id === id)?.name ?? `#${id}`).join('、')
+  /** 业务员自己传的、还没挂到到账上的凭证 */
+  const fillNewFiles = fillReq ? fillReq.attachments.filter((a) => !attachments.includes(a)).length : 0
+
+  /** 猜一下该请谁：拆分里的业务员，或车、客户的业务员 */
+  const guessSalesperson = (): number | undefined => {
+    for (const c of claims) {
+      if (c.salesperson_id) return c.salesperson_id
+      const v = c.vehicle_id ? vehicles.get(c.vehicle_id) : undefined
+      if (v?.salesperson_id) return v.salesperson_id
+      const cu = c.customer_id ? customers.find((x) => x.id === c.customer_id) : undefined
+      if (cu?.salesperson_id) return cu.salesperson_id
+    }
+    return undefined
+  }
+
+  const sendRequest = async () => {
+    if (!currentId) return
+    if (!reqSp) {
+      message.error(t('请选业务员'))
+      return
+    }
+    setActing('request')
+    const { error } = await supabase.rpc('request_receipt_info', { p_receipt_id: currentId, p_salesperson_id: reqSp, p_note: reqNote.trim() || undefined })
+    setActing(null)
+    if (error) {
+      message.error(errorText(error))
+      return
+    }
+    setRequesting(false)
+    message.success(t('已发给 {name} 填写，他填好会提醒你', { name: spName(reqSp) }))
+    notifySubmissionsChanged()
+    setChanged(true)
+    await loadFill(currentId)
+  }
+
+  const cancelFill = () => {
+    if (!fillReq || !currentId) return
+    const id = fillReq.id
+    modal.confirm({
+      title: t('取消请 {name} 填写？', { name: fillName }),
+      content: t('他那边这条就没有了；以后还可以再请他或别人填。'),
+      okText: t('确定取消'),
+      cancelText: t('返回'),
+      onOk: async () => {
+        const { data, error } = await supabase.from('receipt_submissions').update({ status: 'withdrawn' }).eq('id', id).in('status', ['requested', 'rejected']).select('id')
+        if (error || !data?.length) {
+          message.error(error ? errorText(error) : t('他已经填好提交了，请关掉后重新打开'))
+          return
+        }
+        message.success(t('已取消'))
+        notifySubmissionsChanged()
+        setChanged(true)
+        await loadFill(currentId)
+      },
+    })
+  }
+
+  /** 把业务员填的拆分放进下面的表里（替换现有的行；同车同款项的行保留原来的 id 和报款备注），返回这些行 */
+  const applyFill = (): ClaimDraft[] => {
+    if (!fillReq) return claims
+    const lines = parseClaims(fillReq.claims)
+    const used = new Set<string>()
+    const match = (c: SubmissionClaim) =>
+      claims.find(
+        (r) =>
+          !used.has(r.key) &&
+          r.id != null &&
+          r.nature === (c.nature ?? undefined) &&
+          (c.vehicle_id ? r.vehicle_id === c.vehicle_id : !r.vehicle_id && r.customer_id === (c.customer_id ?? null)),
+      )
+    const rows = lines.length
+      ? lines.map<ClaimDraft>((c) => {
+          const m = match(c)
+          if (m) used.add(m.key)
+          return {
+            key: newKey(),
+            id: m?.id,
+            nature: c.nature ?? undefined,
+            vehicle_id: c.vehicle_id ?? null,
+            customer_id: c.customer_id ?? null,
+            amount_orig: c.amount_orig ?? null,
+            report_note: m?.report_note ?? '',
+            model_desc: c.vehicle_id ? '' : (c.model ?? ''),
+            salesperson_id: c.vehicle_id ? null : fillReq.salesperson_id,
+            sub: c.vehicle_id ? undefined : c,
+          }
+        })
+      : [{ key: newKey() }]
+    const vids = lines.map((c) => c.vehicle_id).filter((x): x is number => !!x)
+    if (vids.length) void supabase.from('v_vehicle_ledger').select('*').in('id', vids).then((v) => rememberVehicles(v.data ?? []))
+    setClaims(rows)
+    setFillApplied(true)
+    setDirty(true)
+    return rows
+  }
+
+  /** 采用业务员填的并通过：拆分照他填的（还没放进表里就先放进去）存到这笔到账，他传的凭证挂上，那条记录标为已通过 */
+  const acceptFill = async () => {
+    if (!fillReq) return
+    const rows = fillApplied ? claims : applyFill()
+    setActing('accept')
+    await save({ rows, accept: fillReq })
+    setActing(null)
   }
 
   const linkTo = (r: Receipt) => {
@@ -718,10 +1022,38 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const reviewer = review ? salespersons.find((s) => s.id === review.salesperson_id)?.name : undefined
   const newVehicleRow = newVehicleFor ? claims.find((c) => c.key === newVehicleFor) : undefined
 
+  // 进度条：录入 → 这笔到账的各级 → 生效
+  const stepCurrent =
+    rStatus === 'pending'
+      ? Math.max(
+          rFlowItems.findIndex((f) => f.step === rStep),
+          0,
+        ) + 1
+      : rStatus === 'approved'
+        ? rFlowItems.length + 1
+        : rStatus === 'withdrawn'
+          ? // 撤回：回到“录入”，等改好重新提交
+            0
+          : // 退回在哪一级：第一个还没通过的
+            rFlowItems.findIndex((f) => !f.at) + 1 || rFlowItems.length
+  const signed = (name: string | null | undefined, at: string | null | undefined) => (name ? `${name} · ${dateTime(at)}` : '')
+  const stepTag = inFlow && (
+    <Tag color={rflow.stageColor(receipt?.status, receipt?.step)}>{rflow.stageLabel(receipt?.status, receipt?.step)}</Tag>
+  )
+
   return (
     <Drawer
       open={open}
-      title={title}
+      title={
+        stepTag ? (
+          <Space wrap>
+            <span>{title}</span>
+            {stepTag}
+          </Space>
+        ) : (
+          title
+        )
+      }
       size={Math.min(1080, typeof window !== 'undefined' ? window.innerWidth : 1080)}
       onClose={close}
       destroyOnHidden
@@ -732,19 +1064,42 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
               {t('删除')}
             </Button>
           )}
-          {!readOnly && review && (
+          {((!readOnly && review) || canApprove) && (
             <Button
               danger
               onClick={() => {
                 setRejectReason('')
-                setRejecting(true)
+                setRejecting(review ? 'review' : 'receipt')
               }}
             >
               {t('退回')}
             </Button>
           )}
+          {canWithdraw && (
+            <Tooltip title={t('第一级还没人批，可以撤回；撤回后不算到账')}>
+              <Button loading={acting === 'withdraw'} onClick={withdraw}>
+                {t('撤回')}
+              </Button>
+            </Tooltip>
+          )}
+          {canApprove && rStep && (
+            <Button type="primary" loading={acting === `approve_${rStep}`} onClick={() => void act(`approve_${rStep}`)}>
+              {stepIsSp
+                ? holdsStep
+                  ? t('确认无误')
+                  : t('代业务员确认')
+                : holdsStep
+                  ? t('{name}审核通过', { name: rflow.name(rStep) })
+                  : t('代{post}通过', { post: rflow.name(rStep) })}
+            </Button>
+          )}
+          {canResubmit && (
+            <Button type="primary" loading={acting === 'resubmit' || saving} onClick={() => void resubmit()}>
+              {t('重新提交')}
+            </Button>
+          )}
           {!readOnly && (
-            <Button type="primary" loading={saving} onClick={save}>
+            <Button type={canApprove || canResubmit ? 'default' : 'primary'} loading={saving} onClick={() => void save()}>
               {review ? t('通过，生成到账') : t('保存')}
             </Button>
           )}
@@ -789,8 +1144,175 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             }
           />
         )}
-        {prefill?.line_id && !currentId && !review && (
-          <Alert type="info" showIcon style={{ marginBottom: 12 }} title={t('这笔是从银行对账单生成的，保存后会自动和那条流水配对。')} />
+        {currentId && receipt && rStatus === 'rejected' && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('被退回：{reason}', { reason: receipt.reject_note ?? '' })}
+            description={
+              isStaff
+                ? t('{name} 于 {when} 退回。改好后点“重新提交”。', { name: receipt.rejected_name ?? '', when: dateTime(receipt.rejected_at) })
+                : t('{name} 于 {when} 退回，等财务改好后重新提交。', { name: receipt.rejected_name ?? '', when: dateTime(receipt.rejected_at) })
+            }
+          />
+        )}
+        {currentId && receipt && rStatus === 'withdrawn' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('已撤回，不算到账')}
+            description={isStaff ? t('改好后点“重新提交”，按现在的审批流从第一级开始；不要了请管理员删掉。') : t('等财务重新提交。')}
+          />
+        )}
+        {currentId && receipt && rStatus === 'pending' && canApprove && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={
+              stepIsSp
+                ? holdsStep
+                  ? t('财务录了这笔到账，请你确认是不是你客户的钱')
+                  : claimSpNames
+                    ? t('等业务员 {name} 确认，管理员可以代办', { name: claimSpNames })
+                    : t('等业务员确认：还没拆分到业务员，由管理员代办')
+                : t('轮到你审批了：这一级是{name}', { name: rflow.name(rStep) })
+            }
+            description={
+              stepIsSp
+                ? holdsStep
+                  ? t('核对日期、金额和拆到哪台车，没问题点“确认无误”，不对点“退回”写明原因。确认后才到下一级审批。')
+                  : t('业务员有登录账号的，这笔在他的待办里，等他自己确认；没有账号或还没拆分的由你代办。确实和业务员核对过了再点“代业务员确认”。')
+                : t('核对凭证、金额和拆分，没问题点“通过”，不对点“退回”写明原因。')
+            }
+          />
+        )}
+        {currentId && receipt && rStatus === 'pending' && !canApprove && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={
+              stepIsSp
+                ? claimSpNames
+                  ? t('审批中，等业务员 {name} 确认', { name: claimSpNames })
+                  : t('审批中，等业务员确认（还没拆分到业务员，由管理员代办）')
+                : t('审批中，等{name}审批', { name: rflow.name(rStep) })
+            }
+            description={
+              isStaff
+                ? stepIsSp
+                  ? t('业务员确认后才到下一级审批，全部批完才算到账。不知道是谁的钱可以点“请业务员填写”，他填好、你采用就算他确认了。')
+                  : t('批完才算到账（才进余额和报表、才能报款）。改了日期、账户、金额或汇率会从第一级重新审批。')
+                : undefined
+            }
+          />
+        )}
+        {inFlow && (
+          <Card size="small" style={{ marginBottom: 12 }}>
+            <Steps
+              size="small"
+              current={stepCurrent}
+              status={rStatus === 'rejected' ? 'error' : rStatus === 'approved' ? 'finish' : 'process'}
+              items={[
+                { title: t('录入'), content: dateTime(receipt?.created_at) },
+                ...rFlowItems.map((f) => ({ title: rflow.name(f.step), content: signed(f.by_name, f.at) })),
+                { title: t('生效'), content: rStatus === 'approved' && receipt?.approved_at ? dateTime(receipt.approved_at) : '' },
+              ]}
+            />
+            {rStatus === 'approved' && isStaff && !isAdmin && (
+              <div className="hint" style={{ marginTop: 8 }}>
+                {t('已生效。改了日期、账户、金额或汇率会回到审批中，重新批完才再算到账。')}
+              </div>
+            )}
+          </Card>
+        )}
+        {isStaff && currentId && fillReq && fillReq.status === 'requested' && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('已请 {name} 填写这笔是哪个客户哪台车的（{when}）', { name: fillName, when: dateTime(fillReq.requested_at) })}
+            description={
+              <div>
+                {fillReq.request_note && <div>{t('留言：{note}', { note: fillReq.request_note })}</div>}
+                <div>{t('他填好提交后会提醒你，到时在这里核对、采用。等他填的期间这笔到账照常可以审批、算到账。')}</div>
+              </div>
+            }
+            action={
+              <Button size="small" onClick={cancelFill}>
+                {t('取消请填写')}
+              </Button>
+            }
+          />
+        )}
+        {isStaff && currentId && fillReq && fillReq.status === 'pending' && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('{name} 填好了（{when}），请核对', { name: fillName, when: dateTime(fillReq.submitted_at) })}
+            description={
+              <div>
+                {claimsSummary(fillReq, t, 99).map((line, i) => (
+                  <div key={i}>{line}</div>
+                ))}
+                {fillReq.note && <div>{t('业务员说明：{note}', { note: fillReq.note })}</div>}
+                {fillNewFiles > 0 && <div>{t('他传了 {n} 个凭证，采用后会挂到这笔到账上', { n: fillNewFiles })}</div>}
+                <div className="hint">{t('“采用并通过”：拆分照他填的存到这笔到账（替换已有的拆分）。想先看看、改一改，点“先放进拆分”，改好再采用。')}</div>
+                <Space wrap style={{ marginTop: 8 }}>
+                  <Button type="primary" size="small" loading={acting === 'accept'} onClick={() => void acceptFill()}>
+                    {t('采用并通过')}
+                  </Button>
+                  <Button size="small" disabled={fillApplied} onClick={() => void applyFill()}>
+                    {fillApplied ? t('已放进拆分') : t('先放进拆分')}
+                  </Button>
+                  <Button
+                    size="small"
+                    danger
+                    onClick={() => {
+                      setRejectReason('')
+                      setRejecting('fill')
+                    }}
+                  >
+                    {t('退回给业务员')}
+                  </Button>
+                </Space>
+              </div>
+            }
+          />
+        )}
+        {isStaff && currentId && fillReq && fillReq.status === 'rejected' && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('退回了 {name} 填的（{when}）：{reason}', { name: fillName, when: dateTime(fillReq.reviewed_at), reason: fillReq.review_note ?? '' })}
+            description={t('等他改好重新提交。不等了可以取消。')}
+            action={
+              <Button size="small" onClick={cancelFill}>
+                {t('取消请填写')}
+              </Button>
+            }
+          />
+        )}
+        {bankLine && !review && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={
+              currentId
+                ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。', {
+                    date: bankLine.line_date ?? '',
+                    cur: bankLine.currency ?? currency,
+                    amt: money(bankLine.amount_orig ?? 0),
+                  })
+                : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
+            }
+          />
         )}
         {isAdmin && !currentId && !receiptId && !review && !submission && (
           <AiFill
@@ -808,12 +1330,17 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             <Row gutter={12}>
               <Col xs={24} md={10}>
                 <Form.Item name="account_id" label={t('收款账户')} rules={[{ required: true, message: t('请选收款账户') }]}>
-                  <Select showSearch={{ optionFilterProp: 'label' }} options={accountOptions(accounts)} placeholder={t('搜索账户，如 ECO 8651')} />
+                  <Select
+                    showSearch={{ optionFilterProp: 'label' }}
+                    options={accountOptions(accounts)}
+                    placeholder={t('搜索账户，如 ECO 8651')}
+                    disabled={bankLocked || readOnly}
+                  />
                 </Form.Item>
               </Col>
               <Col xs={12} md={6}>
                 <Form.Item name="receipt_date" label={t('到账日期')} rules={[{ required: true, message: t('请选日期') }]}>
-                  <DatePicker style={{ width: '100%' }} allowClear={false} />
+                  <DatePicker style={{ width: '100%' }} allowClear={false} disabled={bankLocked || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={12} md={8}>
@@ -822,7 +1349,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                   label={currency ? t('到账金额（{cur}）', { cur: currency }) : t('到账金额')}
                   rules={[{ required: true, message: t('请填金额') }]}
                 >
-                  <InputNumber min={0.01} precision={2} style={{ width: '100%' }} />
+                  <InputNumber min={0.01} precision={2} style={{ width: '100%' }} disabled={bankLocked || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={12} md={6}>
@@ -845,17 +1372,17 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
               </Col>
               <Col xs={12} md={6}>
                 <Form.Item name="cheque_no" label={t('支票号')}>
-                  <Input />
+                  <Input disabled={bankGave('cheque_no') || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
                 <Form.Item name="payer_summary" label={t('付款方 / 银行摘要')}>
-                  <Input placeholder={t('如 TRF FROM ABC LTD')} />
+                  <Input placeholder={t('如 TRF FROM ABC LTD')} disabled={bankGave('payer_summary') || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={8}>
                 <Form.Item name="bank_ref" label={t('银行参考号（有就填）')}>
-                  <Input />
+                  <Input disabled={bankGave('bank_ref') || readOnly} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={16}>
@@ -915,6 +1442,21 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
               {remaining > 0 && claims.some((c) => c.vehicle_id || c.customer_id) && (
                 <Button onClick={refundRemaining}>{t('剩余 {amt} 退还客户', { amt: money(remaining) })}</Button>
               )}
+              {currentId && !openFill && (
+                <Tooltip title={dirty ? t('先保存，再请业务员填写') : t('不知道这笔钱是哪个客户哪台车的？发给业务员填，他填好你再核对')}>
+                  <Button
+                    icon={<SendOutlined />}
+                    disabled={dirty}
+                    onClick={() => {
+                      setReqSp(guessSalesperson())
+                      setReqNote('')
+                      setRequesting(true)
+                    }}
+                  >
+                    {t('请业务员填写')}
+                  </Button>
+                </Tooltip>
+              )}
               <span className="hint">
                 {t('一笔钱付多台车时，每台车一行；金额按业务员通知的原币填写。还不知道是哪台车的，不选车、选客户。')}
               </span>
@@ -922,7 +1464,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
           )}
         </Card>
 
-        {currentId && receipt && (
+        {currentId && receipt && rStatus === 'approved' && (
           <Card size="small" title={t('报款文字')}>
             {dirty && !readOnly ? (
               <Alert type="info" showIcon title={t('有改动还没保存，保存后这里会更新。')} />
@@ -931,7 +1473,14 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             )}
           </Card>
         )}
+        {currentId && receipt && rStatus !== 'approved' && isStaff && (
+          <Card size="small" title={t('报款文字')}>
+            <span className="hint">{t('审批通过（生效）后才能报款。')}</span>
+          </Card>
+        )}
         {review && <ApprovalTrail docType="submission" docId={review.id} version={review.updated_at} />}
+        {inFlow && <ApprovalTrail docType="receipt" docId={currentId} version={receipt?.updated_at} />}
+        {isStaff && fillReq && <ApprovalTrail docType="submission" docId={fillReq.id} version={fillReq.updated_at} />}
       </Spin>
 
       <VehicleFormModal
@@ -959,17 +1508,19 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       />
 
       <Drawer
-        open={rejecting}
-        title={t('退回给业务员')}
+        open={rejecting !== null}
+        title={rejecting === 'receipt' ? t('退回这笔到账') : t('退回给业务员')}
         size={Math.min(480, typeof window !== 'undefined' ? window.innerWidth : 480)}
-        onClose={() => setRejecting(false)}
+        onClose={() => setRejecting(null)}
         extra={
-          <Button danger type="primary" onClick={reject}>
+          <Button danger type="primary" loading={acting === 'reject'} onClick={() => void reject()}>
             {t('退回')}
           </Button>
         }
       >
-        <Typography.Paragraph>{t('写清楚哪里不对、要怎么改，业务员会看到，改好后重新提交。')}</Typography.Paragraph>
+        <Typography.Paragraph>
+          {rejecting === 'receipt' ? t('写清楚哪里不对、要怎么改，录入的人会看到，改好后重新提交。') : t('写清楚哪里不对、要怎么改，业务员会看到，改好后重新提交。')}
+        </Typography.Paragraph>
         <Input.TextArea
           value={rejectReason}
           onChange={(e) => setRejectReason(e.target.value)}
@@ -978,6 +1529,38 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
           autoFocus
         />
       </Drawer>
+
+      <Modal
+        open={requesting}
+        title={t('请业务员填写：这笔钱是哪个客户哪台车的')}
+        okText={t('发给他')}
+        cancelText={t('取消')}
+        confirmLoading={acting === 'request'}
+        onOk={() => void sendRequest()}
+        onCancel={() => setRequesting(false)}
+        destroyOnHidden
+      >
+        <Typography.Paragraph type="secondary">
+          {t('他会在“提交到账”里看到这笔（账户、日期、金额照你录的，改不了），填好是哪台车的再提交回来，你核对后采用。期间这笔到账照常可以审批、算到账。')}
+        </Typography.Paragraph>
+        <div style={{ marginBottom: 4 }}>{t('业务员')}</div>
+        <Select
+          style={{ width: '100%', marginBottom: 12 }}
+          placeholder={t('选业务员')}
+          showSearch={{ optionFilterProp: 'label' }}
+          virtual={false}
+          value={reqSp}
+          options={salespersons.filter((s) => s.active || s.id === reqSp).map((s) => ({ value: s.id, label: s.name }))}
+          onChange={(v: number) => setReqSp(v)}
+        />
+        <div style={{ marginBottom: 4 }}>{t('给他的话（可空）')}</div>
+        <Input.TextArea
+          value={reqNote}
+          onChange={(e) => setReqNote(e.target.value)}
+          autoSize={{ minRows: 2, maxRows: 6 }}
+          placeholder={t('如：11-08 GHS 150,000 TRF FROM KOFI 是谁的？')}
+        />
+      </Modal>
     </Drawer>
   )
 }

@@ -469,9 +469,20 @@ html[lang='en'] .logo-name {
   .app-header {
     padding: 0 8px 0 10px !important;
   }
-  /* 手机上页头放得下：间距和按钮左右留白收紧一点 */
+  /* 手机上页头放得下：间距和按钮左右留白收紧一点；放不下时只缩名字（名字省略号），按钮和角色标签不缩 */
   .app-header .ant-space {
     column-gap: 4px !important;
+    max-width: 100%;
+  }
+  .app-header .ant-space-item {
+    flex-shrink: 0;
+  }
+  .app-header .ant-space-item:has(.header-user) {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  .header-name {
+    min-width: 0;
   }
   .app-header .ant-btn {
     padding-inline: 8px;
@@ -619,6 +630,21 @@ html[lang='en'] .logo-name {
   margin-top: 12px;
   font-weight: 600;
 }
+/* 打印的提成单：签名栏下面的“审批过程” */
+.cv-trail {
+  margin-top: 12px;
+  font-size: 10px;
+}
+.cv-trail td {
+  padding: 2px 4px;
+}
+.cv-trail-en {
+  color: #444;
+  font-size: 9px;
+}
+.cv-trail tr {
+  break-inside: avoid;
+}
 @page {
   size: A4 portrait;
   margin: 10mm;
@@ -656,8 +682,13 @@ html[lang='en'] .logo-name {
 .wb-tabs .ant-tabs-nav {
   margin-bottom: 10px;
 }
+/* 种类筛选（全部 / 到账提交 / 提成单 / 到账）：手机上放不下时在自己的框里左右滑，不把整页撑宽 */
+.wb-type {
+  max-width: 100%;
+  overflow-x: auto;
+}
 
-/* 用户与权限：提成单审批流（业务员提交 → 四个岗位 → 财务发放），窄屏时一行一级 */
+/* 用户与权限：提成单审批流（业务员提交 → 管理员定的几级 → 财务发放），放不下时换行，窄屏时一行一级 */
 .flow-row {
   display: flex;
   flex-wrap: wrap;
@@ -667,7 +698,7 @@ html[lang='en'] .logo-name {
 .flow-step {
   display: flex;
   align-items: flex-start;
-  flex: 1 1 210px;
+  flex: 1 1 180px;
   min-width: 0;
 }
 .flow-step.flow-last {
@@ -701,6 +732,71 @@ html[lang='en'] .logo-name {
   .flow-last .flow-arrow {
     margin-top: 4px;
   }
+  /* 手机上结尾的字（比如英文的“Takes effect (counts as received)”）可以折行，不把页面撑宽 */
+  .flow-last .flow-end {
+    white-space: normal;
+  }
+}
+
+/* 调整审批流（管理员）：一行一级，序号、名字、英文名、上移下移删除；窄屏时名字和英文名上下排 */
+.flow-edit-head,
+.flow-edit-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+}
+.flow-edit-head {
+  color: #888;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.flow-edit-row {
+  margin-bottom: 8px;
+}
+.flow-edit-no {
+  color: #888;
+  text-align: right;
+}
+.flow-edit-btns {
+  display: inline-flex;
+  gap: 4px;
+}
+.flow-edit-err {
+  grid-column: 2 / -1;
+  font-size: 12px;
+}
+.flow-edit-sp {
+  grid-column: 2 / -1;
+  font-size: 12px;
+}
+@media (max-width: 575px) {
+  .flow-edit-head {
+    display: none;
+  }
+  .flow-edit-row {
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed #eee;
+  }
+  .flow-edit-no {
+    grid-row: 1 / span 2;
+    align-self: start;
+    padding-top: 5px;
+  }
+  .flow-edit-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .flow-edit-en {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .flow-edit-btns {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    flex-direction: column;
+  }
 }
 
 /* 到账录入：智能填表（贴群消息、水单截图，Claude 识别后自动填表） */
@@ -721,4 +817,9 @@ html[lang='en'] .logo-name {
 .ai-fill-notes {
   margin: 0 0 6px;
   padding-left: 18px;
+}
+
+/* 支票详情：左边的项目名不要折行 */
+.cheque-desc .ant-descriptions-item-label {
+  white-space: nowrap;
 }

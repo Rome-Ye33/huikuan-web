@@ -1,11 +1,14 @@
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
-import { Button, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { PlusOutlined, PrinterOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Button, Input, Select, Space, Table, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useCallback, useEffect, useState } from 'react'
 import CommissionEditor from '../components/CommissionEditor'
 import { useAuth } from '../lib/auth'
-import { asPost, STAGE_COLOR, STAGE_LABEL, useVoucherTodo, VOUCHER_STAGES, voucherStage, voucherTodoIds } from '../lib/commission'
+import { printVoucher, useVoucherTodo, VOUCHER_STATUS_LABEL, voucherTodoIds } from '../lib/commission'
+import type { VoucherStatus } from '../lib/commission'
+import { useFlow } from '../lib/flow'
 import type { CommissionVoucher } from '../lib/commission'
+import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { supabase } from '../lib/supabase'
@@ -16,6 +19,7 @@ export default function CommissionPage() {
   const t = useT()
   const { role, isStaff, posts } = useAuth()
   const todoCount = useVoucherTodo(!!role)
+  const flow = useFlow()
   // 有审批岗位的人会看到别的业务员的提成单
   const showSp = isStaff || posts.length > 0
   const [rows, setRows] = useState<CommissionVoucher[]>([])
@@ -27,8 +31,8 @@ export default function CommissionPage() {
   const load = useCallback(async () => {
     setLoading(true)
     let query = supabase.from('v_commission_vouchers').select('*').order('created_at', { ascending: false }).limit(2000)
+    // 筛选：todo 待我处理 / all 全部 / 其余是状态（等哪一级看列表里的状态一列，不单独列出来筛）
     if (filter === 'todo') query = query.in('id', await voucherTodoIds())
-    else if (asPost(filter)) query = query.eq('status', 'submitted').eq('step', filter)
     else if (filter !== 'all') query = query.eq('status', filter)
     const s = cleanSearch(q)
     if (s) query = query.or(`voucher_no.ilike.%${s}%,customer_name.ilike.%${s}%,salesperson_name.ilike.%${s}%,vins.ilike.%${s}%`)
@@ -48,13 +52,15 @@ export default function CommissionPage() {
       width: 140,
       fixed: 'left',
       render: (no: string | null, r) => no ?? <span className="hint">{t('草稿 #{id}', { id: r.id ?? '' })}</span>,
+      ...textCol<CommissionVoucher>((r) => r.voucher_no ?? `#${r.id ?? ''}`),
     },
-    { title: t('日期'), dataIndex: 'voucher_date', width: 100 },
-    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true },
-    ...(showSp ? [{ title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true }] : []),
+    { title: t('日期'), dataIndex: 'voucher_date', width: 100, ...textCol<CommissionVoucher>((r) => r.voucher_date) },
+    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true, ...textCol<CommissionVoucher>((r) => r.customer_name) },
+    ...(showSp ? [{ title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true, ...pickCol(rows, (r) => r.salesperson_name) }] : []),
     {
       title: t('车辆'),
       width: 200,
+      ...textCol<CommissionVoucher>((r) => r.vins),
       render: (_, r) => (
         <div>
           <div>{t('{n} 台', { n: r.vehicle_count ?? 0 })}</div>
@@ -79,17 +85,43 @@ export default function CommissionPage() {
       title: t('状态'),
       dataIndex: 'status',
       width: 150,
-      render: (x: string | null, r) => {
-        const s = voucherStage(x, r.step)
-        return <Tag color={STAGE_COLOR[s]}>{t(STAGE_LABEL[s])}</Tag>
-      },
+      render: (x: string | null, r) => <Tag color={flow.stageColor(x, r.step)}>{flow.stageLabel(x, r.step)}</Tag>,
+      ...pickCol(rows, (r) => flow.stageLabel(r.status, r.step)),
+    },
+    {
+      // 审批结束（已批准、已发放）的单子：直接打印，上面有审批过程。固定在右边，表格横向滚动时也一直看得到
+      title: t('打印'),
+      width: 64,
+      align: 'center',
+      fixed: 'right',
+      render: (_, r) =>
+        (r.status === 'approved' || r.status === 'paid') && r.id != null ? (
+          <Tooltip title={t('打印（带审批过程）')}>
+            <Button
+              type="text"
+              size="small"
+              className="cv-print-btn"
+              icon={<PrinterOutlined />}
+              aria-label={t('打印')}
+              onClick={(e) => {
+                e.stopPropagation()
+                printVoucher(r.id as number)
+              }}
+            />
+          </Tooltip>
+        ) : null,
     },
   ]
 
+  const statusOption = (s: VoucherStatus) => ({ value: s, label: t(VOUCHER_STATUS_LABEL[s]) })
   const options = [
     { value: 'todo', label: todoCount ? t('待我处理（{n}）', { n: todoCount }) : t('待我处理') },
     { value: 'all', label: t('全部') },
-    ...VOUCHER_STAGES.map((s) => ({ value: s, label: t(STAGE_LABEL[s]) })),
+    statusOption('draft'),
+    statusOption('submitted'),
+    statusOption('approved'),
+    statusOption('paid'),
+    statusOption('rejected'),
   ]
 
   return (
@@ -104,10 +136,13 @@ export default function CommissionPage() {
         </Space>
       </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-        {t('业务员按客户开单（选车、勾客户的付款、填提成金额，可以加附件），提交后在线上逐级审批：销售部 → 应收财务 → 财务负责人 → 公司负责人，批准后财务发放。')}
+        {t('业务员按客户开单（选车、勾客户的付款、填提成金额，可以加附件），提交后在线上逐级审批：{flow}，批准后财务发放。', {
+          flow: flow.active.map((s) => flow.name(s.key)).join(' → '),
+        })}
       </Typography.Paragraph>
       <Space wrap className="filters">
-        <Select style={{ width: 190 }} value={filter} onChange={setFilter} options={options} />
+        {/* 只留必要的几种状态（Rome 2026-11-12）；等哪一级看列表的状态一列 */}
+        <Select style={{ width: 190 }} value={filter} onChange={setFilter} options={options} virtual={false} listHeight={320} />
         <Input.Search allowClear placeholder={t('编号、客户、业务员、大架号')} style={{ width: 260 }} onSearch={setQ} />
       </Space>
       <Table

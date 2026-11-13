@@ -1,4 +1,4 @@
-import { InboxOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
+import { DeleteOutlined, InboxOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
 import {
   Alert,
   App,
@@ -9,6 +9,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Row,
   Select,
   Space,
@@ -21,10 +22,12 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { Key } from 'react'
 import * as XLSX from 'xlsx'
 import ReceiptEditor from '../components/ReceiptEditor'
 import type { ReceiptPrefill } from '../components/ReceiptEditor'
 import { useAuth } from '../lib/auth'
+import { pickCol, textCol } from '../lib/colFilter'
 import { errorText } from '../lib/errors'
 import { money, round2, todayAccra } from '../lib/format'
 import { accountOptions, useRefData } from '../lib/refdata'
@@ -133,6 +136,62 @@ export default function ReconcilePage() {
   )
 }
 
+/** 管理员多选流水、删除选中：已配对的不删（要删先取消配对）。删掉的行再导入同一份对账单时会重新进来 */
+function useLineBulk(rows: StatementLine[], reload: () => void) {
+  const t = useT()
+  const { isAdmin } = useAuth()
+  const { message } = App.useApp()
+  const [sel, setSel] = useState<number[]>([])
+  const [busy, setBusy] = useState(false)
+  const chosen = rows.filter((r) => sel.includes(r.id as number))
+
+  const remove = async () => {
+    const matched = chosen.filter((r) => r.receipt_id != null)
+    const ids = chosen.filter((r) => r.receipt_id == null).map((r) => r.id as number)
+    setBusy(true)
+    if (ids.length) {
+      const { error } = await supabase.from('bank_statement_lines').delete().in('id', ids)
+      if (error) {
+        setBusy(false)
+        message.error(errorText(error))
+        return
+      }
+    }
+    setBusy(false)
+    if (matched.length)
+      message.warning(
+        t('已删除 {n} 条；{m} 条没删：{list}', {
+          n: ids.length,
+          m: matched.length,
+          list: matched.map((l) => `${l.line_date} ${l.currency} ${money(l.amount_orig)}（${t('已配对')}）`).join('、'),
+        }),
+        8,
+      )
+    else message.success(t('已删除 {n} 条', { n: ids.length }))
+    setSel([])
+    reload()
+  }
+
+  const rowSelection = isAdmin
+    ? { selectedRowKeys: sel, onChange: (keys: Key[]) => setSel(keys as number[]), selections: [Table.SELECTION_ALL, Table.SELECTION_NONE], columnWidth: 40 }
+    : undefined
+  const button =
+    isAdmin && chosen.length > 0 ? (
+      <Popconfirm
+        title={t('删除选中的 {n} 条流水？', { n: chosen.length })}
+        description={t('已配对的不会删（要删先取消配对）。以后再导入同一份对账单，删掉的行会重新进来。')}
+        okText={t('删除')}
+        okButtonProps={{ danger: true }}
+        onConfirm={() => void remove()}
+      >
+        <Button danger icon={<DeleteOutlined />} loading={busy}>
+          {t('删除选中 {n} 条', { n: chosen.length })}
+        </Button>
+      </Popconfirm>
+    ) : null
+  return { rowSelection, button }
+}
+
 // ---------------------------------------------------------------------------
 // 银行有、没人报
 // ---------------------------------------------------------------------------
@@ -198,9 +257,11 @@ function UnmatchedLines({
     }
   }
 
+  const bulk = useLineBulk(rows, () => void load())
+
   const columns: ColumnsType<StatementLine> = [
-    { title: t('银行日期'), dataIndex: 'line_date', width: 104 },
-    { title: t('账户'), dataIndex: 'account_name', width: 210, ellipsis: true },
+    { title: t('银行日期'), dataIndex: 'line_date', width: 104, ...textCol<StatementLine>((l) => l.line_date) },
+    { title: t('账户'), dataIndex: 'account_name', width: 210, ellipsis: true, ...pickCol(rows, (l) => l.account_name) },
     {
       title: t('金额'),
       width: 150,
@@ -210,9 +271,10 @@ function UnmatchedLines({
           {l.currency} {money(l.amount_orig)}
         </span>
       ),
+      ...textCol<StatementLine>((l) => `${l.currency} ${money(l.amount_orig)}`),
     },
-    { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true },
-    { title: t('参考号'), dataIndex: 'bank_ref', width: 140, ellipsis: true },
+    { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<StatementLine>((l) => l.payer_summary) },
+    { title: t('参考号'), dataIndex: 'bank_ref', width: 140, ellipsis: true, ...textCol<StatementLine>((l) => l.bank_ref) },
     {
       title: t('处理'),
       width: 250,
@@ -246,11 +308,12 @@ function UnmatchedLines({
         <Button icon={<SyncOutlined />} loading={matching} onClick={rematch} disabled={!rows.length}>
           {t('重新自动配对')}
         </Button>
+        {bulk.button}
         <span className="hint">
           {t('银行流水里有、但系统里没人录的款。是回款就“录成到账”；已经录过但金额或日期对不上就“关联已录的”；利息、内部转账等就“忽略”。')}
         </span>
       </Space>
-      <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={rows} scroll={{ x: 1000 }} pagination={{ defaultPageSize: 50 }} />
+      <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={rows} scroll={{ x: 1000 }} pagination={{ defaultPageSize: 50 }} rowSelection={bulk.rowSelection} />
       <LinkModal line={linkFor} onClose={(ok) => {
         setLinkFor(null)
         if (ok) void load()
@@ -384,12 +447,17 @@ function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; v
         onRow={(r) => ({ onClick: () => onOpen(r.id as number) })}
         scroll={{ x: 900 }}
         columns={[
-          { title: t('编号'), dataIndex: 'receipt_no', width: 150 },
-          { title: t('到账日期'), dataIndex: 'receipt_date', width: 104 },
-          { title: t('账户'), dataIndex: 'account_name', width: 210, ellipsis: true },
-          { title: t('金额'), width: 150, align: 'right', render: (_, r) => `${r.currency} ${money(r.amount_orig)}` },
-          { title: t('付款方 / 摘要'), dataIndex: 'payer_summary', ellipsis: true },
-          { title: t('报款'), width: 90, render: (_, r) => (r.is_reported ? <Tag color="green">{t('已报')}</Tag> : <Tag>{t('未报')}</Tag>) },
+          { title: t('编号'), dataIndex: 'receipt_no', width: 150, ...textCol<Receipt>((r) => r.receipt_no) },
+          { title: t('到账日期'), dataIndex: 'receipt_date', width: 104, ...textCol<Receipt>((r) => r.receipt_date) },
+          { title: t('账户'), dataIndex: 'account_name', width: 210, ellipsis: true, ...pickCol(rows, (r) => r.account_name) },
+          { title: t('金额'), width: 150, align: 'right', render: (_, r) => `${r.currency} ${money(r.amount_orig)}`, ...textCol<Receipt>((r) => `${r.currency} ${money(r.amount_orig)}`) },
+          { title: t('付款方 / 摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<Receipt>((r) => r.payer_summary) },
+          {
+            title: t('报款'),
+            width: 90,
+            render: (_, r) => (r.is_reported ? <Tag color="green">{t('已报')}</Tag> : <Tag>{t('未报')}</Tag>),
+            ...pickCol(rows, (r) => (r.is_reported ? '已报' : '未报'), t),
+          },
         ]}
       />
     </div>
@@ -438,6 +506,7 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
   }
 
   const MATCH_LABEL: Record<string, string> = { auto: t('自动'), manual: t('手工'), created: t('由流水生成') }
+  const bulk = useLineBulk(rows, () => void load())
 
   return (
     <div>
@@ -452,6 +521,7 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
           options={['已配对', '未配对', '已忽略'].map((x) => ({ value: x, label: t(x) }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
+        {bulk.button}
       </Space>
       <Table
         rowKey="id"
@@ -460,14 +530,16 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
         dataSource={rows}
         pagination={{ defaultPageSize: 50 }}
         scroll={{ x: 1100 }}
+        rowSelection={bulk.rowSelection}
         columns={[
-          { title: t('银行日期'), dataIndex: 'line_date', width: 104 },
-          { title: t('账户'), dataIndex: 'account_name', width: 200, ellipsis: true },
-          { title: t('金额'), width: 150, align: 'right', render: (_, l) => `${l.currency} ${money(l.amount_orig)}` },
-          { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true },
+          { title: t('银行日期'), dataIndex: 'line_date', width: 104, ...textCol<StatementLine>((l) => l.line_date) },
+          { title: t('账户'), dataIndex: 'account_name', width: 200, ellipsis: true, ...pickCol(rows, (l) => l.account_name) },
+          { title: t('金额'), width: 150, align: 'right', render: (_, l) => `${l.currency} ${money(l.amount_orig)}`, ...textCol<StatementLine>((l) => `${l.currency} ${money(l.amount_orig)}`) },
+          { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<StatementLine>((l) => l.payer_summary) },
           {
             title: t('状态'),
             width: 170,
+            ...pickCol(rows, (l) => l.match_status, t),
             render: (_, l) =>
               l.match_status === '已配对' ? (
                 <Space size={4}>
@@ -486,6 +558,7 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
           {
             title: t('到账'),
             width: 230,
+            ...textCol<StatementLine>((l) => l.receipt_no),
             render: (_, l) =>
               l.receipt_id ? (
                 <Space size={4}>

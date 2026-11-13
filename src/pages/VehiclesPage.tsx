@@ -26,6 +26,8 @@ import VehicleFormModal from '../components/VehicleFormModal'
 import VehicleImport from '../components/VehicleImport'
 import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
+import { RECEIPT_STATUS_COLOR, RECEIPT_STATUS_LABEL, receiptStatus } from '../lib/flow'
+import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money, num, todayAccra, usd } from '../lib/format'
 import { useRefData } from '../lib/refdata'
 import { fetchAll, supabase } from '../lib/supabase'
@@ -141,6 +143,7 @@ export default function VehiclesPage() {
       .select('id', { count: 'exact', head: true })
       .is('vehicle_id', null)
       .in('nature_kind', ['payment', 'opening'])
+      .or('receipt_status.is.null,receipt_status.eq.approved') // 审批中、退回的到账还不算
     setUnlockedCount(count ?? 0)
   }, [])
 
@@ -148,9 +151,11 @@ export default function VehiclesPage() {
     void loadUnlocked()
   }, [loadUnlocked])
 
+  /** 列头筛选后表里实际显示的行（合计按它算） */
+  const [shown, setShown] = useState<Vehicle[] | null>(null)
   const totals = useMemo(
     () =>
-      rows.reduce(
+      (shown ?? rows).reduce(
         (acc, r) => ({
           contract: acc.contract + Number(r.contract_usd ?? 0),
           received: acc.received + Number(r.received_usd ?? 0),
@@ -158,7 +163,7 @@ export default function VehiclesPage() {
         }),
         { contract: 0, received: 0, balance: 0 },
       ),
-    [rows],
+    [rows, shown],
   )
 
   const exportExcel = () => {
@@ -190,11 +195,11 @@ export default function VehiclesPage() {
   }
 
   const columns: ColumnsType<Vehicle> = [
-    { title: t('大架号'), dataIndex: 'vin', width: 180, fixed: 'left' },
-    { title: t('车型'), dataIndex: 'model', width: 150, ellipsis: true },
-    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true },
-    { title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true },
-    { title: t('付款方式'), dataIndex: 'payment_method', width: 80, render: (v: string) => t(v) },
+    { title: t('大架号'), dataIndex: 'vin', width: 180, fixed: 'left', ...textCol<Vehicle>((r) => r.vin) },
+    { title: t('车型'), dataIndex: 'model', width: 150, ellipsis: true, ...textCol<Vehicle>((r) => r.model) },
+    { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true, ...textCol<Vehicle>((r) => r.customer_name) },
+    { title: t('业务员'), dataIndex: 'salesperson_name', width: 110, ellipsis: true, ...pickCol(rows, (r) => r.salesperson_name) },
+    { title: t('付款方式'), dataIndex: 'payment_method', width: 80, render: (v: string) => t(v), ...pickCol(rows, (r) => r.payment_method, t) },
     { title: t('合同价'), dataIndex: 'contract_usd', width: 100, align: 'right', render: (v) => <span className="num">{usd(v)}</span> },
     { title: t('已到账'), dataIndex: 'received_usd', width: 100, align: 'right', render: (v) => <span className="num">{usd(v)}</span> },
     {
@@ -204,7 +209,7 @@ export default function VehiclesPage() {
       align: 'right',
       render: (v) => <span className={`num ${Number(v) > 1 ? 'text-danger' : ''}`}>{usd(v)}</span>,
     },
-    { title: t('回款状态'), dataIndex: 'pay_status', width: 90, render: (v: string) => <Tag color={PAY_COLOR[v]}>{t(v)}</Tag> },
+    { title: t('回款状态'), dataIndex: 'pay_status', width: 90, render: (v: string) => <Tag color={PAY_COLOR[v]}>{t(v)}</Tag>, ...pickCol(rows, (r) => r.pay_status, t) },
     {
       title: t('可发车'),
       dataIndex: 'can_ship',
@@ -298,6 +303,7 @@ export default function VehiclesPage() {
         pagination={{ defaultPageSize: 50, showSizeChanger: true, showTotal: (n) => t('共 {n} 台', { n }) }}
         rowClassName={() => 'clickable-row'}
         onRow={(r) => ({ onClick: (e) => !(e.target as HTMLElement).closest('.ant-table-selection-column') && setDetail(r) })}
+        onChange={(_, __, ___, extra) => setShown(extra.currentDataSource)}
         rowSelection={
           isStaff
             ? {
@@ -385,6 +391,7 @@ function UnlockedDrawer({ open, onClose, onChanged }: { open: boolean; onClose: 
       .select('*')
       .is('vehicle_id', null)
       .in('nature_kind', ['payment', 'opening'])
+      .or('receipt_status.is.null,receipt_status.eq.approved') // 审批中、退回的到账还不算
       .order('claim_date', { ascending: false })
       .order('id', { ascending: false })
       .limit(2000)
@@ -619,11 +626,12 @@ function VehicleDrawer({
                 width: 150,
                 render: (no: string | null, c) =>
                   no ? (
-                    isStaff ? (
-                      <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a>
-                    ) : (
-                      no
-                    )
+                    <Space size={4}>
+                      {isStaff ? <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a> : no}
+                      {receiptStatus(c.receipt_status) !== 'approved' && (
+                        <Tag color={RECEIPT_STATUS_COLOR[receiptStatus(c.receipt_status)]}>{t(RECEIPT_STATUS_LABEL[receiptStatus(c.receipt_status)])}</Tag>
+                      )}
+                    </Space>
                   ) : isStaff ? (
                     <Popconfirm title={t('删除这条记录？')} onConfirm={() => removeManual(c.id as number)} disabled={!isStaff}>
                       <a className="text-danger">{t('删除')}</a>

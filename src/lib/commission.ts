@@ -10,80 +10,30 @@ export type VoucherStatus = 'draft' | 'submitted' | 'approved' | 'paid' | 'rejec
 
 export const VOUCHER_STATUSES: VoucherStatus[] = ['draft', 'submitted', 'approved', 'paid', 'rejected']
 
-/**
- * 审批岗位（profiles.approval_posts），也是提成单审批中走到的那一级（commission_vouchers.step）。
- * 流程：业务员提交 → 销售部 → 应收财务 → 财务负责人 → 公司负责人 → 财务发放。每一级由谁审，管理员在“用户与权限”里指定
- */
-export type Post = 'sales_dept' | 'ar' | 'finance_head' | 'company_head'
-
-export const POSTS: Post[] = ['sales_dept', 'ar', 'finance_head', 'company_head']
-
-export const POST_LABEL: Record<Post, string> = {
-  sales_dept: '销售部',
-  ar: '应收财务',
-  finance_head: '财务负责人',
-  company_head: '公司负责人',
-}
-
-export function asPost(x: string | null | undefined): Post | null {
-  return (POSTS as string[]).includes(x ?? '') ? (x as Post) : null
-}
-
-/** 一个人的岗位（数据库里是文字数组） */
-export function asPosts(list: string[] | null | undefined): Post[] {
-  return POSTS.filter((p) => (list ?? []).includes(p))
-}
-
-/** 提成单走到哪一步：审批中（submitted）的按走到的那一级分开，其余就是状态 */
-export type VoucherStage = Exclude<VoucherStatus, 'submitted'> | Post
-
-export const VOUCHER_STAGES: VoucherStage[] = ['draft', ...POSTS, 'approved', 'paid', 'rejected']
-
-export const STAGE_LABEL: Record<VoucherStage, string> = {
+/** 提成单状态的说法（界面上再翻译）。审批中（submitted）走到哪一级、叫什么，看审批流（lib/flow.ts） */
+export const VOUCHER_STATUS_LABEL: Record<VoucherStatus, string> = {
   draft: '草稿',
-  sales_dept: '待销售部审核',
-  ar: '待应收财务审核',
-  finance_head: '待财务负责人审核',
-  company_head: '待公司负责人审批',
+  submitted: '审批中',
   approved: '已批准待发放',
   paid: '已发放',
   rejected: '已退回',
 }
 
 /** 打印的提成单上用（中英都印） */
-export const STAGE_EN: Record<VoucherStage, string> = {
+export const VOUCHER_STATUS_EN: Record<VoucherStatus, string> = {
   draft: 'DRAFT',
-  sales_dept: 'PENDING SALES DEPT',
-  ar: 'PENDING AR FINANCE',
-  finance_head: 'PENDING HEAD OF FINANCE',
-  company_head: 'PENDING COMPANY HEAD',
+  submitted: 'PENDING',
   approved: 'APPROVED',
   paid: 'PAID',
   rejected: 'RETURNED',
 }
 
-export const STAGE_COLOR: Record<VoucherStage, string> = {
+export const VOUCHER_STATUS_COLOR: Record<VoucherStatus, string> = {
   draft: 'default',
-  sales_dept: 'blue',
-  ar: 'blue',
-  finance_head: 'geekblue',
-  company_head: 'gold',
+  submitted: 'blue',
   approved: 'cyan',
   paid: 'green',
   rejected: 'red',
-}
-
-/** 每一级通过之后的说法（审批记录、工作台上的进展） */
-export const POST_PASSED: Record<Post, string> = {
-  sales_dept: '销售部已通过',
-  ar: '应收财务已通过',
-  finance_head: '财务负责人已通过',
-  company_head: '公司负责人已批准',
-}
-
-export function voucherStage(status: string | null | undefined, step: string | null | undefined): VoucherStage {
-  const s = voucherStatus(status)
-  return s === 'submitted' ? (asPost(step) ?? 'sales_dept') : s
 }
 
 export function voucherStatus(s: string | null | undefined): VoucherStatus {
@@ -358,6 +308,19 @@ export function useVoucherTodo(enabled: boolean): number {
 export async function voucherTodoIds(): Promise<number[]> {
   const { data } = await supabase.from('v_workbench').select('doc_id').eq('doc_type', 'voucher').eq('in_todo', true).limit(2000)
   return (data ?? []).map((r) => r.doc_id).filter((x): x is number => x != null)
+}
+
+/** 打印的提成单上“审批过程”里每一步的说法（中英都印）。通过、退回前面带哪一级 */
+export const TRAIL_PRINT: Record<string, { zh: string; en: string }> = {
+  submit: { zh: '提交', en: 'SUBMITTED' },
+  resubmit: { zh: '重新提交', en: 'RESUBMITTED' },
+  withdraw: { zh: '撤回', en: 'WITHDRAWN' },
+  approve: { zh: '通过', en: 'APPROVED' },
+  finance_approve: { zh: '财务审核通过', en: 'FINANCE APPROVED' },
+  gm_approve: { zh: '总经理批准', en: 'GM APPROVED' },
+  reject: { zh: '退回', en: 'RETURNED' },
+  pay: { zh: '发放', en: 'PAID OUT' },
+  unpay: { zh: '取消发放', en: 'PAYOUT CANCELLED' },
 }
 
 /** 把提成单打开成可以打印的页面（新窗口） */

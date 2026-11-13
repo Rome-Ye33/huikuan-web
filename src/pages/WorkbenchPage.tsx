@@ -10,24 +10,13 @@ import { dateTime, money, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { parseOpen } from '../lib/notify'
 import { useRefData } from '../lib/refdata'
-import { claimsSummary } from '../lib/submissions'
+import { claimsSummary, isFillRequest } from '../lib/submissions'
 import type { Submission } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
-import {
-  actionLabel,
-  BOX_LABEL,
-  BOX_ORDER,
-  BOXES,
-  boxQuery,
-  DOC_COLOR,
-  DOC_LABEL,
-  docType,
-  statusColor,
-  statusLabel,
-} from '../lib/workbench'
+import { BOX_LABEL, BOX_ORDER, BOXES, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
 import type { Box, DocType, WorkItem } from '../lib/workbench'
 
-// 工作台：到账提交、提成单两种审批，按“待办 / 已办 / 已发起 / 已结束”分栏。点开就是原来的审核、修改页面
+// 工作台：到账提交、提成单、到账（录入后的审批）三种审批，按“待办 / 已办 / 已发起 / 已结束”分栏。点开就是原来的审核、修改页面
 
 const PAGE = 20
 type TypeFilter = DocType | 'all'
@@ -43,14 +32,25 @@ const EMPTY_TEXT: Record<Box, string> = {
 
 function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp: boolean; onOpen: () => void }) {
   const t = useT()
+  const labels = useDocLabels()
   const { accountById } = useRefData()
   const type = docType(it.doc_type)
   const isSub = type === 'submission'
+  const isRec = type === 'receipt'
+  /** 财务请业务员填写的到账提交（23） */
+  const isReq = isSub && !!it.is_request
 
-  const title = isSub ? (
+  const amountText = (
     <span className="num">
       {it.currency} {money(it.amount)}
       {it.currency !== 'USD' && it.amount_usd != null && <span className="hint"> ≈ {usd(it.amount_usd)}</span>}
+    </span>
+  )
+  const title = isSub ? (
+    amountText
+  ) : isRec ? (
+    <span>
+      <b>{it.doc_no}</b> · {amountText}
     </span>
   ) : (
     <span>
@@ -59,17 +59,16 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
     </span>
   )
 
-  const details: string[] = isSub
-    ? claimsSummary(it, t)
-    : [[t('{n} 台', { n: it.vehicle_count ?? 0 }), it.vins].filter(Boolean).join(' · ')]
+  const details: string[] =
+    isSub || isRec ? claimsSummary(it, t) : [[t('{n} 台', { n: it.vehicle_count ?? 0 }), it.vins].filter(Boolean).join(' · ')]
 
   const meta = [
-    showSp ? it.salesperson_name : null,
-    isSub ? accountById.get(it.account_id ?? 0)?.short_name : null,
-    isSub ? t('到账 {date}', { date: it.doc_date ?? '' }) : it.amount != null ? t('本次发放 {amt}', { amt: '$ ' + money(it.amount) }) : null,
+    showSp && !isRec ? it.salesperson_name : null,
+    isSub || isRec ? accountById.get(it.account_id ?? 0)?.short_name : null,
+    isSub || isRec ? t('到账 {date}', { date: it.doc_date ?? '' }) : it.amount != null ? t('本次发放 {amt}', { amt: '$ ' + money(it.amount) }) : null,
   ].filter(Boolean)
 
-  const action = (a: string | null | undefined, step: string | null | undefined) => (a ? t(actionLabel(a, step)) : '')
+  const action = (a: string | null | undefined, step: string | null | undefined) => labels.action(a, step, type)
   const progress =
     box === 'done' && it.my_action
       ? t('我：{action} · {when}', { action: action(it.my_action, it.my_step), when: dateTime(it.my_at) })
@@ -82,10 +81,11 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
       <div className="wb-head">
         <div style={{ minWidth: 0 }}>
           <Tag color={DOC_COLOR[type]}>{t(DOC_LABEL[type])}</Tag>
+          {isReq && <Tag color="orange">{t('财务请业务员填的')}</Tag>}
           {title}
         </div>
-        <Tag color={statusColor(type, it.status, it.step)} style={{ marginInlineEnd: 0 }}>
-          {t(statusLabel(type, it.status, it.step))}
+        <Tag color={labels.color(type, it.status, it.step)} style={{ marginInlineEnd: 0 }}>
+          {labels.status(type, it.status, it.step)}
         </Tag>
       </div>
       {details.map((line, i) => (
@@ -96,6 +96,9 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
       {meta.length > 0 && <div className="hint wb-line">{meta.join(' · ')}</div>}
       {it.status === 'rejected' && it.last_action === 'reject' && it.last_note && (
         <div className="text-danger wb-line">{t('退回原因：{reason}', { reason: it.last_note })}</div>
+      )}
+      {isReq && it.status === 'requested' && it.last_action === 'request' && it.last_note && (
+        <div className="text-warn wb-line">{t('财务说：{note}', { note: it.last_note })}</div>
       )}
       {isSub && it.status === 'approved' && it.receipt_no && <div className="text-ok wb-line">{t('到账编号 {no}', { no: it.receipt_no })}</div>}
       <div className="hint wb-line" style={{ marginTop: 4 }}>
@@ -162,13 +165,19 @@ export default function WorkbenchPage() {
         setVoucher({ open: true, id })
         return
       }
+      if (type === 'receipt') {
+        setReceiptId(id)
+        return
+      }
       const { data } = await supabase.from('receipt_submissions').select('*').eq('id', id).maybeSingle()
       if (!data) {
         message.warning(t('这张单据已经不在了'))
         void load()
         return
       }
-      if (isStaff && data.status === 'pending') setReview(data)
+      // 财务请业务员填写的：财务在那笔到账的页面看、审核；业务员打开填写表单
+      if (isStaff && isFillRequest(data) && data.receipt_id) setReceiptId(data.receipt_id)
+      else if (isStaff && data.status === 'pending') setReview(data)
       else if (isStaff && data.status === 'approved' && data.receipt_id) setReceiptId(data.receipt_id)
       else setSubForm({ open: true, sub: data })
     },
@@ -181,7 +190,9 @@ export default function WorkbenchPage() {
       const { data } =
         type === 'voucher'
           ? await supabase.from('v_commission_vouchers').select('id').eq('id', id).maybeSingle()
-          : await supabase.from('receipt_submissions').select('id').eq('id', id).maybeSingle()
+          : type === 'receipt'
+            ? await supabase.from('v_bank_receipts').select('id').eq('id', id).maybeSingle()
+            : await supabase.from('receipt_submissions').select('id').eq('id', id).maybeSingle()
       if (!data) {
         message.warning(t('这张单据已经不在了'))
         return
@@ -192,10 +203,10 @@ export default function WorkbenchPage() {
   )
 
   const open = (it: WorkItem) => {
-    if (it.doc_id != null) void openDoc(it.doc_type === 'voucher' ? 'voucher' : 'submission', it.doc_id)
+    if (it.doc_id != null) void openDoc(docType(it.doc_type), it.doc_id)
   }
 
-  // 邮件提醒里的“打开处理”：/workbench?open=v12 打开提成单 12，?open=s34 打开到账提交 34
+  // 邮件提醒里的“打开处理”：/workbench?open=v12 打开提成单 12，?open=s34 打开到账提交 34，?open=r56 打开到账 56
   const [params, setParams] = useSearchParams()
   const openParam = params.get('open')
   useEffect(() => {
@@ -252,7 +263,7 @@ export default function WorkbenchPage() {
         </Space>
       </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-        {t('到账提交和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交的，已结束是流程走完的。点开就能处理。')}
+        {t('到账提交、到账和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交（录入）的，已结束是流程走完的。点开就能处理。')}
       </Typography.Paragraph>
       <Tabs
         className="wb-tabs"
@@ -264,6 +275,7 @@ export default function WorkbenchPage() {
         items={BOXES.map((b) => ({ key: b, label: tabLabel(b) }))}
       />
       <Segmented
+        className="wb-type"
         value={type}
         onChange={(v) => {
           setType(v as TypeFilter)
@@ -272,6 +284,7 @@ export default function WorkbenchPage() {
         options={[
           { value: 'all', label: t('全部') },
           { value: 'submission', label: t(DOC_LABEL.submission) },
+          { value: 'receipt', label: t(DOC_LABEL.receipt) },
           { value: 'voucher', label: t(DOC_LABEL.voucher) },
         ]}
         style={{ marginBottom: 12, maxWidth: '100%', overflowX: 'auto' }}
