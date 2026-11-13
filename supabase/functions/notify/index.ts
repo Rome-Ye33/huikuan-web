@@ -1,4 +1,5 @@
 // 待办提醒（Supabase Edge Function “notify”）：工作日上午 10 点、下午 4 点（加纳时间），把每个人攒下的新待办合成一封邮件发给他
+//   （30 起到账的抄送也在这封里，单独列成“抄送”：不用处理，看一眼就好）
 // - flush：数据库每分钟的定时任务（pg_cron）在有到时间的提醒时调用，请求头带 x-notify-secret
 //          （口令上线时由数据库随机生成、存在 Vault，这里请数据库 notify_check_secret 核对，谁都不用经手）。
 //          从数据库按人取到时间的提醒（notify_claim_digest：一人一组），一人一封发出去，再把这一组的结果一起报回去（notify_done_many）。
@@ -63,9 +64,9 @@ const TIME_BUDGET = 60_000 // 发了一分钟还没发完的，也等下一分�
 const configured = () => SMTP_USER !== '' && SMTP_PASS !== ''
 
 // 数据库给的：一个人攒下的待办（items 按记下的先后）
-type Item = { id: number; body: string | null; go: string | null }
+type Item = { id: number; body: string | null; go: string | null; kind?: string | null } // kind = cc 是抄送，其余是待办
 type Digest = { to_email: string | null; to_name: string | null; lang: string | null; items: Item[] | null }
-type Todo = { text: string; go: string }
+type Todo = { text: string; go: string; cc?: boolean }
 // 发送结果。没发出去的：kind = auth 发信邮箱登录不上 / net 连不上发信服务器 / quota 今天发太多了；stop = 这一批剩下的也发不出去，先停下
 type Failure = { status: 'retry' | 'failed' | 'skipped'; error: string; detail?: string; kind?: 'auth' | 'net' | 'quota'; stop?: boolean }
 type Result = { status: 'sent'; id: string } | Failure
@@ -108,22 +109,29 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
 type Mail = { subject: string; text: string; html: string }
 
-/** 一封提醒邮件。todos = 这个人攒下的待办（数据库 notify_text 写好的文字 + 按钮参数）；空的 = 测试邮件。name 空的就不称呼名字 */
+/** 一封提醒邮件。todos = 这个人攒下的待办和抄送（数据库 notify_text 写好的文字 + 按钮参数，cc = 抄送）；空的 = 测试邮件。name 空的就不称呼名字 */
 function compose(lang: string | null, name: string | null, todos: Todo[] | null): Mail {
   const en = lang === 'en'
   const test = todos === null
-  const list = (todos ?? []).map((t) => ({ text: oneLine(t.text), link: `${SITE}?go=${encodeURIComponent(t.go)}` }))
+  const all = (todos ?? []).map((t) => ({ text: oneLine(t.text), link: `${SITE}?go=${encodeURIComponent(t.go)}`, cc: !!t.cc }))
+  const list = all.filter((t) => !t.cc) // 待办
+  const ccs = all.filter((t) => t.cc) // 抄送（到账生效后抄送给他看的，不用处理）
   const n = list.length
+  const m = ccs.length
   const one = list[0]
+  const oneCc = ccs[0]
   const who = name ? oneLine(name) : ''
   const wb = `${SITE}?go=wb`
   const greeting = en ? (who ? `Hello ${who},` : 'Hello,') : who ? `${who}，你好：` : '你好：'
-  // 标题、正文第一句、按钮、按钮打开什么
+  const each = en ? 'Open it' : '打开处理'
+  const view = en ? 'View' : '查看'
+  // 标题、正文第一句、按钮、按钮打开什么；几项的时候分段列出来（待办一段、抄送一段）
   let subject: string
   let line: string
   let button: string
   let link: string
   let opens: string
+  const sections: { heading: string | null; items: typeof all; each: string }[] = []
   if (test) {
     subject = en ? '[Sales Management] Test email' : '【销售管理】测试邮件'
     line = en
@@ -132,13 +140,21 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
     button = en ? 'Open the workbench' : '打开工作台'
     link = wb
     opens = en ? 'The button opens the website. After you sign in, it goes to the workbench.' : '点按钮会打开网站，登录后到工作台。'
-  } else if (n === 1) {
+  } else if (n === 1 && m === 0) {
     subject = en ? `[Sales Management] ${cut(cap(one.text), 150)}` : `【销售管理】${cut(one.text, 100)}`
     line = en ? `You have a new to-do in Sales Management: ${one.text}.` : `你在销售管理系统有一项新的待办：${one.text}。`
     button = en ? 'Open it' : '打开处理'
     link = one.link
     opens = en ? 'The button opens the website. After you sign in, it goes straight to this item.' : '点按钮会打开网站，登录后直接到这张单。'
-  } else {
+  } else if (n === 0 && m === 1) {
+    subject = en ? `[Sales Management] CC: ${cut(oneCc.text, 150)}` : `【销售管理】抄送：${cut(oneCc.text, 100)}`
+    line = en
+      ? `A receipt has been copied to you for information: ${oneCc.text}. Nothing to do, just have a look.`
+      : `有一笔到账抄送给你：${oneCc.text}。不用处理，看一眼就好。`
+    button = view
+    link = oneCc.link
+    opens = en ? 'The button opens the website. After you sign in, it goes straight to this receipt.' : '点按钮会打开网站，登录后直接到这笔到账。'
+  } else if (m === 0) {
     subject = en ? `[Sales Management] You have ${n} new to-dos` : `【销售管理】你有 ${n} 项新的待办`
     line = en ? `You have ${n} new to-dos in Sales Management:` : `你在销售管理系统有 ${n} 项新的待办：`
     button = en ? 'Open the workbench' : '打开工作台'
@@ -146,6 +162,32 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
     opens = en
       ? '“Open it” under each item opens the website and, after you sign in, goes straight to that item.'
       : '每项下面的“打开处理”会打开网站，登录后直接到那张单。'
+    sections.push({ heading: null, items: list, each })
+  } else if (n === 0) {
+    subject = en ? `[Sales Management] ${m} receipts copied to you` : `【销售管理】有 ${m} 笔到账抄送给你`
+    line = en ? `${m} receipts have been copied to you for information. Nothing to do, just have a look:` : `有 ${m} 笔到账抄送给你，不用处理，看一眼就好：`
+    button = en ? 'Open the workbench' : '打开工作台'
+    link = wb
+    opens = en
+      ? '“View” under each item opens the website and, after you sign in, goes straight to that receipt.'
+      : '每项下面的“查看”会打开网站，登录后直接到那笔到账。'
+    sections.push({ heading: null, items: ccs, each: view })
+  } else {
+    subject = en
+      ? `[Sales Management] You have ${n} new to-do${n > 1 ? 's' : ''} and ${m} receipt${m > 1 ? 's' : ''} copied to you`
+      : `【销售管理】你有 ${n} 项新的待办、${m} 笔抄送的到账`
+    line = en ? `You have ${n} new to-do${n > 1 ? 's' : ''} in Sales Management:` : `你在销售管理系统有 ${n} 项新的待办：`
+    button = en ? 'Open the workbench' : '打开工作台'
+    link = wb
+    opens = en
+      ? '“Open it” and “View” under each item open the website and, after you sign in, go straight to that item.'
+      : '每项下面的“打开处理”“查看”会打开网站，登录后直接到那张单。'
+    sections.push({ heading: null, items: list, each })
+    sections.push({
+      heading: en ? `Also copied to you for information (nothing to do), ${m} receipt${m > 1 ? 's' : ''}:` : `另外有 ${m} 笔到账抄送给你（不用处理，看一眼就好）：`,
+      items: ccs,
+      each: view,
+    })
   }
   const when = en
     ? 'Reminders go out on weekdays at 10:00 and 16:00 (Ghana time), with all new to-dos in one email.'
@@ -153,15 +195,26 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
   const foot = en
     ? `${opens} ${when} To stop these emails, turn them off under “Email reminders” at the top right of the website. This email was sent automatically. Please do not reply.`
     : `${opens}${when}不想收到这类邮件，可以在网站右上角“邮件提醒”里关掉。这封邮件由系统自动发出，请不要回复。`
-  const each = en ? 'Open it' : '打开处理'
   const font = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'PingFang SC','Microsoft YaHei',Arial,sans-serif"
-  // 几项待办：一项一段，每段自己的“打开处理”
-  const itemsHtml = n > 1
-    ? `<ol style="margin:0 0 20px;padding-left:22px">${list
-        .map((t) => `<li style="margin:0 0 12px">${esc(t.text)}${en ? '.' : '。'}<br><a href="${esc(t.link)}" style="color:#1d4ed8;font-weight:600">${esc(each)}</a></li>`)
-        .join('')}</ol>\n`
-    : ''
-  const itemsText = n > 1 ? list.map((t, i) => `${i + 1}. ${t.text}${en ? '.' : '。'}\n   ${each}${en ? ': ' : '：'}${t.link}`).join('\n') + '\n\n' : ''
+  // 几项的时候：一项一段，每段自己的“打开处理”（抄送的是“查看”）；待办和抄送都有就分成两段
+  const many = sections.length > 0
+  const itemsHtml = sections
+    .map(
+      (sec) =>
+        (sec.heading ? `<p style="margin:0 0 12px">${esc(sec.heading)}</p>\n` : '') +
+        `<ol style="margin:0 0 20px;padding-left:22px">${sec.items
+          .map((t) => `<li style="margin:0 0 12px">${esc(t.text)}${en ? '.' : '。'}<br><a href="${esc(t.link)}" style="color:#1d4ed8;font-weight:600">${esc(sec.each)}</a></li>`)
+          .join('')}</ol>\n`,
+    )
+    .join('')
+  const itemsText = sections
+    .map(
+      (sec) =>
+        (sec.heading ? `${sec.heading}\n` : '') +
+        sec.items.map((t, i) => `${i + 1}. ${t.text}${en ? '.' : '。'}\n   ${sec.each}${en ? ': ' : '：'}${t.link}`).join('\n') +
+        '\n\n',
+    )
+    .join('')
   const html = `<!doctype html>
 <html lang="${en ? 'en' : 'zh-CN'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title></head>
 <body style="margin:0;padding:0;background:#f3f6fb">
@@ -169,13 +222,13 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
 <div style="margin:0 0 12px;font-size:16px;font-weight:600;color:#1d4ed8">${en ? 'Sales Management' : '销售管理'}</div>
 <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px">
 <p style="margin:0 0 12px">${esc(greeting)}</p>
-<p style="margin:0 0 ${n > 1 ? 12 : 20}px">${esc(line)}</p>
+<p style="margin:0 0 ${many ? 12 : 20}px">${esc(line)}</p>
 ${itemsHtml}<a href="${esc(link)}" style="display:inline-block;background:#1d4ed8;color:#ffffff;text-decoration:none;font-weight:600;padding:10px 24px;border-radius:6px">${esc(button)}</a>
 </div>
 <p style="margin:16px 0 0;font-size:12px;color:#6b7280">${esc(foot)}</p>
 </div>
 </body></html>`
-  const textBody = `${greeting}\n\n${line}\n${n > 1 ? '' : '\n'}${itemsText}${button}${en ? ': ' : '：'}${link}\n\n${foot}\n`
+  const textBody = `${greeting}\n\n${line}\n${many ? '' : '\n'}${itemsText}${button}${en ? ': ' : '：'}${link}\n\n${foot}\n`
   return { subject, text: textBody, html }
 }
 
@@ -253,7 +306,7 @@ async function flush(): Promise<Response> {
         else if (!r.to_email) res = { status: 'skipped', error: '没有邮箱' }
         else {
           t ??= transport(true)
-          res = await sendMail(t, r.to_email, compose(r.lang, r.to_name, good.map((i) => ({ text: i.body as string, go: i.go as string }))))
+          res = await sendMail(t, r.to_email, compose(r.lang, r.to_name, good.map((i) => ({ text: i.body as string, go: i.go as string, cc: i.kind === 'cc' }))))
           if (res.status === 'sent') count.mails++
           else if (res.stop) stopped = res
         }

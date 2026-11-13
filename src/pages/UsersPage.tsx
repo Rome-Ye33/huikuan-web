@@ -1,6 +1,7 @@
 import { ArrowRightOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
 import FlowEditor from '../components/FlowEditor'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
@@ -30,6 +31,7 @@ export default function UsersPage() {
   const [pwUser, setPwUser] = useState<Profile | null>(null)
   const [pwBusy, setPwBusy] = useState(false)
   const [postBusy, setPostBusy] = useState<string | null>(null)
+  const [ccBusy, setCcBusy] = useState(false)
   const [flowOpen, setFlowOpen] = useState<FlowDocType | null>(null)
   const [pform] = Form.useForm<{ password: string }>()
   const [uform] = Form.useForm<{
@@ -112,8 +114,69 @@ export default function UsersPage() {
   }
   const postTags = (list: string[]) => flow.sortKeys(list).map((k) => <Tag key={k}>{flow.name(k)}</Tag>)
 
+  // ---------- 到账抄送名单（30）：到账生效后抄送给谁看一眼（不用审批）。已注册的记在 profiles.cc_docs，还没注册的记在邀请名单、注册时带过去 ----------
+  const ccOf = (x: { cc_docs: string[] | null }) => x.cc_docs ?? []
+  const isCc = (x: { cc_docs: string[] | null }) => ccOf(x).includes('receipt')
+  const ccValue = (): string[] => [...profiles.filter(isCc).map((p) => 'p:' + p.id), ...waiting.filter(isCc).map((i) => 'i:' + i.email)]
+  const ccOptions = () => [
+    ...profiles
+      .filter((p) => usable(p) || isCc(p))
+      .map((p) => ({ value: 'p:' + p.id, label: usable(p) ? personName(p) : t('{name}（已停用）', { name: personName(p) }) })),
+    ...waiting.map((i) => ({ value: 'i:' + i.email, label: t('{name}（等待注册）', { name: personName(i) }) })),
+  ]
+  const setCc = async (next: string[]) => {
+    const cur = ccValue()
+    const changed = [...next.filter((k) => !cur.includes(k)), ...cur.filter((k) => !next.includes(k))]
+    if (!changed.length) return
+    setCcBusy(true)
+    let failed: string | null = null
+    for (const key of changed) {
+      const on = next.includes(key)
+      const withCc = (list: string[]) => (on ? [...list.filter((x) => x !== 'receipt'), 'receipt'] : list.filter((x) => x !== 'receipt'))
+      if (key.startsWith('p:')) {
+        const p = profiles.find((x) => 'p:' + x.id === key)
+        if (!p) continue
+        const { error } = await supabase.from('profiles').update({ cc_docs: withCc(ccOf(p)) }).eq('id', p.id)
+        if (error) failed = errorText(error)
+      } else {
+        const i = invites.find((x) => 'i:' + x.email === key)
+        if (!i) continue
+        const { error } = await supabase.from('user_invites').update({ cc_docs: withCc(ccOf(i)) }).eq('email', i.email)
+        if (error) failed = errorText(error)
+      }
+    }
+    setCcBusy(false)
+    if (failed) message.error(failed)
+    else message.success(t('已保存'))
+    await load()
+  }
+  const ccTag = (x: { cc_docs: string[] | null }) => (isCc(x) ? <Tag color="cyan">{t('到账抄送')}</Tag> : null)
+  /** 到账审批流卡片下面的抄送名单 */
+  const ccBlock = (
+    <div className="flow-cc" style={{ marginTop: 12 }}>
+      <div className="flow-name" style={{ marginBottom: 4 }}>
+        {t('抄送')}
+      </div>
+      <Select
+        mode="multiple"
+        style={{ width: '100%', maxWidth: 560 }}
+        placeholder={t('选抄送人（可以不选）')}
+        loading={ccBusy}
+        disabled={ccBusy}
+        showSearch={{ optionFilterProp: 'label' }}
+        value={ccValue()}
+        options={ccOptions()}
+        onChange={(v: string[]) => void setCc(v)}
+      />
+      <div className="hint" style={{ marginTop: 2 }}>
+        {t('到账生效（最后一级通过）后抄送给这些人看一眼，不用审批：合在提醒邮件里发给他们，工作台“抄送”里也能点开看。业务员账号也可以选，他只看得到抄送给他的到账。改了只影响之后生效的到账。')}
+        {rflow.active.length === 0 && ' ' + t('现在没有审批级别，到账录入后直接生效，不会抄送。')}
+      </div>
+    </div>
+  )
+
   /** 一条审批流的卡片：开头、每一级（选审核人）、结尾 */
-  const flowCard = (f: FlowApi, title: string, start: string, end: string, hint: string, empty: string) => (
+  const flowCard = (f: FlowApi, title: string, start: string, end: string, hint: string, empty: string, after?: ReactNode) => (
     <Card
       size="small"
       className={`flow-card flow-card-${f.docType}`}
@@ -180,6 +243,7 @@ export default function UsersPage() {
           {empty}
         </div>
       )}
+      {after}
       <div className="hint" style={{ marginTop: 8 }}>
         {hint}
       </div>
@@ -297,6 +361,7 @@ export default function UsersPage() {
         t('财务录的到账、业务员提交经财务审核转成的到账，录入后都按这个顺序一级一级审，全部通过才算到账（才进余额和报表、才能报款）。一个岗位可以有几个人（谁先审都行），管理员任何一级都可以代办；审批人可以是业务员账号，他只看得到走审批的到账。') +
           t('要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后录入的到账。'),
         t('还没有审批级别：现在到账录入后直接生效。点“调整审批流”加级别。'),
+        ccBlock,
       )}
       <FlowEditor
         open={flowOpen !== null}
@@ -322,7 +387,17 @@ export default function UsersPage() {
           { title: t('姓名'), dataIndex: 'full_name', width: 160 },
           { title: t('角色'), dataIndex: 'role', width: 90, render: (r: AppRole | null) => (r ? <Tag color={ROLE_COLOR[r]}>{t(ROLE_LABEL[r])}</Tag> : <Tag>{t('未授权')}</Tag>) },
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
-          { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
+          {
+            title: t('审批岗位 / 抄送'),
+            dataIndex: 'approval_posts',
+            width: 200,
+            render: (v: string[] | null, p) => (
+              <>
+                {postTags(v ?? [])}
+                {ccTag(p)}
+              </>
+            ),
+          },
           {
             title: t('邮件提醒'),
             dataIndex: 'notify_email',
@@ -420,7 +495,17 @@ export default function UsersPage() {
           { title: t('姓名'), dataIndex: 'full_name', width: 160 },
           { title: t('角色'), dataIndex: 'role', width: 90, render: (r: AppRole) => <Tag color={ROLE_COLOR[r]}>{t(ROLE_LABEL[r])}</Tag> },
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
-          { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
+          {
+            title: t('审批岗位 / 抄送'),
+            dataIndex: 'approval_posts',
+            width: 200,
+            render: (v: string[] | null, i) => (
+              <>
+                {postTags(v ?? [])}
+                {ccTag(i)}
+              </>
+            ),
+          },
           {
             title: t('状态'),
             width: 90,

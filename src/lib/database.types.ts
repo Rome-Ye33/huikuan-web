@@ -14,6 +14,44 @@ export type Database = {
   }
   public: {
     Tables: {
+      approval_cc: {
+        Row: {
+          at: string
+          doc_id: number
+          doc_type: string
+          id: number
+          log_id: number | null
+          user_id: string
+          user_name: string | null
+        }
+        Insert: {
+          at?: string
+          doc_id: number
+          doc_type: string
+          id?: never
+          log_id?: number | null
+          user_id: string
+          user_name?: string | null
+        }
+        Update: {
+          at?: string
+          doc_id?: number
+          doc_type?: string
+          id?: never
+          log_id?: number | null
+          user_id?: string
+          user_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "approval_cc_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       approval_logs: {
         Row: {
           action: string
@@ -892,6 +930,7 @@ export type Database = {
         Row: {
           active: boolean
           approval_posts: string[]
+          cc_docs: string[]
           created_at: string
           email: string | null
           full_name: string | null
@@ -905,6 +944,7 @@ export type Database = {
         Insert: {
           active?: boolean
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email?: string | null
           full_name?: string | null
@@ -918,6 +958,7 @@ export type Database = {
         Update: {
           active?: boolean
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email?: string | null
           full_name?: string | null
@@ -1229,6 +1270,7 @@ export type Database = {
       user_invites: {
         Row: {
           approval_posts: string[]
+          cc_docs: string[]
           created_at: string
           email: string
           full_name: string | null
@@ -1238,6 +1280,7 @@ export type Database = {
         }
         Insert: {
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email: string
           full_name?: string | null
@@ -1247,6 +1290,7 @@ export type Database = {
         }
         Update: {
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email?: string
           full_name?: string | null
@@ -1748,6 +1792,7 @@ export type Database = {
           doc_id: number | null
           doc_no: string | null
           doc_type: string | null
+          in_cc: boolean | null
           in_done: boolean | null
           in_ended: boolean | null
           in_mine: boolean | null
