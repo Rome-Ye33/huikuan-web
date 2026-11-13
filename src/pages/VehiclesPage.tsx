@@ -39,7 +39,9 @@ const PAY_COLOR: Record<string, string> = { 已结清: 'green', 部分到账: 'o
 export default function VehiclesPage() {
   const t = useT()
   const { message } = App.useApp()
-  const { isStaff } = useAuth()
+  const { isStaff, canEdit } = useAuth()
+  /** 能新增、修改、删除、导入车（“车辆台账”可编辑）；只看的财务和业务员一样只能看 */
+  const vxEdit = canEdit('vehicles')
   const { salespersons } = useRefData()
   const [rows, setRows] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(false)
@@ -231,12 +233,12 @@ export default function VehiclesPage() {
           <Button icon={<DownloadOutlined />} onClick={exportExcel} disabled={!rows.length}>
             {t('导出 Excel')}
           </Button>
-          {isStaff && (
+          {vxEdit && (
             <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
               {t('批量导入')}
             </Button>
           )}
-          {isStaff && selected.length > 0 && (
+          {vxEdit && selected.length > 0 && (
             <Popconfirm
               title={t('删除选中的 {n} 台车？有到账记录、在提成单上的不会删。', { n: selected.length })}
               okText={t('删除')}
@@ -248,7 +250,7 @@ export default function VehiclesPage() {
               </Button>
             </Popconfirm>
           )}
-          {isStaff && (
+          {vxEdit && (
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setForm({ open: true, vehicle: null })}>
               {t('新增车辆')}
             </Button>
@@ -305,7 +307,7 @@ export default function VehiclesPage() {
         onRow={(r) => ({ onClick: (e) => !(e.target as HTMLElement).closest('.ant-table-selection-column') && setDetail(r) })}
         onChange={(_, __, ___, extra) => setShown(extra.currentDataSource)}
         rowSelection={
-          isStaff
+          vxEdit
             ? {
                 selectedRowKeys: selected,
                 onChange: (keys) => setSelected(keys as number[]),
@@ -319,7 +321,7 @@ export default function VehiclesPage() {
           rows.length ? (
             <Table.Summary fixed>
               <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={isStaff ? 6 : 5}>
+                <Table.Summary.Cell index={0} colSpan={vxEdit ? 6 : 5}>
                   {t('合计')}
                 </Table.Summary.Cell>
                 <Table.Summary.Cell index={5} align="right">
@@ -379,7 +381,10 @@ export default function VehiclesPage() {
 /** 大架号未锁定的到账：钱到了、记在客户名下，还没定是哪台车。财务知道是哪台车后打开到账把车选上 */
 function UnlockedDrawer({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => Promise<void> }) {
   const t = useT()
-  const { isStaff } = useAuth()
+  const { isStaff, canEdit, canView } = useAuth()
+  /** 到账编号点开看（“到账录入”看得到的）；能改的打开后把车选上 */
+  const rxView = canView('receipts')
+  const rxEdit = canEdit('receipts')
   const [rows, setRows] = useState<Claim[]>([])
   const [loading, setLoading] = useState(false)
   const [receiptId, setReceiptId] = useState<number | null>(null)
@@ -414,9 +419,11 @@ function UnlockedDrawer({ open, onClose, onChanged }: { open: boolean; onClose: 
       destroyOnHidden
     >
       <Typography.Paragraph type="secondary">
-        {isStaff
+        {rxEdit
           ? t('这些钱已经到账、记在客户名下，但还没定是哪台车，不算进任何一台车的回款。知道是哪台车后，点到账编号打开，把车选上就锁定了。')
-          : t('这些钱已经到账、记在客户名下，但还没定是哪台车，不算进任何一台车的回款。知道是哪台车后请告诉财务。')}
+          : isStaff
+            ? t('这些钱已经到账、记在客户名下，但还没定是哪台车，不算进任何一台车的回款。')
+            : t('这些钱已经到账、记在客户名下，但还没定是哪台车，不算进任何一台车的回款。知道是哪台车后请告诉财务。')}
       </Typography.Paragraph>
       <Table
         rowKey={(r) => r.id as number}
@@ -442,7 +449,7 @@ function UnlockedDrawer({ open, onClose, onChanged }: { open: boolean; onClose: 
             title: t('到账编号'),
             dataIndex: 'receipt_no',
             width: 150,
-            render: (no: string | null, c) => (no ? isStaff ? <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a> : no : '—'),
+            render: (no: string | null, c) => (no ? rxView ? <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a> : no : '—'),
           },
         ]}
         summary={() =>
@@ -486,7 +493,11 @@ function VehicleDrawer({
   onChanged: () => Promise<void>
 }) {
   const t = useT()
-  const { isStaff, isAdmin } = useAuth()
+  const { isStaff, isAdmin, canEdit, canView } = useAuth()
+  /** 修改车、录期初和优惠折让（不挂到账的拆分）：“车辆台账”可编辑 */
+  const vxEdit = canEdit('vehicles')
+  /** 到账编号点开看：“到账录入”看得到的 */
+  const rxView = canView('receipts')
   const { message } = App.useApp()
   const [claims, setClaims] = useState<Claim[]>([])
   const [loading, setLoading] = useState(false)
@@ -544,7 +555,7 @@ function VehicleDrawer({
   const v = vehicle
   return (
     <Drawer open={!!v} onClose={onClose} size={860} title={v ? `${v.vin} · ${v.model}` : ''} destroyOnHidden
-      extra={isStaff && v ? <Button icon={<EditOutlined />} onClick={() => onEdit(v)}>{t('修改车辆')}</Button> : null}
+      extra={vxEdit && v ? <Button icon={<EditOutlined />} onClick={() => onEdit(v)}>{t('修改车辆')}</Button> : null}
     >
       {v && (
         <>
@@ -577,7 +588,7 @@ function VehicleDrawer({
             <Typography.Title level={5} style={{ margin: 0 }}>
               {t('到账明细')}
             </Typography.Title>
-            {isStaff && (
+            {vxEdit && (
               <Space>
                 <Button
                   size="small"
@@ -627,13 +638,13 @@ function VehicleDrawer({
                 render: (no: string | null, c) =>
                   no ? (
                     <Space size={4}>
-                      {isStaff ? <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a> : no}
+                      {rxView ? <a onClick={() => setReceiptId(c.receipt_id)}>{no}</a> : no}
                       {receiptStatus(c.receipt_status) !== 'approved' && (
                         <Tag color={RECEIPT_STATUS_COLOR[receiptStatus(c.receipt_status)]}>{t(RECEIPT_STATUS_LABEL[receiptStatus(c.receipt_status)])}</Tag>
                       )}
                     </Space>
-                  ) : isStaff ? (
-                    <Popconfirm title={t('删除这条记录？')} onConfirm={() => removeManual(c.id as number)} disabled={!isStaff}>
+                  ) : vxEdit ? (
+                    <Popconfirm title={t('删除这条记录？')} onConfirm={() => removeManual(c.id as number)}>
                       <a className="text-danger">{t('删除')}</a>
                     </Popconfirm>
                   ) : (

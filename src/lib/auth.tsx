@@ -1,6 +1,8 @@
 import type { Session } from '@supabase/supabase-js'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { permOf } from './perms'
+import type { PermLevel, PermModule } from './perms'
 import { supabase } from './supabase'
 import type { AppRole, Profile } from './supabase'
 
@@ -13,6 +15,12 @@ type AuthState = {
   isStaff: boolean // 管理员或财务
   /** 我在提成单审批流的哪几级上（审批岗位，存级别的 key） */
   posts: string[]
+  /** 我在这个模块上的档位（财务按管理员设的；管理员都是 edit；业务员都是 none，业务员的页面另外按 role 判断） */
+  perm: (m: PermModule) => PermLevel
+  /** 能看这个模块（只看或可编辑）：菜单、页面 */
+  canView: (m: PermModule) => boolean
+  /** 能改这个模块：新建、修改、删除、导入这些按钮 */
+  canEdit: (m: PermModule) => boolean
   reloadProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -63,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthState>(() => {
     const role = profile && profile.active ? profile.role : null
     const profileReady = !session || profileUid === session.user.id
+    const perm = (m: PermModule) => permOf(role, profile?.perms, m)
     return {
       loading: loading || !profileReady,
       session,
@@ -71,6 +80,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdmin: role === 'admin',
       isStaff: role === 'admin' || role === 'finance',
       posts: role ? (profile?.approval_posts ?? []) : [],
+      perm,
+      canView: (m) => perm(m) !== 'none',
+      canEdit: (m) => perm(m) === 'edit',
       reloadProfile: () => loadProfile(session),
       signOut: async () => {
         await supabase.auth.signOut()

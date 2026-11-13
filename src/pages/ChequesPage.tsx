@@ -27,7 +27,9 @@ const OPEN_STATUSES: string[] = ['pending', 'confirming', 'deposited', 'bounced'
 export default function ChequesPage() {
   const t = useT()
   const { message } = App.useApp()
-  const { isStaff } = useAuth()
+  const { canEdit, canView } = useAuth()
+  /** 录、改、删、导入支票（“支票管理”可编辑）；只看的只能看台账和记录 */
+  const chEdit = canEdit('cheques')
   const { accounts, salespersons } = useRefData()
   const [rows, setRows] = useState<Cheque[]>([])
   const [loading, setLoading] = useState(false)
@@ -257,14 +259,18 @@ export default function ChequesPage() {
       render: (_, c) =>
         c.receipt_id ? (
           <span>
-            <a
-              onClick={(e) => {
-                e.stopPropagation()
-                setReceipt({ open: true, id: c.receipt_id, prefill: null })
-              }}
-            >
-              {c.receipt_no ?? `#${c.receipt_id}`}
-            </a>
+            {canView('receipts') ? (
+              <a
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setReceipt({ open: true, id: c.receipt_id, prefill: null })
+                }}
+              >
+                {c.receipt_no ?? `#${c.receipt_id}`}
+              </a>
+            ) : (
+              (c.receipt_no ?? `#${c.receipt_id}`)
+            )}
             <div>{c.is_reported ? <Tag color="green">{t('已报')}</Tag> : <Tag color="blue">{t('未报')}</Tag>}</div>
           </span>
         ) : c.status === 'deposited' && c.days_deposited != null ? (
@@ -335,7 +341,7 @@ export default function ChequesPage() {
         />
         <Input.Search allowClear placeholder={t('支票号、客户、户名、大架号、合同序号')} style={{ width: 240 }} onSearch={setQ} />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
-        {isStaff && chosen.length > 0 && (
+        {chEdit && chosen.length > 0 && (
           <Popconfirm
             title={t('删除选中的 {n} 张支票？', { n: chosen.length })}
             description={t('已到账的不会删。删掉的支票不能恢复，重新导入表格可以再导进来。')}
@@ -349,7 +355,7 @@ export default function ChequesPage() {
             </Button>
           </Popconfirm>
         )}
-        {isStaff && (
+        {chEdit && (
           <>
             <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
               {t('导入表格')}
@@ -371,7 +377,7 @@ export default function ChequesPage() {
         rowClassName={() => 'clickable-row'}
         onRow={(c) => ({ onClick: (e) => !(e.target as HTMLElement).closest('.ant-table-selection-column') && setDetailId(c.id) })}
         rowSelection={
-          isStaff
+          chEdit
             ? {
                 selectedRowKeys: selected,
                 onChange: (keys: Key[]) => setSelected(keys as number[]),

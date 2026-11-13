@@ -67,14 +67,16 @@ export default function App() {
   const [narrow, setNarrow] = useState(false)
   const uid = auth.session?.user.id ?? null
   const isSales = auth.role === 'sales'
-  const pending = useSubmissionCount('pending', auth.isStaff)
+  const { canView } = auth
+  // 待审核的到账提交：能改“到账录入”的人才审得了，只看的不提醒
+  const pending = useSubmissionCount('pending', auth.canEdit('receipts'))
   const rejected = useSubmissionCount('rejected', isSales)
   // 提成单待我处理：轮到我这个审批岗位的、被退回要改的、财务待发放的（数据库视图按人算好）
   const voucherTodo = useVoucherTodo(!!auth.role)
   // 工作台：到账提交、提成单里等我处理的一共几件
   const todo = useTodoCount(!!auth.role)
   // 支票：到期还没存的 + 存了 3 天还没到账的
-  const chequeAlert = useChequeAlert(auth.isStaff)
+  const chequeAlert = useChequeAlert(canView('cheques'))
 
   // 登录后换成这个人上次选的语言
   useEffect(() => {
@@ -122,15 +124,22 @@ export default function App() {
   }
 
   const workbench = { key: '/workbench', icon: <AppstoreOutlined />, label: withCount(t('工作台'), todo) }
+  // 财务的菜单按管理员给他设的模块权限：不可见的模块不出现（工作台总有，审批照旧按审批岗位）
   const items = auth.isStaff
     ? [
         workbench,
-        { key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) },
-        { key: '/cheques', icon: <CreditCardOutlined />, label: withCount(t('支票管理'), chequeAlert) },
-        { key: '/vehicles', icon: <CarOutlined />, label: t('车辆台账') },
-        { key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) },
-        { key: '/reconcile', icon: <BankOutlined />, label: t('银行对账') },
-        { key: '/base', icon: <DatabaseOutlined />, label: t('基础资料') },
+        ...(canView('receipts')
+          ? [{ key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) }]
+          : []),
+        ...(canView('cheques')
+          ? [{ key: '/cheques', icon: <CreditCardOutlined />, label: withCount(t('支票管理'), chequeAlert) }]
+          : []),
+        ...(canView('vehicles') ? [{ key: '/vehicles', icon: <CarOutlined />, label: t('车辆台账') }] : []),
+        ...(canView('commission')
+          ? [{ key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) }]
+          : []),
+        ...(canView('reconcile') ? [{ key: '/reconcile', icon: <BankOutlined />, label: t('银行对账') }] : []),
+        ...(canView('base') ? [{ key: '/base', icon: <DatabaseOutlined />, label: t('基础资料') }] : []),
         ...(auth.isAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: t('用户与权限') }] : []),
       ]
     : [
@@ -200,13 +209,13 @@ export default function App() {
             <Suspense fallback={<FullSpin />}>
               <Routes>
                 <Route path="/workbench" element={<WorkbenchPage />} />
-                {auth.isStaff && <Route path="/receipts" element={<ReceiptsPage />} />}
-                {auth.isStaff && <Route path="/cheques" element={<ChequesPage />} />}
+                {canView('receipts') && <Route path="/receipts" element={<ReceiptsPage />} />}
+                {canView('cheques') && <Route path="/cheques" element={<ChequesPage />} />}
                 {isSales && <Route path="/submit" element={<SubmitPage />} />}
-                <Route path="/vehicles" element={<VehiclesPage />} />
-                <Route path="/commission" element={<CommissionPage />} />
-                {auth.isStaff && <Route path="/reconcile" element={<ReconcilePage />} />}
-                {auth.isStaff && <Route path="/base" element={<BaseDataPage />} />}
+                {(isSales || canView('vehicles')) && <Route path="/vehicles" element={<VehiclesPage />} />}
+                {(isSales || canView('commission')) && <Route path="/commission" element={<CommissionPage />} />}
+                {canView('reconcile') && <Route path="/reconcile" element={<ReconcilePage />} />}
+                {canView('base') && <Route path="/base" element={<BaseDataPage />} />}
                 {auth.isAdmin && <Route path="/users" element={<UsersPage />} />}
                 <Route path="*" element={<Navigate to={home} replace />} />
               </Routes>
