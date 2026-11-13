@@ -36,6 +36,11 @@ type FormValues = {
   due_date?: dayjs.Dayjs | null
   purpose: string
   count: number
+  /** 合同序号：Rome 表里的 序号，一个合同一个，分期支票靠它串起来 */
+  contract_no?: string
+  /** 第几期：一叠批量录入时按 1、2、3…… 自动排，单张可以自己填 */
+  installment_no?: number | null
+  installment_count?: number | null
   note?: string
 }
 
@@ -76,6 +81,9 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
         currency: (cheque.currency ?? 'GHS') as 'GHS' | 'USD',
         amount: cheque.amount != null ? Number(cheque.amount) : null,
         installment_usd: cheque.installment_usd != null ? Number(cheque.installment_usd) : null,
+        contract_no: cheque.contract_no ?? undefined,
+        installment_no: cheque.installment_no ?? null,
+        installment_count: cheque.installment_count ?? null,
         due_date: cheque.due_date ? dayjs(cheque.due_date) : null,
         purpose: cheque.purpose ?? '分期款',
         count: 1,
@@ -151,17 +159,28 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
       currency: v.currency,
       installment_usd: v.installment_usd ?? null,
       purpose: v.purpose,
+      contract_no: v.contract_no?.trim() || null,
       note: v.note?.trim() || null,
     }
     const rows: Record<string, Json | undefined>[] =
       !editing && lines.length > 1
-        ? lines.map((l) => ({ ...base, cheque_no: l.cheque_no.trim(), due_date: l.due_date ? l.due_date.format('YYYY-MM-DD') : null, amount: l.amount ?? null }))
+        ? lines.map((l, i) => ({
+            ...base,
+            cheque_no: l.cheque_no.trim(),
+            due_date: l.due_date ? l.due_date.format('YYYY-MM-DD') : null,
+            amount: l.amount ?? null,
+            // 一叠分期支票：第几期按顺序排，共几期就是这一叠的张数
+            installment_no: (v.installment_no ?? 1) + i,
+            installment_count: v.installment_count ?? (v.installment_no ?? 1) + lines.length - 1,
+          }))
         : [
             {
               ...base,
               cheque_no: v.cheque_no?.trim() ?? '',
               due_date: v.due_date ? v.due_date.format('YYYY-MM-DD') : null,
               amount: v.amount ?? null,
+              installment_no: v.installment_no ?? null,
+              installment_count: v.installment_count ?? null,
               ...(cheque ? { id: cheque.id, updated_at: cheque.updated_at } : {}),
             },
           ]
@@ -261,7 +280,26 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
               </Form.Item>
             </Col>
           )}
-          <Col xs={24} md={editing ? 24 : 18}>
+          <Col xs={12} md={6}>
+            <Form.Item name="contract_no" label={t('合同序号')} tooltip={t('一个销售合同一个序号（和表里的 序号 一样），同一个合同的分期支票填一样的，台账上能按它搜')}>
+              <Input maxLength={30} allowClear placeholder={t('可不填')} />
+            </Form.Item>
+          </Col>
+          <Col xs={12} md={6}>
+            <Form.Item
+              name="installment_no"
+              label={lines.length > 1 ? t('第一张是第几期') : t('第几期')}
+              tooltip={lines.length > 1 ? t('这一叠按它往后排：填 1 就是第 1、2、3……期') : undefined}
+            >
+              <InputNumber min={1} max={120} precision={0} style={{ width: '100%' }} placeholder={t('可不填')} />
+            </Form.Item>
+          </Col>
+          <Col xs={12} md={6}>
+            <Form.Item name="installment_count" label={t('共几期')} tooltip={lines.length > 1 ? t('空着就按这一叠的张数算') : undefined}>
+              <InputNumber min={1} max={120} precision={0} style={{ width: '100%' }} placeholder={lines.length > 1 ? t('按张数') : t('可不填')} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} md={24}>
             <Form.Item name="note" label={t('备注')}>
               <Input maxLength={300} />
             </Form.Item>

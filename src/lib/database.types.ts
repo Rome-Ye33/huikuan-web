@@ -420,6 +420,7 @@ export type Database = {
           amount: number | null
           cheque_key: string | null
           cheque_no: string
+          contract_no: string | null
           created_at: string
           created_by: string | null
           currency: string
@@ -430,6 +431,8 @@ export type Database = {
           drawer_name: string | null
           due_date: string | null
           id: number
+          installment_count: number | null
+          installment_no: number | null
           installment_usd: number | null
           note: string | null
           plan_date: string | null
@@ -446,6 +449,7 @@ export type Database = {
           amount?: number | null
           cheque_key?: never
           cheque_no: string
+          contract_no?: string | null
           created_at?: string
           created_by?: string | null
           currency?: string
@@ -456,6 +460,8 @@ export type Database = {
           drawer_name?: string | null
           due_date?: string | null
           id?: never
+          installment_count?: number | null
+          installment_no?: number | null
           installment_usd?: number | null
           note?: string | null
           plan_date?: string | null
@@ -472,6 +478,7 @@ export type Database = {
           amount?: number | null
           cheque_key?: never
           cheque_no?: string
+          contract_no?: string | null
           created_at?: string
           created_by?: string | null
           currency?: string
@@ -482,6 +489,8 @@ export type Database = {
           drawer_name?: string | null
           due_date?: string | null
           id?: never
+          installment_count?: number | null
+          installment_no?: number | null
           installment_usd?: number | null
           note?: string | null
           plan_date?: string | null
@@ -1395,6 +1404,7 @@ export type Database = {
           amount: number | null
           cheque_key: string | null
           cheque_no: string | null
+          contract_no: string | null
           created_at: string | null
           created_by: string | null
           currency: string | null
@@ -1409,6 +1419,8 @@ export type Database = {
           drawer_name: string | null
           due_date: string | null
           id: number | null
+          installment_count: number | null
+          installment_no: number | null
           installment_usd: number | null
           is_reported: boolean | null
           last_note: string | null

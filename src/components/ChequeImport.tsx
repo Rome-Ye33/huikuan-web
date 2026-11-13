@@ -16,7 +16,7 @@ import { supabase } from '../lib/supabase'
 // 导入 Rome 的《支票表》：自动认出 主表-分期合同支票明细 / 其他支票明细 / 支票表存取备忘录 三张工作表，
 // 整理成一行一张支票，备注里的大架号对车，预览 → 每次 300 张交给 import_cheques。已报回款的不导；已录过的跳过（只按表里的备注补上缺的车）。
 
-type Result = { created: number; skipped: { row: number; cheque_no: string; cars_added?: number }[]; customers: number; cars_added: number }
+type Result = { created: number; skipped: { row: number; cheque_no: string; cars_added?: number; seq_filled?: boolean }[]; customers: number; cars_added: number; seq_filled: number }
 type Filter = 'all' | 'warn' | 'skip'
 const BATCH = 300
 
@@ -140,6 +140,9 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
     currency: r.currency,
     amount: r.amount,
     installment_usd: r.installment_usd,
+    contract_no: r.contract_no,
+    installment_no: r.installment_no,
+    installment_count: r.installment_count,
     due_date: r.due_date,
     status: r.status,
     plan_date: r.plan_date,
@@ -155,7 +158,7 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
     setImporting(true)
     setResult(null)
     setFailure(null)
-    const sum: Result = { created: 0, skipped: [], customers: 0, cars_added: 0 }
+    const sum: Result = { created: 0, skipped: [], customers: 0, cars_added: 0, seq_filled: 0 }
     setProgress({ done: 0, total: toImport.length })
     for (let i = 0; i < toImport.length; i += BATCH) {
       const batch = toImport.slice(i, i + BATCH)
@@ -169,6 +172,7 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
       sum.created += Number(d.created ?? 0)
       sum.customers += Number(d.customers ?? 0)
       sum.cars_added += Number(d.cars_added ?? 0)
+      sum.seq_filled += Number(d.seq_filled ?? 0)
       sum.skipped.push(...(d.skipped ?? []).map((s) => ({ row: i + Number(s.row), cheque_no: s.cheque_no })))
       setProgress({ done: Math.min(i + BATCH, toImport.length), total: toImport.length })
     }
@@ -195,6 +199,21 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
             ))}
         </div>
       ),
+    },
+    {
+      title: t('序号'),
+      width: 96,
+      render: (_, r) =>
+        r.contract_no ? (
+          <span className="num">
+            {r.contract_no}
+            {r.installment_no ? (
+              <div className="hint">{t('第 {n}/{m} 期', { n: r.installment_no, m: r.installment_count ?? r.installment_no })}</div>
+            ) : null}
+          </span>
+        ) : (
+          ''
+        ),
     },
     { title: t('支票号'), dataIndex: 'cheque_no', width: 110, render: (v: string, r) => <span className="num">{v}{r.drawer_bank ? <div className="hint">{r.drawer_bank}</div> : null}</span> },
     { title: t('客户'), dataIndex: 'customer_name', width: 180, ellipsis: true, render: (v: string, r) => <span>{v}{r.drawer_name && r.drawer_name !== v ? <div className="hint">{r.drawer_name}</div> : null}</span> },
@@ -290,6 +309,7 @@ export default function ChequeImport({ open, onClose }: { open: boolean; onClose
                 result.skipped.length ? (
                   <div className="hint">
                     {result.cars_added > 0 && <div>{t('其中 {n} 张已录过的支票，按表里备注的大架号补上了车', { n: result.cars_added })}</div>}
+                    {result.seq_filled > 0 && <div>{t('其中 {n} 张已录过的支票补上了合同序号 / 期数', { n: result.seq_filled })}</div>}
                     {t('跳过的支票号：{list}', { list: result.skipped.map((s) => s.cheque_no).join('、') })}
                   </div>
                 ) : undefined

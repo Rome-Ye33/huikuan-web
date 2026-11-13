@@ -242,6 +242,12 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
               {c.due_date && canOpen && c.days_to_due != null && c.days_to_due < 0 && <Tag color="red" style={{ marginInlineStart: 8 }}>{t('已过期 {n} 天', { n: -c.days_to_due })}</Tag>}
             </Descriptions.Item>
             <Descriptions.Item label={t('分期款/月')}>{c.installment_usd != null ? usd(c.installment_usd) : ''}</Descriptions.Item>
+            <Descriptions.Item label={t('合同序号')}>
+              {c.contract_no ?? ''}
+              {c.installment_no ? (
+                <span className="hint"> {t('第 {n}/{m} 期', { n: c.installment_no, m: c.installment_count ?? c.installment_no })}</span>
+              ) : null}
+            </Descriptions.Item>
             <Descriptions.Item label={t('哪几台车的')} span={vins.length > 1 ? 2 : 1}>
               {vins.length ? (
                 vins.map((vin, i) => (
