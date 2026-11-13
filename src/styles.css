@@ -884,3 +884,15 @@ html[lang='en'] .logo-name {
 .receipt-import .ri-dropped .ant-tag {
   text-decoration: none;
 }
+
+/* 打印页“缩到一页”：里面那层用 transform 缩小（不占位置），外面这一层按缩完的高度裁，分页才按缩完的算。
+   屏幕上和打印时单子的宽度可能不一样（窗口窄时会被挤高），所以两个高度分开给。 */
+.cv-fit-on {
+  height: var(--fit-h);
+  overflow: hidden;
+}
+@media print {
+  .cv-fit-on {
+    height: var(--fit-h-print);
+  }
+}
