@@ -2,6 +2,7 @@
 // 写库只走数据库函数 save_cheques / import_cheques / cheque_action；读 v_cheques（带客户、车、账户、到账、最近一条沟通）。
 import { useEffect, useState } from 'react'
 import type { Json } from './database.types'
+import { todayAccra } from './format'
 import { supabase } from './supabase'
 import type { TableRow, ViewRow } from './supabase'
 
@@ -75,24 +76,35 @@ export function chequeVins(c: Cheque): string[] {
   return s.split(' ').filter(Boolean)
 }
 
-/** 页面顶部的提醒：今天到期 / 7 天内到期 / 到期没存 / 已存没到账 / 已到账没报回款 */
+/** 页面顶部的提醒：今天到期 / 本周到期 / 到期没存 / 已存没到账 / 已到账没报回款 */
 export type ChequeAlert = 'due_today' | 'due_week' | 'overdue' | 'deposited' | 'unreported'
 export const CHEQUE_ALERTS: ChequeAlert[] = ['due_today', 'due_week', 'overdue', 'deposited', 'unreported']
 export const CHEQUE_ALERT_LABEL: Record<ChequeAlert, string> = {
   due_today: '今天到期',
-  due_week: '7 天内到期',
+  due_week: '本周到期',
   overdue: '到期还没存',
   deposited: '已存没到账',
   unreported: '已到账没报回款',
 }
 const OPEN: string[] = ['pending', 'confirming']
+
+/**
+ * 本周（周一到周日）还剩几天：周五还剩 2 天（周六、周日），周日是 0 天。
+ * 「本周到期」按它算，不是往后数 7 天（Rome 2026-11-13「支票表设置本周到期，不要显示未来 7 天到期的」）。
+ */
+export function daysLeftThisWeek(today: string = todayAccra()): number {
+  const wd = new Date(today + 'T00:00:00Z').getUTCDay()   // 0 = 周日
+  return 7 - (wd === 0 ? 7 : wd)
+}
+
 export function inAlert(c: Cheque, a: ChequeAlert): boolean {
   const d = c.days_to_due
   switch (a) {
     case 'due_today':
       return OPEN.includes(c.status ?? '') && d === 0
     case 'due_week':
-      return OPEN.includes(c.status ?? '') && d != null && d > 0 && d <= 7
+      // 今天的那张算在「今天到期」里，这里只算今天以后、本周日以前到期的
+      return OPEN.includes(c.status ?? '') && d != null && d > 0 && d <= daysLeftThisWeek()
     case 'overdue':
       return OPEN.includes(c.status ?? '') && d != null && d < 0
     case 'deposited':
