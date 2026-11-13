@@ -148,7 +148,9 @@ function eligible(c: Claim, vids: Set<number>, spId: number | null, staff: boole
 
 export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const t = useT()
-  const { isStaff, isAdmin, profile, session, posts } = useAuth()
+  const { isAdmin, profile, session, posts, canEdit } = useAuth()
+  /** 能替业务员开单、改单、发放：“提成申请单”可编辑的财务、管理员。只看的财务和有审批岗位的人一样，只能看和审 */
+  const cvEdit = canEdit('commission')
   const { salespersons, customers, steps } = useRefData()
   const flow = useFlow()
   const { message, modal } = App.useApp()
@@ -199,8 +201,8 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const step: string | null = status === 'submitted' ? (voucher?.step ?? null) : null
   /** 这张单提交时记下的审批流（谁、什么时候通过的）；草稿没有 */
   const ownFlow = parseFlow(voucher?.flow)
-  /** 能改这张单的人：财务、管理员，或这张单的业务员（有审批岗位的人只能看和审别人的单） */
-  const mine = !voucher || isStaff || (mySp != null && voucher.salesperson_id === mySp)
+  /** 能改这张单的人：“提成申请单”可编辑的财务、管理员，或这张单的业务员（有审批岗位的人只能看和审别人的单） */
+  const mine = !voucher || cvEdit || (mySp != null && voucher.salesperson_id === mySp)
   const editable = !voucher || (isEditableStatus(status) && mine)
   const id = voucher?.id ?? null
   const custId = head.customer_id
@@ -257,13 +259,13 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       return
     }
     setVoucher(null)
-    setHead(newHead(isStaff ? null : mySp, t('销售部')))
+    setHead(newHead(cvEdit ? null : mySp, t('销售部')))
     setSel(EMPTY_SEL)
     setAtts([])
     touched.current = { ...NONE_TOUCHED }
     noticePrune.current = false
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在打开时取一次语言
-  }, [open, voucherId, loadVoucher, isStaff, mySp])
+  }, [open, voucherId, loadVoucher, cvEdit, mySp])
 
   // 同一个客户的其他提成单：同一台车、同一笔付款算进了几张单
   useEffect(() => {
@@ -337,7 +339,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       const byId = new Map(list.map((c) => [c.id, c]))
       const pay = cur.pay.filter((p) => {
         const c = byId.get(p.claim_id)
-        return !!c && eligible(c, vids, spId, isStaff)
+        return !!c && eligible(c, vids, spId, cvEdit)
       })
       if (veh.length !== cur.veh.length || pay.length !== cur.pay.length) {
         setSel({ veh, pay })
@@ -356,11 +358,11 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     return () => {
       alive = false
     }
-  }, [open, editable, custId, spId, isStaff, id, t])
+  }, [open, editable, custId, spId, cvEdit, id, t])
 
   // 财务开单：这个客户的车在哪些业务员名下（业务员下拉里显示台数）
   useEffect(() => {
-    if (!open || !isStaff || !editable || !custId) {
+    if (!open || !cvEdit || !editable || !custId) {
       setSpCounts(new Map())
       return
     }
@@ -371,7 +373,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     return () => {
       alive = false
     }
-  }, [open, isStaff, editable, custId])
+  }, [open, cvEdit, editable, custId])
 
   const ledgerById = useMemo(() => new Map(ledger.map((v) => [v.id as number, v])), [ledger])
   const claimById = useMemo(() => new Map(claims.map((c) => [c.id as number, c])), [claims])
@@ -390,7 +392,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const vehOthers = (vid: number) => others.filter((o) => o.vehicleIds.has(vid))
 
   const vehIds = useMemo(() => new Set(sel.veh.map((r) => r.vehicle_id)), [sel.veh])
-  const payCandidates = useMemo(() => claims.filter((c) => eligible(c, vehIds, spId, isStaff)), [claims, vehIds, spId, isStaff])
+  const payCandidates = useMemo(() => claims.filter((c) => eligible(c, vehIds, spId, cvEdit)), [claims, vehIds, spId, cvEdit])
   const savedVehicles = useMemo(() => (voucher ? parseVehicles(voucher.vehicles) : []), [voucher])
   const savedPayments = useMemo(() => (voucher ? parsePayments(voucher.payments) : []), [voucher])
 
@@ -441,7 +443,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     setDirty(true)
     setSel(EMPTY_SEL)
     let sp = head.salesperson_id
-    if (isStaff && cid) {
+    if (cvEdit && cid) {
       // 默认业务员：客户资料上的；他名下没有这个客户的车时，用这个客户的车最多的那个业务员
       const counts = await vehicleCountsBySp(cid)
       if (!sp || !counts.has(sp)) {
@@ -450,7 +452,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
         sp = own && counts.has(own) ? own : (most ?? own ?? sp)
       }
     }
-    setHead(withAuto({ ...head, customer_id: cid, salesperson_id: isStaff ? sp : mySp }, []))
+    setHead(withAuto({ ...head, customer_id: cid, salesperson_id: cvEdit ? sp : mySp }, []))
   }
 
   // 选了业务员后只能选他名下的客户：客户资料上记的是他的，或者有车在他名下的（Rome 2026-11-11）
@@ -696,14 +698,14 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   // ---------- 显示 ----------
   const spName = salespersons.find((s) => s.id === spId)?.name ?? ''
   // 第一级还没审之前可以撤回：业务员撤自己名下的，财务撤自己开的
-  const canWithdraw = !!id && !!step && step === ownFlow[0]?.step && (isStaff ? voucher?.prepared_by === myUid : mine)
+  const canWithdraw = !!id && !!step && step === ownFlow[0]?.step && (cvEdit ? voucher?.prepared_by === myUid : mine)
   // 轮到我这一级，或者我是管理员（代办）
   const holdsStep = !!step && posts.includes(step)
   const canApprove = !!id && !!step && (holdsStep || isAdmin)
   // 全部批完、还没发放的，这张单的最后一级可以退回
   const lastStep = ownFlow[ownFlow.length - 1]?.step ?? 'company_head'
   const canReject = !!id && (canApprove || (status === 'approved' && (isAdmin || posts.includes(lastStep))))
-  const canPay = !!id && status === 'approved' && isStaff
+  const canPay = !!id && status === 'approved' && cvEdit
   const canUnpay = !!id && status === 'paid' && isAdmin
   const canDelete = !!id && editable
 
@@ -1044,7 +1046,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               </Col>
               <Col xs={24} md={6}>
                 <Form.Item label={t('业务员')} required>
-                  {isStaff ? (
+                  {cvEdit ? (
                     <Select
                       showSearch={{ optionFilterProp: 'label' }}
                       value={spId ?? undefined}
@@ -1313,7 +1315,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
           <Vouchers
             kind="attachment"
             value={atts}
-            prefix={isStaff ? 'cv' : `sub/${myUid ?? ''}`}
+            prefix={cvEdit ? 'cv' : `sub/${myUid ?? ''}`}
             readOnly={!editable && !id}
             canRemove={editable}
             paste={editable}

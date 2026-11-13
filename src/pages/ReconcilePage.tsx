@@ -40,6 +40,8 @@ import { useT } from '../lib/i18n'
 
 export default function ReconcilePage() {
   const t = useT()
+  // 导入流水、配对、忽略要“银行对账”可编辑；只看的看得到三张表
+  const rcEdit = useAuth().canEdit('reconcile')
   const [tab, setTab] = useState('unmatched')
   const [accountId, setAccountId] = useState<number | undefined>()
   const [editor, setEditor] = useState<{ open: boolean; id: number | null; prefill: ReceiptPrefill | null }>({
@@ -103,19 +105,23 @@ export default function ReconcilePage() {
             label: t('录了、银行查不到'),
             children: <MissingReceipts accountId={accountId} version={version} onOpen={(id) => setEditor({ open: true, id, prefill: null })} />,
           },
-          {
-            key: 'import',
-            label: t('导入银行流水'),
-            children: (
-              <ImportStatement
-                accountId={accountId}
-                onAccount={setAccountId}
-                onDone={() => {
-                  setVersion((x) => x + 1)
-                }}
-              />
-            ),
-          },
+          ...(rcEdit
+            ? [
+                {
+                  key: 'import',
+                  label: t('导入银行流水'),
+                  children: (
+                    <ImportStatement
+                      accountId={accountId}
+                      onAccount={setAccountId}
+                      onDone={() => {
+                        setVersion((x) => x + 1)
+                      }}
+                    />
+                  ),
+                },
+              ]
+            : []),
           {
             key: 'all',
             label: t('全部流水明细'),
@@ -206,6 +212,10 @@ function UnmatchedLines({
 }) {
   const t = useT()
   const { message } = App.useApp()
+  const { canEdit } = useAuth()
+  /** 关联、忽略、重新配对：“银行对账”可编辑；录成到账还要“到账录入”可编辑 */
+  const rcEdit = canEdit('reconcile')
+  const canCreate = rcEdit && canEdit('receipts')
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [linkFor, setLinkFor] = useState<StatementLine | null>(null)
@@ -275,14 +285,18 @@ function UnmatchedLines({
     },
     { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<StatementLine>((l) => l.payer_summary) },
     { title: t('参考号'), dataIndex: 'bank_ref', width: 140, ellipsis: true, ...textCol<StatementLine>((l) => l.bank_ref) },
-    {
+  ]
+  if (rcEdit)
+    columns.push({
       title: t('处理'),
       width: 250,
       render: (_, l) => (
         <Space size={4}>
-          <Button size="small" type="primary" onClick={() => onCreate(l)}>
-            {t('录成到账')}
-          </Button>
+          {canCreate && (
+            <Button size="small" type="primary" onClick={() => onCreate(l)}>
+              {t('录成到账')}
+            </Button>
+          )}
           <Button size="small" onClick={() => setLinkFor(l)}>
             {t('关联已录的')}
           </Button>
@@ -298,19 +312,22 @@ function UnmatchedLines({
           </Button>
         </Space>
       ),
-    },
-  ]
+    })
 
   return (
     <div>
       <Space wrap style={{ marginBottom: 8 }}>
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
-        <Button icon={<SyncOutlined />} loading={matching} onClick={rematch} disabled={!rows.length}>
-          {t('重新自动配对')}
-        </Button>
+        {rcEdit && (
+          <Button icon={<SyncOutlined />} loading={matching} onClick={rematch} disabled={!rows.length}>
+            {t('重新自动配对')}
+          </Button>
+        )}
         {bulk.button}
         <span className="hint">
-          {t('银行流水里有、但系统里没人录的款。是回款就“录成到账”；已经录过但金额或日期对不上就“关联已录的”；利息、内部转账等就“忽略”。')}
+          {rcEdit
+            ? t('银行流水里有、但系统里没人录的款。是回款就“录成到账”；已经录过但金额或日期对不上就“关联已录的”；利息、内部转账等就“忽略”。')
+            : t('银行流水里有、但系统里没人录的款。')}
         </span>
       </Space>
       <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={rows} scroll={{ x: 1000 }} pagination={{ defaultPageSize: 50 }} rowSelection={bulk.rowSelection} />
@@ -413,6 +430,7 @@ function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok
 // ---------------------------------------------------------------------------
 function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; version: number; onOpen: (id: number) => void }) {
   const t = useT()
+  const rxView = useAuth().canView('receipts')
   const [rows, setRows] = useState<Receipt[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -443,8 +461,8 @@ function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; v
         loading={loading}
         dataSource={rows}
         pagination={{ defaultPageSize: 50 }}
-        rowClassName={() => 'clickable-row'}
-        onRow={(r) => ({ onClick: () => onOpen(r.id as number) })}
+        rowClassName={() => (rxView ? 'clickable-row' : '')}
+        onRow={(r) => ({ onClick: () => rxView && onOpen(r.id as number) })}
         scroll={{ x: 900 }}
         columns={[
           { title: t('编号'), dataIndex: 'receipt_no', width: 150, ...textCol<Receipt>((r) => r.receipt_no) },
@@ -470,6 +488,10 @@ function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; v
 function AllLines({ accountId, version, onOpen }: { accountId?: number; version: number; onOpen: (id: number) => void }) {
   const t = useT()
   const { message } = App.useApp()
+  const { canEdit, canView } = useAuth()
+  /** 取消配对、取消忽略：“银行对账”可编辑；点开到账：“到账录入”看得到 */
+  const rcEdit = canEdit('reconcile')
+  const rxView = canView('receipts')
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<string | undefined>()
@@ -562,15 +584,17 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
             render: (_, l) =>
               l.receipt_id ? (
                 <Space size={4}>
-                  <a onClick={() => onOpen(l.receipt_id as number)}>{l.receipt_no}</a>
+                  {rxView ? <a onClick={() => onOpen(l.receipt_id as number)}>{l.receipt_no}</a> : l.receipt_no}
                   {Number(l.receipt_amount_orig) !== Number(l.amount_orig) && (
                     <Tag color="orange">{t('差')} {money(Number(l.receipt_amount_orig) - Number(l.amount_orig))}</Tag>
                   )}
-                  <Button size="small" type="link" onClick={() => patch(l.id as number, { receipt_id: null, match_type: null }, t('已取消配对'))}>
-                    {t('取消配对')}
-                  </Button>
+                  {rcEdit && (
+                    <Button size="small" type="link" onClick={() => patch(l.id as number, { receipt_id: null, match_type: null }, t('已取消配对'))}>
+                      {t('取消配对')}
+                    </Button>
+                  )}
                 </Space>
-              ) : l.ignored ? (
+              ) : l.ignored && rcEdit ? (
                 <Button size="small" type="link" onClick={() => patch(l.id as number, { ignored: false }, t('已取消忽略'))}>
                   {t('取消忽略')}
                 </Button>

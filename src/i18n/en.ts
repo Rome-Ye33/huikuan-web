@@ -329,10 +329,49 @@ const VALUES: Record<string, string> = {
   "导入时表里写的": "As written in the imported sheet",
   // 支票操作弹窗的标题（代码里是 t(变量)）
   "取消这张支票": "Cancel this cheque",
+  // 财务的模块权限（31）：数据库的报错，档位和每个模块能做什么（代码里是 t(变量)）
+  "没有“{module}”的编辑权限，请找管理员": "You don't have edit permission for “{module}”. Ask an admin.",
+  "不可见": "Hidden",
+  "只看": "View only",
+  "可编辑": "Can edit",
+  "录到账、拆分、审核业务员提交、请业务员填写、报款": "Enter receipts, allocate them, review salesperson submissions, ask a salesperson to fill in, report",
+  "录支票、存票、退票、导入表格": "Enter cheques, deposit, mark bounced, import the sheet",
+  "新增、修改、导入车辆，录期初、优惠折让": "Add, edit and import vehicles; enter opening balances and discounts",
+  "替业务员开提成单、修改、标记发放": "Create commission vouchers for salespeople, edit them, mark them paid out",
+  "导入银行流水、配对、忽略": "Import bank statements, match and ignore lines",
+  "客户、汇率（业务员、收款账户、款项性质只有管理员能改）": "Customers and exchange rates (salespeople, receiving accounts and payment types are admin-only)",
 }
 
 // 界面文字（检查脚本从代码里的 t('…') / tr('…') 找）
 const UI: Record<string, string> = {
+  // 财务的模块权限（31）
+  "模块权限": "Module permissions",
+  "设置": "Set",
+  "管理员：全部可编辑": "Admin: can edit everything",
+  "全部可编辑": "Can edit everything",
+  "全部不可见": "Nothing visible",
+  "全部只看": "View only for all",
+  "{module}（只看）": "{module} (view only)",
+  "模块权限：{name}": "Module permissions: {name}",
+  "模块": "Module",
+  "权限": "Permission",
+  "可编辑：{what}": "Can edit: {what}",
+  "不可见：菜单里没有这一项。只看：能打开看、能导出，不能新建、修改、删除。可编辑：都能做。":
+    "Hidden: not in the menu. View only: can open and export, but not create, edit or delete. Can edit: everything.",
+  "审批照旧按审批岗位：轮到他审批的单，就算这个模块是只看或不可见，也能在工作台里打开、通过或退回。":
+    "Approvals still go by approval post: when it's their turn to approve, they can open, approve or return it from the Workbench even if the module is view only or hidden.",
+  "从支票、银行流水生成到账，还要“到账录入”可编辑。客户在车辆、支票的录入框里也能直接新建。":
+    "Creating a receipt from a cheque or a bank line also needs “Receipts” to be editable. Customers can also be created right from the vehicle and cheque forms.",
+  "模块权限只对财务有用：蓝色的能改，灰色的只能看，没列出来的看不到（菜单里没有）。管理员全部能改；业务员只看得到自己名下的。":
+    "Module permissions only apply to finance: blue = can edit, grey = view only, not listed = hidden (not in the menu). Admins can edit everything; salespeople only see their own.",
+  "已注册，在上面账号那一行改": "Registered: change it on the account row above",
+  "财务默认所有模块都能看、能改；要限制的，加入名单后在“模块权限”那一列点“设置”。":
+    "Finance can see and edit every module by default. To restrict them, click “Set” in the Module permissions column after adding them.",
+  "核对凭证和金额，选好车，没问题点“通过，生成到账”；不对就点“退回”写明原因。":
+    "Check the proof and the amount, and choose the vehicles. If everything is right, click “Approve and create receipt”; if not, click “Return” and give the reason.",
+  "这些钱已经到账、记在客户名下，但还没定是哪台车，不算进任何一台车的回款。":
+    "This money has arrived and is recorded under the customer, but the vehicle isn't known yet, so it doesn't count toward any vehicle.",
+  "银行流水里有、但系统里没人录的款。": "Money in the bank statement that nobody has entered.",
   // 菜单、页头
   "销售管理": "Sales Management",
   "到账录入": "Receipts",

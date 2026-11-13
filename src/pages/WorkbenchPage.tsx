@@ -112,7 +112,9 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
 export default function WorkbenchPage() {
   const t = useT()
   const { message } = App.useApp()
-  const { isStaff, role, posts } = useAuth()
+  const { isStaff, role, posts, canEdit } = useAuth()
+  // 审核业务员的到账提交要“到账录入”可编辑；只看的打开是只读的提交内容（审批岗位上的审批照旧）
+  const rxEdit = canEdit('receipts')
   // 有审批岗位的人会看到别的业务员的提成单，卡片上要写是谁的
   const showSp = isStaff || posts.length > 0
   const isSales = role === 'sales'
@@ -178,11 +180,11 @@ export default function WorkbenchPage() {
       }
       // 财务请业务员填写的：财务在那笔到账的页面看、审核；业务员打开填写表单
       if (isStaff && isFillRequest(data) && data.receipt_id) setReceiptId(data.receipt_id)
-      else if (isStaff && data.status === 'pending') setReview(data)
+      else if (rxEdit && data.status === 'pending') setReview(data)
       else if (isStaff && data.status === 'approved' && data.receipt_id) setReceiptId(data.receipt_id)
       else setSubForm({ open: true, sub: data })
     },
-    [isStaff, load, message, t],
+    [isStaff, rxEdit, load, message, t],
   )
 
   /** 从邮件提醒点进来的：先看看这张单还在不在、我能不能看，再打开 */
@@ -258,9 +260,11 @@ export default function WorkbenchPage() {
               {t('提交到账')}
             </Button>
           )}
-          <Button icon={<FileDoneOutlined />} onClick={() => setVoucher({ open: true, id: null })}>
-            {t('新建提成单')}
-          </Button>
+          {(isSales || canEdit('commission')) && (
+            <Button icon={<FileDoneOutlined />} onClick={() => setVoucher({ open: true, id: null })}>
+              {t('新建提成单')}
+            </Button>
+          )}
         </Space>
       </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>

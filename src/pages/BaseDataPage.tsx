@@ -134,7 +134,9 @@ const FX_FIELDS: MField[] = [
 
 function FxRates() {
   const t = useT()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canEdit } = useAuth()
+  /** 录、改、导入汇率：“基础资料”可编辑（删除照旧只有管理员） */
+  const bxEdit = canEdit('base')
   const { message } = App.useApp()
   const [rows, setRows] = useState<FxRate[]>([])
   const [open, setOpen] = useState(false)
@@ -210,20 +212,24 @@ function FxRates() {
   return (
     <div>
       <Space wrap style={{ marginBottom: 8 }}>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            form.resetFields()
-            form.setFieldsValue({ rate_date: dayjs(todayAccra()), currency: 'GHS' })
-            setOpen(true)
-          }}
-        >
-          {t('录汇率')}
-        </Button>
-        <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
-          {t('批量导入')}
-        </Button>
+        {bxEdit && (
+          <>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                form.resetFields()
+                form.setFieldsValue({ rate_date: dayjs(todayAccra()), currency: 'GHS' })
+                setOpen(true)
+              }}
+            >
+              {t('录汇率')}
+            </Button>
+            <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+              {t('批量导入')}
+            </Button>
+          </>
+        )}
         {isAdmin && sel.length > 0 && (
           <Popconfirm title={t('删除选中的 {n} 条汇率？', { n: sel.length })} okButtonProps={{ danger: true }} onConfirm={() => void removeSelected()}>
             <Button danger icon={<DeleteOutlined />} loading={busy}>
@@ -244,27 +250,31 @@ function FxRates() {
           { title: t('币种'), dataIndex: 'currency', width: 80 },
           { title: t('汇率'), dataIndex: 'rate', width: 120, render: (v) => Number(v) },
           { title: t('来源'), dataIndex: 'source' },
-          {
-            title: '',
-            width: 120,
-            render: (_, r) => (
-              <Space>
-                <a
-                  onClick={() => {
-                    form.setFieldsValue({ rate_date: dayjs(r.rate_date), currency: r.currency, rate: Number(r.rate), source: r.source ?? '' })
-                    setOpen(true)
-                  }}
-                >
-                  {t('修改')}
-                </a>
-                {isAdmin && (
-                  <Popconfirm title={t('删除这条汇率？')} onConfirm={() => remove(r)}>
-                    <a className="text-danger">{t('删除')}</a>
-                  </Popconfirm>
-                )}
-              </Space>
-            ),
-          },
+          ...(bxEdit
+            ? [
+                {
+                  title: '',
+                  width: 120,
+                  render: (_: unknown, r: FxRate) => (
+                    <Space>
+                      <a
+                        onClick={() => {
+                          form.setFieldsValue({ rate_date: dayjs(r.rate_date), currency: r.currency, rate: Number(r.rate), source: r.source ?? '' })
+                          setOpen(true)
+                        }}
+                      >
+                        {t('修改')}
+                      </a>
+                      {isAdmin && (
+                        <Popconfirm title={t('删除这条汇率？')} onConfirm={() => remove(r)}>
+                          <a className="text-danger">{t('删除')}</a>
+                        </Popconfirm>
+                      )}
+                    </Space>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
       <Modal open={open} title={t('汇率')} okText={t('保存')} onOk={save} onCancel={() => setOpen(false)} forceRender>
@@ -319,7 +329,9 @@ const CUSTOMER_FIELDS: MField[] = [
 
 function Customers() {
   const t = useT()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canEdit } = useAuth()
+  /** 新增、修改、导入客户：“基础资料”可编辑（删除照旧只有管理员） */
+  const bxEdit = canEdit('base')
   const { customers, salespersons, reload } = useRefData()
   const { message } = App.useApp()
   const [q, setQ] = useState('')
@@ -376,12 +388,16 @@ function Customers() {
     <div>
       <Space wrap style={{ marginBottom: 8 }}>
         <Input.Search allowClear placeholder={t('搜索客户')} onSearch={setQ} style={{ width: 240 }} />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
-          {t('新增客户')}
-        </Button>
-        <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
-          {t('批量导入')}
-        </Button>
+        {bxEdit && (
+          <>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
+              {t('新增客户')}
+            </Button>
+            <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+              {t('批量导入')}
+            </Button>
+          </>
+        )}
         {isAdmin && <BulkBar count={bulk.sel.length} busy={bulk.busy} onDelete={() => void bulk.remove()} />}
       </Space>
       <Table
@@ -395,20 +411,24 @@ function Customers() {
           { title: t('业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
           { title: t('电话'), dataIndex: 'phone', width: 140 },
           { title: t('国家'), dataIndex: 'country', width: 100 },
-          {
-            title: '',
-            width: 120,
-            render: (_, c) => (
-              <Space>
-                <a onClick={() => openEdit(c)}>{t('修改')}</a>
-                {isAdmin && (
-                  <Popconfirm title={t('删除这个客户？有车或到账记录的删不掉')} onConfirm={() => remove(c)}>
-                    <a className="text-danger">{t('删除')}</a>
-                  </Popconfirm>
-                )}
-              </Space>
-            ),
-          },
+          ...(bxEdit
+            ? [
+                {
+                  title: '',
+                  width: 120,
+                  render: (_: unknown, c: Customer) => (
+                    <Space>
+                      <a onClick={() => openEdit(c)}>{t('修改')}</a>
+                      {isAdmin && (
+                        <Popconfirm title={t('删除这个客户？有车或到账记录的删不掉')} onConfirm={() => remove(c)}>
+                          <a className="text-danger">{t('删除')}</a>
+                        </Popconfirm>
+                      )}
+                    </Space>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
       <Modal open={edit !== null} title={edit === 'new' ? t('新增客户') : t('修改客户')} okText={t('保存')} onOk={save} onCancel={() => setEdit(null)} forceRender>

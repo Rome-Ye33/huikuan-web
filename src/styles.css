@@ -823,3 +823,17 @@ html[lang='en'] .logo-name {
 .cheque-desc .ant-descriptions-item-label {
   white-space: nowrap;
 }
+
+/* 用户与权限：财务的模块权限（31）。表格里一格放几个标签加“设置”；弹窗里每个模块一行三档 */
+.perm-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+}
+.perm-cell .perm-set {
+  padding-inline: 4px;
+}
+.perm-editor .ant-radio-group {
+  white-space: nowrap;
+}

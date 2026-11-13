@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
 import FlowEditor from '../components/FlowEditor'
+import PermEditor, { PermSummary } from '../components/PermEditor'
+import type { PermTarget } from '../components/PermEditor'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { useFlow } from '../lib/flow'
@@ -33,6 +35,8 @@ export default function UsersPage() {
   const [postBusy, setPostBusy] = useState<string | null>(null)
   const [ccBusy, setCcBusy] = useState(false)
   const [flowOpen, setFlowOpen] = useState<FlowDocType | null>(null)
+  /** 正在设模块权限的财务（已注册的账号或邀请名单上的人） */
+  const [permFor, setPermFor] = useState<PermTarget | null>(null)
   const [pform] = Form.useForm<{ password: string }>()
   const [uform] = Form.useForm<{
     full_name?: string
@@ -363,6 +367,13 @@ export default function UsersPage() {
         t('还没有审批级别：现在到账录入后直接生效。点“调整审批流”加级别。'),
         ccBlock,
       )}
+      <PermEditor
+        target={permFor}
+        onClose={(saved) => {
+          setPermFor(null)
+          if (saved) void load()
+        }}
+      />
       <FlowEditor
         open={flowOpen !== null}
         docType={flowOpen ?? 'voucher'}
@@ -381,7 +392,7 @@ export default function UsersPage() {
         size="small"
         dataSource={profiles}
         pagination={false}
-        style={{ marginBottom: 24 }}
+        style={{ marginBottom: 8 }}
         columns={[
           { title: t('邮箱'), dataIndex: 'email' },
           { title: t('姓名'), dataIndex: 'full_name', width: 160 },
@@ -396,6 +407,26 @@ export default function UsersPage() {
                 {postTags(v ?? [])}
                 {ccTag(p)}
               </>
+            ),
+          },
+          {
+            title: t('模块权限'),
+            width: 240,
+            render: (_, p) => (
+              <div className="perm-cell">
+                <PermSummary role={p.role} perms={p.perms} />
+                {p.role === 'finance' && (
+                  <Button
+                    size="small"
+                    type="link"
+                    icon={<EditOutlined />}
+                    className="perm-set"
+                    onClick={() => setPermFor({ kind: 'profile', id: p.id, name: personName(p), perms: p.perms })}
+                  >
+                    {t('设置')}
+                  </Button>
+                )}
+              </div>
             ),
           },
           {
@@ -468,6 +499,9 @@ export default function UsersPage() {
           },
         ]}
       />
+      <div className="hint" style={{ marginBottom: 24 }}>
+        {t('模块权限只对财务有用：蓝色的能改，灰色的只能看，没列出来的看不到（菜单里没有）。管理员全部能改；业务员只看得到自己名下的。')}
+      </div>
       <Space wrap style={{ marginBottom: 8 }}>
         <Typography.Title level={5} style={{ margin: 0 }}>
           {t('邀请名单')}
@@ -505,6 +539,31 @@ export default function UsersPage() {
                 {ccTag(i)}
               </>
             ),
+          },
+          {
+            title: t('模块权限'),
+            width: 240,
+            render: (_, i) =>
+              registered.has(i.email) ? (
+                i.role === 'finance' ? (
+                  <span className="hint">{t('已注册，在上面账号那一行改')}</span>
+                ) : null
+              ) : (
+                <div className="perm-cell">
+                  <PermSummary role={i.role} perms={i.perms} />
+                  {i.role === 'finance' && (
+                    <Button
+                      size="small"
+                      type="link"
+                      icon={<EditOutlined />}
+                      className="perm-set"
+                      onClick={() => setPermFor({ kind: 'invite', email: i.email, name: personName(i), perms: i.perms })}
+                    >
+                      {t('设置')}
+                    </Button>
+                  )}
+                </div>
+              ),
           },
           {
             title: t('状态'),
@@ -592,7 +651,12 @@ export default function UsersPage() {
           <Form.Item name="full_name" label={t('姓名')}>
             <Input />
           </Form.Item>
-          <Form.Item name="role" label={t('角色')} rules={[{ required: true }]}>
+          <Form.Item
+            name="role"
+            label={t('角色')}
+            rules={[{ required: true }]}
+            extra={iRole === 'finance' ? t('财务默认所有模块都能看、能改；要限制的，加入名单后在“模块权限”那一列点“设置”。') : undefined}
+          >
             <Select options={roleOptions} />
           </Form.Item>
           {iRole === 'sales' && (

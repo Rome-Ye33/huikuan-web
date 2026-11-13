@@ -4,6 +4,7 @@ import type { ColumnsType } from 'antd/es/table'
 import { useCallback, useEffect, useState } from 'react'
 import { pickCol, textCol } from '../lib/colFilter'
 import { dateTime, money, num, usd } from '../lib/format'
+import { useAuth } from '../lib/auth'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
 import { claimsSummary, isFillRequest, STATUS_COLOR, STATUS_LABEL } from '../lib/submissions'
@@ -19,6 +20,8 @@ type Filter = SubmissionStatus | 'all'
 export default function SubmissionList({ onChanged }: { onChanged?: () => void }) {
   const t = useT()
   const { accountById, salespersons } = useRefData()
+  // 只有“到账录入”可编辑的才审核；只看的打开是只读的提交内容
+  const rxEdit = useAuth().canEdit('receipts')
   const [rows, setRows] = useState<Submission[]>([])
   const [loading, setLoading] = useState(false)
   const [filter, setFilter] = useState<Filter>('pending')
@@ -57,7 +60,7 @@ export default function SubmissionList({ onChanged }: { onChanged?: () => void }
   const open = (s: Submission) => {
     // 财务请业务员填写的：在那笔到账的页面看、审核（拆分写到那笔到账上）
     if (isFillRequest(s) && s.receipt_id) setReceiptId(s.receipt_id)
-    else if (s.status === 'pending') setReview(s)
+    else if (s.status === 'pending' && rxEdit) setReview(s)
     else if (s.status === 'approved' && s.receipt_id) setReceiptId(s.receipt_id)
     else setView(s)
   }
