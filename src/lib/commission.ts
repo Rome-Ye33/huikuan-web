@@ -1,5 +1,5 @@
 // 提成申请单：状态、车和付款明细、合计。合计、已还期数、分期情况和 Excel 模板（提成单模板 Commission Voucher Template）的公式一致。
-import { useEffect, useState } from 'react'
+import { useBadges } from './badges'
 import type { Json } from './database.types'
 import { money, num, round2 } from './format'
 import { supabase } from './supabase'
@@ -276,32 +276,9 @@ export function notifyVouchersChanged() {
   window.dispatchEvent(new Event(EVENT))
 }
 
-/** 等我处理的提成单有几张（数据库视图 v_workbench 按岗位算好）。每分钟、切回窗口、提交或审批之后刷新 */
+/** 等我处理的提成单有几张（数据库视图 v_workbench 按岗位算好）。数字由 badges.ts 的共用轮询取 */
 export function useVoucherTodo(enabled: boolean): number {
-  const [n, setN] = useState(0)
-  useEffect(() => {
-    if (!enabled) return
-    let alive = true
-    const load = async () => {
-      const { count } = await supabase
-        .from('v_workbench')
-        .select('doc_id', { count: 'exact', head: true })
-        .eq('doc_type', 'voucher')
-        .eq('in_todo', true)
-      if (alive) setN(count ?? 0)
-    }
-    void load()
-    const timer = window.setInterval(load, 60_000)
-    window.addEventListener(EVENT, load)
-    window.addEventListener('focus', load)
-    return () => {
-      alive = false
-      window.clearInterval(timer)
-      window.removeEventListener(EVENT, load)
-      window.removeEventListener('focus', load)
-    }
-  }, [enabled])
-  return enabled ? n : 0
+  return useBadges(enabled).voucher
 }
 
 /** 等我处理的提成单的 id（列表里“待我处理”用） */

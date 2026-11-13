@@ -1,8 +1,7 @@
 // 业务员提交的到账（到账审批）：状态、拆分行、待办数量
-import { useEffect, useState } from 'react'
+import { useBadges } from './badges'
 import type { Json } from './database.types'
 import { money } from './format'
-import { supabase } from './supabase'
 import type { TableRow } from './supabase'
 
 export type Submission = TableRow<'receipt_submissions'>
@@ -60,28 +59,10 @@ export function notifySubmissionsChanged() {
   window.dispatchEvent(new Event(EVENT))
 }
 
-/** 某个状态的提交有几条（业务员只算自己的）。每分钟、切回窗口、有改动时刷新 */
+/** 某个状态的提交有几条（业务员只算自己的）。数字由 badges.ts 的共用轮询取 */
 export function useSubmissionCount(status: SubmissionStatus, enabled: boolean): number {
-  const [n, setN] = useState(0)
-  useEffect(() => {
-    if (!enabled) return
-    let alive = true
-    const load = async () => {
-      const { count } = await supabase.from('receipt_submissions').select('id', { count: 'exact', head: true }).eq('status', status)
-      if (alive) setN(count ?? 0)
-    }
-    void load()
-    const timer = window.setInterval(load, 60_000)
-    window.addEventListener(EVENT, load)
-    window.addEventListener('focus', load)
-    return () => {
-      alive = false
-      window.clearInterval(timer)
-      window.removeEventListener(EVENT, load)
-      window.removeEventListener('focus', load)
-    }
-  }, [status, enabled])
-  return enabled ? n : 0
+  const b = useBadges(enabled)
+  return status === 'rejected' ? b.subRejected : b.subPending
 }
 
 /** 拆分摘要：客户 · 大架号 · 款项，默认最多两行 */
