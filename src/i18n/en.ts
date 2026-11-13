@@ -1292,6 +1292,8 @@ const UI: Record<string, string> = {
   "发放日期": "Payout date",
   "找不到这张提成单": "Voucher not found",
   "找不到这张提成单，或没有权限": "Commission voucher not found, or not allowed",
+  "缩到一页": "Fit on one page",
+  "已缩到 {pct}%": "Scaled to {pct}%",
   "回到提成申请单": "Back to vouchers",
   // 批量导入车辆和期初
   "批量导入": "Bulk import",
