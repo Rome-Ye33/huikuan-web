@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { fetchAll, supabase } from './supabase'
-import type { Account, Customer, Nature, Salesperson } from './supabase'
+import type { Account, ChequeBank, Customer, Nature, Salesperson } from './supabase'
 import { useAuth } from './auth'
 import type { ApprovalStep } from './flow'
 import { tr } from './i18n'
@@ -13,6 +13,8 @@ type RefData = {
   natures: Nature[]
   salespersons: Salesperson[]
   customers: Customer[]
+  /** 支票银行（客户开票的银行），在基础资料里维护 */
+  chequeBanks: ChequeBank[]
   /** 提成单审批流的级别（含已经删掉的，旧单据显示名字用） */
   steps: ApprovalStep[]
   accountById: Map<number, Account>
@@ -31,6 +33,7 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
   const [natures, setNatures] = useState<Nature[]>([])
   const [salespersons, setSalespersons] = useState<Salesperson[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
+  const [chequeBanks, setChequeBanks] = useState<ChequeBank[]>([])
   const [steps, setSteps] = useState<ApprovalStep[]>([])
 
   const reloadSteps = useCallback(async () => {
@@ -39,17 +42,19 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const reload = useCallback(async () => {
-    const [a, n, s, c] = await Promise.all([
+    const [a, n, s, c, b] = await Promise.all([
       supabase.from('bank_accounts').select('*').order('company').order('short_name'),
       supabase.from('payment_natures').select('*').order('sort_order'),
       supabase.from('salespersons').select('*').order('name'),
       fetchAll<Customer>(() => supabase.from('customers').select('*').order('name').order('id')),
+      supabase.from('cheque_banks').select('*').order('sort_order').order('name'),
       reloadSteps(),
     ])
     setAccounts(a.data ?? [])
     setNatures(n.data ?? [])
     setSalespersons(s.data ?? [])
     setCustomers(c.data ?? [])
+    setChequeBanks(b.data ?? [])
     setLoaded(true)
   }, [reloadSteps])
 
@@ -64,13 +69,14 @@ export function RefDataProvider({ children }: { children: ReactNode }) {
       natures,
       salespersons,
       customers,
+      chequeBanks,
       steps,
       accountById: new Map(accounts.map((a) => [a.id, a])),
       natureByName: new Map(natures.map((n) => [n.name, n])),
       reload,
       reloadSteps,
     }),
-    [loaded, accounts, natures, salespersons, customers, steps, reload, reloadSteps],
+    [loaded, accounts, natures, salespersons, customers, chequeBanks, steps, reload, reloadSteps],
   )
   return <RefContext.Provider value={value}>{children}</RefContext.Provider>
 }

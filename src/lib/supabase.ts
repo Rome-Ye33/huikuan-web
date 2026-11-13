@@ -14,6 +14,7 @@ export type AppRole = PublicSchema['Enums']['app_role']
 export type Account = TableRow<'bank_accounts'>
 export type Nature = TableRow<'payment_natures'>
 export type Salesperson = TableRow<'salespersons'>
+export type ChequeBank = TableRow<'cheque_banks'>
 export type Customer = TableRow<'customers'>
 export type Profile = TableRow<'profiles'>
 export type Invite = TableRow<'user_invites'>

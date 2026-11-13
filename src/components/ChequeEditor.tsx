@@ -1,4 +1,4 @@
-import { App, AutoComplete, Col, DatePicker, Form, Input, InputNumber, Modal, Radio, Row, Select, Table } from 'antd'
+import { App, Col, DatePicker, Form, Input, InputNumber, Modal, Radio, Row, Select, Table } from 'antd'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import type { Json } from '../lib/database.types'
@@ -46,13 +46,10 @@ type FormValues = {
 
 type Line = { key: number; cheque_no: string; due_date: dayjs.Dayjs | null; amount: number | null }
 
-/** 加纳常见的开票银行（支票上印的）；也可以自己填 */
-const BANKS = ['STANBIC', 'GCB', 'ECO', 'OMNI', 'FIDELITY', 'ARB', 'CBG', 'ZENITH', 'GTB', 'UMB', 'ADB', 'ABSA', 'BOA', 'ACCESS', 'CAL', 'REPUBLIC', 'UBA', 'FBN', 'PBL', 'FIRST ATLANTIC']
-
 export default function ChequeEditor({ open, cheque, onClose }: Props) {
   const t = useT()
   const { message } = App.useApp()
-  const { salespersons, customers } = useRefData()
+  const { salespersons, customers, chequeBanks } = useRefData()
   const [form] = Form.useForm<FormValues>()
   const [saving, setSaving] = useState(false)
   const [known, setKnown] = useState<Vehicle[]>([])
@@ -65,6 +62,14 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
   const vehicleIds = Form.useWatch('vehicle_ids', form)
   const editing = !!cheque
   const locked = cheque?.status === 'cleared'
+
+  // 支票银行从基础资料来（只列启用的）；老支票上的银行哪怕后来停用了也照样显示，不会丢
+  const bankOptions = useMemo(() => {
+    const names = chequeBanks.filter((b) => b.active).map((b) => b.name)
+    const cur = cheque?.drawer_bank?.trim()
+    if (cur && !names.includes(cur)) names.unshift(cur)
+    return names.map((n) => ({ value: n, label: n }))
+  }, [chequeBanks, cheque])
 
   useEffect(() => {
     if (!open) return
@@ -234,8 +239,15 @@ export default function ChequeEditor({ open, cheque, onClose }: Props) {
             </Form.Item>
           </Col>
           <Col xs={12} md={6}>
-            <Form.Item name="drawer_bank" label={t('支票银行')}>
-              <AutoComplete options={BANKS.map((b) => ({ value: b }))} filterOption={(q, o) => (o?.value as string).includes(q.toUpperCase())} />
+            <Form.Item name="drawer_bank" label={t('支票银行')} tooltip={t('支票上印的开票银行；这个列表在「基础资料 → 支票银行」里维护')}>
+              <Select
+                showSearch
+                allowClear
+                options={bankOptions}
+                optionFilterProp="value"
+                filterOption={(q, o) => (o?.value as string).includes(q.toUpperCase())}
+                placeholder={t('选银行')}
+              />
             </Form.Item>
           </Col>
           <Col xs={12} md={6}>
