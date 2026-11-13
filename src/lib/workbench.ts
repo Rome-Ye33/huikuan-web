@@ -1,5 +1,6 @@
-// 工作台：到账提交、提成单、到账（录入后的审批）三种审批并在一起，按登录的人分成待办 / 已办 / 已发起 / 已结束
-// （数据库视图 v_workbench 算好）。每一步谁做的、什么时候、退回原因记在 approval_logs（触发器写）。
+// 工作台：到账提交、提成单、到账（录入后的审批）三种审批并在一起，按登录的人分成待办 / 已办 / 已发起 / 已结束 / 抄送
+// （数据库视图 v_workbench 算好）。每一步谁做的、什么时候、退回原因记在 approval_logs（触发器写）；
+// 到账生效时抄送给了谁记在 approval_cc（30，触发器写，名单在“用户与权限 → 到账审批流”）。
 import { useEffect, useMemo, useState } from 'react'
 import { useFlow } from './flow'
 import { useT } from './i18n'
@@ -11,15 +12,16 @@ import type { TableRow, ViewRow } from './supabase'
 export type WorkItem = ViewRow<'v_workbench'>
 export type ApprovalLog = TableRow<'approval_logs'>
 export type DocType = 'submission' | 'voucher' | 'receipt'
-export type Box = 'todo' | 'done' | 'mine' | 'ended'
+export type Box = 'todo' | 'done' | 'mine' | 'ended' | 'cc'
 
-export const BOXES: Box[] = ['todo', 'done', 'mine', 'ended']
+export const BOXES: Box[] = ['todo', 'done', 'mine', 'ended', 'cc']
 
 export const BOX_LABEL: Record<Box, string> = {
   todo: '待办',
   done: '已办',
   mine: '已发起',
   ended: '已结束',
+  cc: '抄送',
 }
 
 /** 每一栏在视图里对应的列 */
@@ -28,14 +30,16 @@ export const BOX_COLUMN = {
   done: 'in_done',
   mine: 'in_mine',
   ended: 'in_ended',
+  cc: 'in_cc',
 } as const satisfies Record<Box, keyof WorkItem>
 
-/** 排序：待办先到先办（等得最久的在前）；已办按我处理的时间；已发起按提交时间；已结束按结束时间，都是新的在前 */
+/** 排序：待办先到先办（等得最久的在前）；已办按我处理的时间；已发起按提交时间；已结束按结束时间；抄送按生效时间，都是新的在前 */
 export const BOX_ORDER = {
   todo: { column: 'activity_at', ascending: true },
   done: { column: 'my_at', ascending: false },
   mine: { column: 'initiated_at', ascending: false },
   ended: { column: 'activity_at', ascending: false },
+  cc: { column: 'activity_at', ascending: false },
 } as const satisfies Record<Box, { column: keyof WorkItem; ascending: boolean }>
 
 export const DOC_LABEL: Record<DocType, string> = {
@@ -132,6 +136,13 @@ export async function fetchTrail(type: DocType, id: number): Promise<ApprovalLog
     .eq('doc_id', id)
     .order('at', { ascending: true })
     .order('id', { ascending: true })
+  return data ?? []
+}
+
+export type CcRow = TableRow<'approval_cc'>
+/** 一张单据生效时抄送给了谁（30），按名字 */
+export async function fetchCc(type: DocType, id: number): Promise<CcRow[]> {
+  const { data } = await supabase.from('approval_cc').select('*').eq('doc_type', type).eq('doc_id', id).order('user_name').order('id')
   return data ?? []
 }
 

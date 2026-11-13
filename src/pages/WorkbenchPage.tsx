@@ -16,18 +16,19 @@ import { supabase } from '../lib/supabase'
 import { BOX_LABEL, BOX_ORDER, BOXES, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
 import type { Box, DocType, WorkItem } from '../lib/workbench'
 
-// 工作台：到账提交、提成单、到账（录入后的审批）三种审批，按“待办 / 已办 / 已发起 / 已结束”分栏。点开就是原来的审核、修改页面
+// 工作台：到账提交、提成单、到账（录入后的审批）三种审批，按“待办 / 已办 / 已发起 / 已结束 / 抄送”分栏。点开就是原来的审核、修改页面
 
 const PAGE = 20
 type TypeFilter = DocType | 'all'
 type Counts = Record<Box, number | null>
-const NO_COUNTS: Counts = { todo: null, done: null, mine: null, ended: null }
+const NO_COUNTS: Counts = { todo: null, done: null, mine: null, ended: null, cc: null }
 
 const EMPTY_TEXT: Record<Box, string> = {
   todo: '没有待办，都处理完了',
   done: '没有处理过、还在流程中的单据',
   mine: '还没有发起过',
   ended: '还没有结束的单据',
+  cc: '没有抄送给你的单据',
 }
 
 function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp: boolean; onOpen: () => void }) {
@@ -140,7 +141,7 @@ export default function WorkbenchPage() {
     ])
     setRows(list.data ?? [])
     setTotal(list.count ?? 0)
-    setCounts({ todo: heads[0].count, done: heads[1].count, mine: heads[2].count, ended: heads[3].count })
+    setCounts({ todo: heads[0].count, done: heads[1].count, mine: heads[2].count, ended: heads[3].count, cc: heads[4].count })
     setLoading(false)
     if (list.error) message.error(list.error.message)
   }, [box, type, page, message])
@@ -263,7 +264,7 @@ export default function WorkbenchPage() {
         </Space>
       </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-        {t('到账提交、到账和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交（录入）的，已结束是流程走完的。点开就能处理。')}
+        {t('到账提交、到账和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交（录入）的，已结束是流程走完的，抄送是生效后抄送给你看一眼的。点开就能看、能处理。')}
       </Typography.Paragraph>
       <Tabs
         className="wb-tabs"
