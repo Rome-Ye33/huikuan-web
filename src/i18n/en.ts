@@ -309,6 +309,9 @@ const VALUES: Record<string, string> = {
   "第 {row} 行：请填支票号": "Row {row}: enter the cheque number",
   "第 {row} 行：请选客户": "Row {row}: choose the customer",
   "第 {row} 行：这个客户的支票 {no}（{bank}）已经录过了": "Row {row}: cheque {no} ({bank}) of this customer is already entered",
+  "第 {row} 行：这个客户的支票 {no}（{bank}）已经录过了，现在是“{status}”，要用它请在台账里打开那一张改":
+    "Row {row}: cheque {no} ({bank}) of this customer is already entered and is now “{status}”. To use it, open that one in the ledger and edit it",
+  "第 {row} 行：这一叠里支票号 {no} 重复了": "Row {row}: cheque number {no} appears twice in this batch",
   "第 {row} 行：金额要大于 0": "Row {row}: the amount must be more than 0",
   "第 {row} 行：金额要大于 0（空白支票就空着）": "Row {row}: the amount must be more than 0 (leave it empty for a blank cheque)",
   "请写取消原因（比如客户转账、付现金、已结清、写错换票）": "Give the reason for cancelling (e.g. customer paid by transfer or cash, settled, replaced a wrong cheque)",
@@ -1513,6 +1516,12 @@ const UI: Record<string, string> = {
   "比如：客户转账了、客户付现金拿走支票、已结清、写错换新票": "E.g. customer paid by transfer, paid cash and took the cheque back, settled, replaced a wrong cheque",
   "第 {n} 张没有支票号": "Cheque {n} has no number",
   "已录入 {n} 张支票": "{n} cheques entered",
+  "新录 {n} 张，另外 {m} 张老票改成了这一单的": "{n} entered, and {m} existing cheques moved to this order",
+  "{m} 张老票改成了这一单的": "{m} existing cheques moved to this order",
+  "{list} 这个客户已经录过了": "{list} is already entered for this customer",
+  "这几张还没进银行，保存后不会新建，而是把它们改成这次录的：车、金额、到期日、序号、备注都按这次的，状态回到待存，原来的取消原因和计划存票日期清掉。":
+    "They have not gone to the bank yet, so saving will not create new ones: they are changed to what you entered here — cars, amount, due date, serial and note all follow this entry, the status goes back to “To deposit”, and the old cancellation reason and planned deposit date are cleared.",
+  "改成这一单的": "Move to this order",
   "修改支票 {no}": "Edit cheque {no}",
   "录支票": "Enter cheque",
   "哪几台车的（可不选）": "Vehicles (optional)",
