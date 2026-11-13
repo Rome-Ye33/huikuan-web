@@ -1577,6 +1577,21 @@ const UI: Record<string, string> = {
   "其中 {n} 张已录过的支票补上了合同序号 / 期数": "{n} cheques already entered had their contract no. / instalment filled in",
   "导入表格": "Import sheet",
   "共 {n} 张支票": "{n} cheques",
+
+  // 支票银行（基础资料）
+  "支票上印的开票银行；这个列表在「基础资料 → 支票银行」里维护": "The drawing bank printed on the cheque. The list is maintained in Base data → Cheque banks.",
+  "选银行": "Choose a bank",
+  "客户开支票的银行。录支票时「支票银行」从这里选；这里改了，已经录好的支票不受影响。": "The banks customers draw cheques on. When entering a cheque, “Cheque bank” is picked from this list. Changes here do not affect cheques already entered.",
+  "新增银行": "Add bank",
+  "银行（照支票上印的，如 STANBIC、GCB）": "Bank (as printed on the cheque, e.g. STANBIC, GCB)",
+  "排序": "Order",
+  "排序（小的排前面）": "Order (smaller comes first)",
+  "批量导入支票银行": "Bulk import cheque banks",
+  "删除选中的 {n} 个银行？已经录好的支票不受影响。": "Delete the {n} selected banks? Cheques already entered are not affected.",
+  "已删除 {n} 个银行（已经录好的支票不受影响）": "{n} banks deleted (cheques already entered are not affected)",
+  "已启用 {n} 个": "{n} enabled",
+  "已停用 {n} 个": "{n} disabled",
+  "启用只能填 是 或 否": "Enabled must be 是 or 否",
 }
 
 export const EN: Record<string, string> = { ...VALUES, ...UI }
