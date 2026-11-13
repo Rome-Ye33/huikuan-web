@@ -6,6 +6,8 @@ import type { Vehicle } from '../lib/supabase'
 import { useT } from '../lib/i18n'
 
 // 按大架号或客户名搜车辆（远程搜索）。VehicleSelect 选一台，VehicleMultiSelect 选几台（一张订单几台车）。
+// 选好以后框里只显示大架号（Rome 2026-11-13「填大架号的」）——车型是导车辆时整张订单的描述，
+// 放在框里又长又挤；车型、客户在下拉里和框底下的灰字里照样看得到。
 
 type Props = {
   value?: number | null
@@ -102,6 +104,7 @@ export default function VehicleSelect({ value, onChange, known = [], placeholder
       notFoundContent={loading ? t('搜索中…') : t('输入至少 2 个字搜索')}
       options={options}
       optionRender={(o) => optionRender(o, t)}
+      labelRender={(p) => all.get(p.value as number)?.vin ?? p.label}
       onChange={(id: number | undefined) => onChange?.(id ?? null, id != null ? (all.get(id) ?? null) : null)}
     />
   )
@@ -126,6 +129,7 @@ export function VehicleMultiSelect({ value, onChange, known = [], placeholder, s
       notFoundContent={loading ? t('搜索中…') : t('输入至少 2 个字搜索')}
       options={options}
       optionRender={(o) => optionRender(o, t)}
+      labelRender={(p) => all.get(p.value as number)?.vin ?? p.label}
       onChange={(ids: number[]) => onChange?.(ids, ids.map((id) => all.get(id)).filter((v): v is Vehicle => !!v))}
     />
   )
