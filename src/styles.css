@@ -855,3 +855,39 @@ html[lang='en'] .logo-name {
   white-space: nowrap;
   vertical-align: bottom;
 }
+
+/* 批量导入到账：对应列分“到账 / 拆分到车”两段；预览表的状态一格里提示一行一条，拆分一车一行，不导的划掉 */
+.receipt-import .ri-part {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  color: #4a5160;
+}
+.receipt-import .ri-status > div {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 2px;
+}
+.receipt-import .ri-claim {
+  line-height: 1.6;
+}
+.receipt-import .ri-claim-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.receipt-import .ri-claim + .ri-claim {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed #e3e6eb;
+}
+.receipt-import .ri-amt {
+  white-space: nowrap;
+}
+.receipt-import .ri-dropped {
+  color: #a0a4ab;
+  text-decoration: line-through;
+}
+.receipt-import .ri-dropped .ant-tag {
+  text-decoration: none;
+}
