@@ -13,7 +13,7 @@ import { useRefData } from '../lib/refdata'
 import { claimsSummary, isFillRequest } from '../lib/submissions'
 import type { Submission } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
-import { BOX_LABEL, BOX_ORDER, BOXES, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
+import { BOX_LABEL, BOX_ORDER, BOXES, boxCounts, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
 import type { Box, DocType, WorkItem } from '../lib/workbench'
 
 // 工作台：到账提交、提成单、到账（录入后的审批）三种审批，按“待办 / 已办 / 已发起 / 已结束 / 抄送”分栏。点开就是原来的审核、修改页面
@@ -134,16 +134,17 @@ export default function WorkbenchPage() {
     setLoading(true)
     const order = BOX_ORDER[box]
     const from = (page - 1) * PAGE
-    const [list, ...heads] = await Promise.all([
+    // 列表 + 一个数数字的查询（原来是列表 + 每栏一个计数查询，一共 6 个）
+    const [list, boxes] = await Promise.all([
       boxQuery(box, type, 'exact')
         .order(order.column, { ascending: order.ascending, nullsFirst: false })
         .order('doc_id', { ascending: order.ascending })
         .range(from, from + PAGE - 1),
-      ...BOXES.map((b) => boxQuery(b, type, 'exact', true)),
+      boxCounts(type),
     ])
     setRows(list.data ?? [])
     setTotal(list.count ?? 0)
-    setCounts({ todo: heads[0].count, done: heads[1].count, mine: heads[2].count, ended: heads[3].count, cc: heads[4].count })
+    setCounts(boxes)
     setLoading(false)
     if (list.error) message.error(list.error.message)
   }, [box, type, page, message])
