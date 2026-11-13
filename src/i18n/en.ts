@@ -351,7 +351,7 @@ const UI: Record<string, string> = {
   "全部可编辑": "Can edit everything",
   "全部不可见": "Nothing visible",
   "全部只看": "View only for all",
-  "{module}（只看）": "{module} (view only)",
+  "{module}（只看）": "{module} (view)",
   "模块权限：{name}": "Module permissions: {name}",
   "模块": "Module",
   "权限": "Permission",
@@ -582,6 +582,7 @@ const UI: Record<string, string> = {
     "This receipt comes from a bank statement line: account, date and amount follow the bank and can't be changed. After saving it is matched to that line.",
   "这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。":
     "This receipt is matched to a bank statement line ({date} · {cur} {amt}): account, date, amount and the summary, reference and cheque number given by the bank can't be changed. If it really is wrong, unmatch it first under Bank reconciliation → All bank lines.",
+  "这笔到账已和银行流水配对（{date} · {cur} {amt}）。": "This receipt is matched to a bank statement line ({date} · {cur} {amt}).",
   "到账信息": "Receipt details",
   "请选收款账户": "Choose the receiving account",
   "搜索账户，如 ECO 8651": "Search accounts, e.g. ECO 8651",

@@ -1320,13 +1320,20 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             showIcon
             style={{ marginBottom: 12 }}
             title={
-              currentId
-                ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。', {
+              // 只看的人整张都改不了，不用教他怎么取消配对再改
+              currentId && readOnly
+                ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）。', {
                     date: bankLine.line_date ?? '',
                     cur: bankLine.currency ?? currency,
                     amt: money(bankLine.amount_orig ?? 0),
                   })
-                : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
+                : currentId
+                  ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。', {
+                      date: bankLine.line_date ?? '',
+                      cur: bankLine.currency ?? currency,
+                      amt: money(bankLine.amount_orig ?? 0),
+                    })
+                  : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
             }
           />
         )}

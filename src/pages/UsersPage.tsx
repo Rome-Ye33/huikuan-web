@@ -448,6 +448,7 @@ export default function UsersPage() {
           {
             title: '',
             width: 200,
+            className: 'user-actions',
             render: (_, p) =>
               p.id === session?.user.id ? (
                 <Space size="middle">
