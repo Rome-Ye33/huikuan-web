@@ -937,6 +937,7 @@ export type Database = {
           id: string
           notify_email: boolean
           notify_lang: string
+          perms: Json | null
           role: Database["public"]["Enums"]["app_role"] | null
           salesperson_id: number | null
           whatsapp: string | null
@@ -951,6 +952,7 @@ export type Database = {
           id: string
           notify_email?: boolean
           notify_lang?: string
+          perms?: Json | null
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
           whatsapp?: string | null
@@ -965,6 +967,7 @@ export type Database = {
           id?: string
           notify_email?: boolean
           notify_lang?: string
+          perms?: Json | null
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
           whatsapp?: string | null
@@ -1275,6 +1278,7 @@ export type Database = {
           email: string
           full_name: string | null
           invited_by: string | null
+          perms: Json | null
           role: Database["public"]["Enums"]["app_role"]
           salesperson_id: number | null
         }
@@ -1285,6 +1289,7 @@ export type Database = {
           email: string
           full_name?: string | null
           invited_by?: string | null
+          perms?: Json | null
           role: Database["public"]["Enums"]["app_role"]
           salesperson_id?: number | null
         }
@@ -1295,6 +1300,7 @@ export type Database = {
           email?: string
           full_name?: string | null
           invited_by?: string | null
+          perms?: Json | null
           role?: Database["public"]["Enums"]["app_role"]
           salesperson_id?: number | null
         }

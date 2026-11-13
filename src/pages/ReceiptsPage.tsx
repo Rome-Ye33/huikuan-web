@@ -9,6 +9,7 @@ import { RECEIPT_STATUS_LABEL, receiptStatus, useFlow } from '../lib/flow'
 import type { ReceiptStatus } from '../lib/flow'
 import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money, todayAccra, usd } from '../lib/format'
+import { useAuth } from '../lib/auth'
 import { tr, useT } from '../lib/i18n'
 import { accountOptions, useRefData } from '../lib/refdata'
 import { useSubmissionCount } from '../lib/submissions'
@@ -26,6 +27,8 @@ export function reportTag(r: Receipt) {
 
 function ReceiptList() {
   const t = useT()
+  // 新建到账要“到账录入”可编辑；只看的点开到账也只能看
+  const rxEdit = useAuth().canEdit('receipts')
   const { accounts } = useRefData()
   const rflow = useFlow('receipt')
   const [rows, setRows] = useState<Receipt[]>([])
@@ -179,9 +182,11 @@ function ReceiptList() {
         />
         <Input.Search allowClear placeholder={t('编号、摘要、参考号、支票号')} style={{ width: 240 }} onSearch={setQ} />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
-          {t('新建到账')}
-        </Button>
+        {rxEdit && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
+            {t('新建到账')}
+          </Button>
+        )}
       </Space>
       <Table
         rowKey="id"

@@ -35,7 +35,10 @@ type DialogValues = { note?: string; plan_date?: dayjs.Dayjs | null; deposit_dat
 export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit, onCreateReceipt, onOpenReceipt }: Props) {
   const t = useT()
   const { message, modal } = App.useApp()
-  const { isStaff } = useAuth()
+  const { canEdit, canView } = useAuth()
+  /** 处理支票（“支票管理”可编辑）；生成到账还要“到账录入”可编辑 */
+  const chEdit = canEdit('cheques')
+  const rxEdit = canEdit('receipts')
   const { accounts } = useRefData()
   const rflow = useFlow('receipt')
   const [logs, setLogs] = useState<{ id: number; rows: ChequeLog[] } | null>(null)
@@ -214,7 +217,7 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
         )
       }
       extra={
-        c && isStaff ? (
+        c && chEdit ? (
           <Space wrap>
             <Button size="small" onClick={() => onEdit(c)}>
               {t('修改')}
@@ -278,7 +281,7 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
             )}
             {status === 'cleared' && c.receipt_id != null && (
               <Descriptions.Item label={t('到账')} span={2}>
-                <a onClick={() => onOpenReceipt(c.receipt_id!)}>{c.receipt_no}</a>
+                {canView('receipts') ? <a onClick={() => onOpenReceipt(c.receipt_id!)}>{c.receipt_no}</a> : c.receipt_no}
                 <span className="hint" style={{ marginInlineStart: 8 }}>
                   {c.receipt_date} · {rflow.stageLabel(c.receipt_status, null)} · {c.is_reported ? t('已报回款') : t('还没报回款，到到账录入里报')}
                 </span>
@@ -296,7 +299,7 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
             )}
           </Descriptions>
 
-          {isStaff && (
+          {chEdit && (
             <Space wrap style={{ marginTop: 14 }} className="cheque-actions">
               <Button onClick={() => openDialog('note')}>{t('记一条沟通')}</Button>
               {canOpen && (
@@ -306,7 +309,7 @@ export default function ChequeDetail({ open, cheque, onClose, onChanged, onEdit,
               )}
               {status === 'pending' && <Button onClick={() => openDialog('confirm')}>{t('请业务确认')}</Button>}
               {canOpen && <Button onClick={() => openDialog('plan')}>{t('定计划存票日期')}</Button>}
-              {status === 'deposited' && (
+              {status === 'deposited' && rxEdit && (
                 <Button type="primary" onClick={() => onCreateReceipt(c)}>
                   {t('生成到账')}
                 </Button>
