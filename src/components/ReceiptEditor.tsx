@@ -911,6 +911,14 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             )}
             {v ? (
               <div className="hint">
+                {v.model ? (
+                  <>
+                    <span className="model-clip" title={v.model}>
+                      {v.model}
+                    </span>
+                    {' · '}
+                  </>
+                ) : null}
                 {t('{customer} · {sp} · 合同 {contract} · 已到 {received} · 余额 {balance}', {
                   customer: v.customer_name,
                   sp: v.salesperson_name ?? t('无业务员'),

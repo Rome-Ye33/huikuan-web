@@ -845,3 +845,13 @@ html[lang='en'] .logo-name {
 .user-actions a {
   white-space: nowrap;
 }
+
+/* 车型常常是导车辆时整张订单的描述（「8台6x4自卸车，单价…」），灰字里只占一行，鼠标放上去看全文 */
+.model-clip {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
