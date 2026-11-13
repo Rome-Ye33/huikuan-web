@@ -274,7 +274,7 @@ const VALUES: Record<string, string> = {
   "取消了和到账的关联": "Unlinked from the receipt",
   "恢复待存": "Back to “to deposit”",
   "今天到期": "Due today",
-  "7 天内到期": "Due within 7 days",
+  "本周到期": "Due this week",
   "到期还没存": "Overdue, not deposited",
   "已存没到账": "Deposited, not cleared",
   "已到账没报回款": "Cleared, not reported",
