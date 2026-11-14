@@ -12,7 +12,7 @@
 //   SMTP_USER   发信邮箱，比如 xxx@gmail.com
 //   SMTP_PASS   这个邮箱的应用专用密码（Gmail：开了两步验证以后在“应用专用密码”里生成的 16 位，中间的空格有没有都行）
 //   SMTP_HOST、SMTP_PORT（可选，默认 smtp.gmail.com、465；用公司邮箱时按邮箱服务商给的填，比如腾讯企业邮 smtp.exmail.qq.com、465）
-//   MAIL_FROM_NAME（可选，发件人名字，默认“销售管理 Sales Management”）
+//   MAIL_FROM_NAME（可选，发件人名字，默认“业财管理 Sales & Finance”）
 //   SITE_URL（可选，邮件里按钮打开的网址，默认 https://rome-ye33.github.io/huikuan-web/）
 // 部署时 verify_jwt = false：flush、check 用口令校验，test 自己校验登录。服务端密钥只在 Supabase 服务器上用，不会进浏览器。
 import { createClient } from 'npm:@supabase/supabase-js@2'
@@ -55,7 +55,7 @@ const SMTP_HOST = (Deno.env.get('SMTP_HOST') || 'smtp.gmail.com').trim()
 const SMTP_PORT = Number(Deno.env.get('SMTP_PORT')) || 465
 const SMTP_USER = (Deno.env.get('SMTP_USER') ?? '').trim()
 const SMTP_PASS = (Deno.env.get('SMTP_PASS') ?? '').replace(/\s+/g, '') // Gmail 显示的应用专用密码中间有空格
-const FROM_NAME = (Deno.env.get('MAIL_FROM_NAME') || '销售管理 Sales Management').trim()
+const FROM_NAME = (Deno.env.get('MAIL_FROM_NAME') || '业财管理 Sales & Finance').trim()
 const SITE = (Deno.env.get('SITE_URL') || 'https://rome-ye33.github.io/huikuan-web/').trim().replace(/\/*$/, '/')
 const BATCH = 20 // 一批 20 个人（一人一封）
 const MAX_ROUNDS = 3 // 一次最多 3 批（60 封），剩下的等下一分钟的定时任务
@@ -133,7 +133,7 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
   let opens: string
   const sections: { heading: string | null; items: typeof all; each: string }[] = []
   if (test) {
-    subject = en ? '[Sales Management] Test email' : '【销售管理】测试邮件'
+    subject = en ? '[Sales & Finance] Test email' : '【业财管理】测试邮件'
     line = en
       ? 'This is a test email. When something is waiting for you, you will get an email like this.'
       : '这是一封测试邮件。以后有待办，会像这样发到这个邮箱。'
@@ -141,13 +141,13 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
     link = wb
     opens = en ? 'The button opens the website. After you sign in, it goes to the workbench.' : '点按钮会打开网站，登录后到工作台。'
   } else if (n === 1 && m === 0) {
-    subject = en ? `[Sales Management] ${cut(cap(one.text), 150)}` : `【销售管理】${cut(one.text, 100)}`
-    line = en ? `You have a new to-do in Sales Management: ${one.text}.` : `你在销售管理系统有一项新的待办：${one.text}。`
+    subject = en ? `[Sales & Finance] ${cut(cap(one.text), 150)}` : `【业财管理】${cut(one.text, 100)}`
+    line = en ? `You have a new to-do in Sales & Finance: ${one.text}.` : `你在业财管理系统有一项新的待办：${one.text}。`
     button = en ? 'Open it' : '打开处理'
     link = one.link
     opens = en ? 'The button opens the website. After you sign in, it goes straight to this item.' : '点按钮会打开网站，登录后直接到这张单。'
   } else if (n === 0 && m === 1) {
-    subject = en ? `[Sales Management] CC: ${cut(oneCc.text, 150)}` : `【销售管理】抄送：${cut(oneCc.text, 100)}`
+    subject = en ? `[Sales & Finance] CC: ${cut(oneCc.text, 150)}` : `【业财管理】抄送：${cut(oneCc.text, 100)}`
     line = en
       ? `A receipt has been copied to you for information: ${oneCc.text}. Nothing to do, just have a look.`
       : `有一笔到账抄送给你：${oneCc.text}。不用处理，看一眼就好。`
@@ -155,8 +155,8 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
     link = oneCc.link
     opens = en ? 'The button opens the website. After you sign in, it goes straight to this receipt.' : '点按钮会打开网站，登录后直接到这笔到账。'
   } else if (m === 0) {
-    subject = en ? `[Sales Management] You have ${n} new to-dos` : `【销售管理】你有 ${n} 项新的待办`
-    line = en ? `You have ${n} new to-dos in Sales Management:` : `你在销售管理系统有 ${n} 项新的待办：`
+    subject = en ? `[Sales & Finance] You have ${n} new to-dos` : `【业财管理】你有 ${n} 项新的待办`
+    line = en ? `You have ${n} new to-dos in Sales & Finance:` : `你在业财管理系统有 ${n} 项新的待办：`
     button = en ? 'Open the workbench' : '打开工作台'
     link = wb
     opens = en
@@ -164,7 +164,7 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
       : '每项下面的“打开处理”会打开网站，登录后直接到那张单。'
     sections.push({ heading: null, items: list, each })
   } else if (n === 0) {
-    subject = en ? `[Sales Management] ${m} receipts copied to you` : `【销售管理】有 ${m} 笔到账抄送给你`
+    subject = en ? `[Sales & Finance] ${m} receipts copied to you` : `【业财管理】有 ${m} 笔到账抄送给你`
     line = en ? `${m} receipts have been copied to you for information. Nothing to do, just have a look:` : `有 ${m} 笔到账抄送给你，不用处理，看一眼就好：`
     button = en ? 'Open the workbench' : '打开工作台'
     link = wb
@@ -174,9 +174,9 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
     sections.push({ heading: null, items: ccs, each: view })
   } else {
     subject = en
-      ? `[Sales Management] You have ${n} new to-do${n > 1 ? 's' : ''} and ${m} receipt${m > 1 ? 's' : ''} copied to you`
-      : `【销售管理】你有 ${n} 项新的待办、${m} 笔抄送的到账`
-    line = en ? `You have ${n} new to-do${n > 1 ? 's' : ''} in Sales Management:` : `你在销售管理系统有 ${n} 项新的待办：`
+      ? `[Sales & Finance] You have ${n} new to-do${n > 1 ? 's' : ''} and ${m} receipt${m > 1 ? 's' : ''} copied to you`
+      : `【业财管理】你有 ${n} 项新的待办、${m} 笔抄送的到账`
+    line = en ? `You have ${n} new to-do${n > 1 ? 's' : ''} in Sales & Finance:` : `你在业财管理系统有 ${n} 项新的待办：`
     button = en ? 'Open the workbench' : '打开工作台'
     link = wb
     opens = en
@@ -219,7 +219,7 @@ function compose(lang: string | null, name: string | null, todos: Todo[] | null)
 <html lang="${en ? 'en' : 'zh-CN'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title></head>
 <body style="margin:0;padding:0;background:#f3f6fb">
 <div style="max-width:560px;margin:0 auto;padding:24px 16px;font-family:${font};font-size:15px;line-height:1.6;color:#1f2937">
-<div style="margin:0 0 12px;font-size:16px;font-weight:600;color:#1d4ed8">${en ? 'Sales Management' : '销售管理'}</div>
+<div style="margin:0 0 12px;font-size:16px;font-weight:600;color:#1d4ed8">${esc(en ? 'Sales & Finance' : '业财管理')}</div>
 <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:24px">
 <p style="margin:0 0 12px">${esc(greeting)}</p>
 <p style="margin:0 0 ${many ? 12 : 20}px">${esc(line)}</p>
@@ -347,8 +347,9 @@ async function test(req: Request): Promise<Response> {
   return reply(502, { error: '邮件没有发出去：' + (res.detail ?? res.error) })
 }
 
-// 排查时报一下配置：发信邮箱、应用专用密码的位数（Gmail 的是 16 位；不是 16 位多半是填了登录密码、或带了引号）。密码本身不报
-const setup = () => ({ configured: configured(), host: SMTP_HOST, port: SMTP_PORT, user: SMTP_USER, passLength: SMTP_PASS.length })
+// 排查时报一下配置：发信邮箱、应用专用密码的位数（Gmail 的是 16 位；不是 16 位多半是填了登录密码、或带了引号）。密码本身不报。
+// 也报发件人名字和按钮打开的网址（看 MAIL_FROM_NAME、SITE_URL 有没有另外设，改名、换网址以后核对用）
+const setup = () => ({ configured: configured(), host: SMTP_HOST, port: SMTP_PORT, user: SMTP_USER, passLength: SMTP_PASS.length, fromName: FROM_NAME, site: SITE })
 
 // 排查：连一下发信服务器、试试发信邮箱能不能登录（不发邮件）。没配发信邮箱时只看连不连得上
 async function check(): Promise<Response> {
