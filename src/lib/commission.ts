@@ -45,13 +45,14 @@ export function isEditableStatus(s: VoucherStatus): boolean {
   return s === 'draft' || s === 'rejected'
 }
 
-/** 提成单上的一台车（保存时从系统带出） */
+/** 提成单上的一台车（保存时从系统带出；commission_usd 是这台车单独的提成，空 = 这张单不按车分） */
 export type VoucherVehicle = {
   vehicle_id: number
   vin: string
   model: string
   payment_method: string | null
   unit_price_usd: number
+  commission_usd: number | null
   note: string | null
 }
 
@@ -89,8 +90,15 @@ export function parseVehicles(j: Json | null | undefined): VoucherVehicle[] {
     model: str(x.model) ?? '',
     payment_method: str(x.payment_method),
     unit_price_usd: num(x.unit_price_usd),
+    commission_usd: x.commission_usd === null || x.commission_usd === undefined || x.commission_usd === '' ? null : num(x.commission_usd),
     note: str(x.note),
   }))
+}
+
+/** 每台车分开填的提成之和（有车填了才算；都没填 = null，整单按手填的一个数） */
+export function perCarCommission(list: { commission_usd: number | null }[]): number | null {
+  const filled = list.filter((x) => x.commission_usd != null)
+  return filled.length ? round2(filled.reduce((a, x) => a + num(x.commission_usd), 0)) : null
 }
 
 export function parsePayments(j: Json | null | undefined): VoucherPayment[] {
