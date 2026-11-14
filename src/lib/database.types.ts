@@ -1061,6 +1061,45 @@ export type Database = {
         }
         Relationships: []
       }
+      journal_log: {
+        Row: {
+          account_id: number | null
+          action: string
+          at: string
+          by_user: string | null
+          detail: Json
+          doc_no: string | null
+          entry_id: number | null
+          id: number
+          line_id: number | null
+          txid: number
+        }
+        Insert: {
+          account_id?: number | null
+          action: string
+          at?: string
+          by_user?: string | null
+          detail?: Json
+          doc_no?: string | null
+          entry_id?: number | null
+          id?: never
+          line_id?: number | null
+          txid?: number
+        }
+        Update: {
+          account_id?: number | null
+          action?: string
+          at?: string
+          by_user?: string | null
+          detail?: Json
+          doc_no?: string | null
+          entry_id?: number | null
+          id?: never
+          line_id?: number | null
+          txid?: number
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           active: boolean
@@ -1070,6 +1109,7 @@ export type Database = {
           email: string | null
           full_name: string | null
           id: string
+          journal_duty: string | null
           notify_email: boolean
           notify_lang: string
           perms: Json | null
@@ -1085,6 +1125,7 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id: string
+          journal_duty?: string | null
           notify_email?: boolean
           notify_lang?: string
           perms?: Json | null
@@ -1100,6 +1141,7 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          journal_duty?: string | null
           notify_email?: boolean
           notify_lang?: string
           perms?: Json | null
@@ -1413,6 +1455,7 @@ export type Database = {
           email: string
           full_name: string | null
           invited_by: string | null
+          journal_duty: string | null
           perms: Json | null
           role: Database["public"]["Enums"]["app_role"]
           salesperson_id: number | null
@@ -1424,6 +1467,7 @@ export type Database = {
           email: string
           full_name?: string | null
           invited_by?: string | null
+          journal_duty?: string | null
           perms?: Json | null
           role: Database["public"]["Enums"]["app_role"]
           salesperson_id?: number | null
@@ -1435,6 +1479,7 @@ export type Database = {
           email?: string
           full_name?: string | null
           invited_by?: string | null
+          journal_duty?: string | null
           perms?: Json | null
           role?: Database["public"]["Enums"]["app_role"]
           salesperson_id?: number | null
@@ -1722,6 +1767,7 @@ export type Database = {
       v_journal: {
         Row: {
           account_id: number | null
+          account_kind: string | null
           account_name: string | null
           amount_in: number | null
           amount_out: number | null
@@ -1748,6 +1794,25 @@ export type Database = {
           source: string | null
           source_id: number | null
           summary: string | null
+        }
+        Relationships: []
+      }
+      v_journal_log: {
+        Row: {
+          account_id: number | null
+          account_kind: string | null
+          account_name: string | null
+          action: string | null
+          at: string | null
+          by_name: string | null
+          by_user: string | null
+          currency: string | null
+          detail: Json | null
+          doc_no: string | null
+          entry_id: number | null
+          id: number | null
+          line_id: number | null
+          txid: number | null
         }
         Relationships: []
       }
@@ -2034,7 +2099,8 @@ export type Database = {
         }
         Returns: Json
       }
-      delete_cash_entry: { Args: { p_id: number }; Returns: undefined }
+      delete_cash_entry: { Args: { p_id: number; p_updated_at?: string }; Returns: undefined }
+      journal_todo_count: { Args: never; Returns: Json }
       fill_statement_lines: { Args: { p: Json; p_line_ids: number[] }; Returns: number }
       import_cheques: { Args: { p_rows: Json }; Returns: Json }
       import_vehicles: {

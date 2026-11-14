@@ -1,4 +1,4 @@
-import { CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled, LeftOutlined, PlusOutlined, ReloadOutlined, RightOutlined, SettingOutlined } from '@ant-design/icons'
+import { CheckCircleFilled, ClockCircleOutlined, CloseCircleFilled, ExclamationCircleFilled, LeftOutlined, PlusOutlined, ReloadOutlined, RightOutlined, SettingOutlined } from '@ant-design/icons'
 import { Alert, Button, Card, Checkbox, Col, DatePicker, Input, Row, Select, Space, Switch, Table, Tabs, Tag, Tooltip, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
@@ -25,23 +25,31 @@ import {
   JOURNAL_MODULES,
   moduleColor,
   monthRange,
+  SCOPE_PERM,
+  SCOPE_TITLE,
+  scopeOf,
 } from '../lib/journal'
-import type { AccountMonth, AcctStatus, FillHow, JournalLine, LedgerRow } from '../lib/journal'
+import type { AccountMonth, AcctStatus, FillHow, JournalLine, JournalScope, LedgerRow } from '../lib/journal'
+import { describeGroup, groupLogs, LOG_KINDS } from '../lib/journalLog'
+import type { JournalLog, LogGroup } from '../lib/journalLog'
 import { accountOptions, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Account } from '../lib/supabase'
 
-// 银行现金日记账：照《终端解款表》做的两页。
-// 银行账户先导流水再填（在「银行对账」里导入、填写）：日记账一行就是一条银行流水，金额、日期、余额都是银行的，所以余额和银行一致；还没填的也算进余额，标「待填」。
-// 现金账户没有流水，收支在这里一笔一笔记；客户交的现金走到账录入，审批通过后自动进来。
+// 银行日记账、现金日记账：照《终端解款表》做的，两本分开（两个菜单、两个模块权限），同一个页面，scope 不一样。
+// 银行日记账（scope bank）：银行账户先导流水再填（在「银行对账」里导入、填写）：日记账一行就是一条银行流水，金额、日期、余额都是银行的，
+//   所以余额和银行一致；还没填的也算进余额，标「待填」。
+// 现金日记账（scope cash）：现金、momo 没有流水，收支在这里一笔一笔记；客户交的现金走到账录入，审批通过后自动进来。
+// 现金存现、银行取现这类账户互转记一次，两边各一笔，两本日记账都出现。
 // 账户余额 = 解款表的“银行主页 / 现金主页”：每个账户这个月的月初余额、收、付、月末余额，流水填完了没有。
 // 日记账明细 = 一个账户一段时间里的每一笔，每行带余额，每天一行小计。
+// 修改记录 = 这本日记账里谁、什么时候、做了什么（数据库触发器记的）。
 
 type Editor = { open: boolean; id: number | null; prefill: CashEntryPrefill | null }
 
-export default function JournalPage() {
+export default function JournalPage({ scope }: { scope: JournalScope }) {
   const t = useT()
-  const jEdit = useAuth().canEdit('journal')
+  const jEdit = useAuth().canEdit(SCOPE_PERM[scope])
   const { accounts } = useRefData()
   const [tab, setTab] = useState('summary')
   const [month, setMonth] = useState(todayAccra().slice(0, 7))
@@ -87,14 +95,14 @@ export default function JournalPage() {
   return (
     <div>
       <div className="page-title">
-        <h2>{t('银行现金日记账')}</h2>
+        <h2>{t(SCOPE_TITLE[scope])}</h2>
         <Space wrap>
           {jEdit && (
             <Button icon={<SettingOutlined />} onClick={() => setOpeningOpen(true)}>
               {t('期初余额')}
             </Button>
           )}
-          {jEdit && (
+          {jEdit && scope === 'cash' && (
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null, prefill: null })}>
               {t('记一笔现金')}
             </Button>
@@ -118,6 +126,7 @@ export default function JournalPage() {
             label: t('账户余额'),
             children: (
               <SummaryTab
+                scope={scope}
                 month={month}
                 onMonth={setMonth}
                 version={version}
@@ -131,7 +140,12 @@ export default function JournalPage() {
           {
             key: 'ledger',
             label: t('日记账明细'),
-            children: <LedgerTab month={month} accountId={accountId} onAccount={setAccountId} version={version} onOpen={openLine} onFill={fill} />,
+            children: <LedgerTab scope={scope} month={month} accountId={accountId} onAccount={setAccountId} version={version} onOpen={openLine} onFill={fill} />,
+          },
+          {
+            key: 'log',
+            label: t('修改记录'),
+            children: <LogTab scope={scope} version={version} />,
           },
         ]}
       />
@@ -156,6 +170,7 @@ export default function JournalPage() {
       />
       <OpeningEditor
         open={openingOpen}
+        scope={scope}
         onClose={(changed) => {
           setOpeningOpen(false)
           if (changed) setVersion((x) => x + 1)
@@ -220,9 +235,22 @@ type SumRow =
   | { type: 'acct'; key: string; a: Account; m: AccountMonth; status: AcctStatus }
   | { type: 'total'; key: string; label: string; currency: string; opening: number; income: number; expense: number; closing: number }
 
-function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMonth: (m: string) => void; version: number; onPick: (id: number) => void }) {
+function SummaryTab({
+  scope,
+  month,
+  onMonth,
+  version,
+  onPick,
+}: {
+  scope: JournalScope
+  month: string
+  onMonth: (m: string) => void
+  version: number
+  onPick: (id: number) => void
+}) {
   const t = useT()
-  const { accounts } = useRefData()
+  const { accounts: all } = useRefData()
+  const accounts = useMemo(() => all.filter((a) => scopeOf(a) === scope), [all, scope])
   const [data, setData] = useState<AccountMonth[]>([])
   const [loading, setLoading] = useState(false)
   const [group, setGroup] = useState<string | undefined>()
@@ -255,8 +283,8 @@ function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMont
           x.a.short_name.localeCompare(y.a.short_name),
       )
     const out: SumRow[] = []
-    const totals = new Map<string, { bank: number; cash: number }>()
-    const counts = { ok: 0, todo: 0, broken: 0, none: 0, cash: 0, lines: 0 }
+    const totals = new Map<string, { closing: number; n: number }>()
+    const counts = { ok: 0, todo: 0, broken: 0, none: 0, cash: 0, lines: 0, entries: 0, pending: 0 }
     let g: string | null = null
     let sub = new Map<string, { opening: number; income: number; expense: number; closing: number }>()
     const flush = () => {
@@ -275,6 +303,8 @@ function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMont
       const status = acctStatus(m, isCashLike(a))
       counts[status]++
       counts.lines += Number(m.unfilled_n ?? 0)
+      counts.entries += Number(m.line_n ?? 0)
+      counts.pending += Number(m.pending_n ?? 0)
       out.push({ type: 'acct', key: `a-${a.id}`, a, m, status })
       const s = sub.get(a.currency) ?? { opening: 0, income: 0, expense: 0, closing: 0 }
       s.opening = round2(s.opening + Number(m.opening))
@@ -282,9 +312,9 @@ function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMont
       s.expense = round2(s.expense + Number(m.expense))
       s.closing = round2(s.closing + Number(m.closing))
       sub.set(a.currency, s)
-      const tt = totals.get(a.currency) ?? { bank: 0, cash: 0 }
-      if (isCashLike(a)) tt.cash = round2(tt.cash + Number(m.closing))
-      else tt.bank = round2(tt.bank + Number(m.closing))
+      const tt = totals.get(a.currency) ?? { closing: 0, n: 0 }
+      tt.closing = round2(tt.closing + Number(m.closing))
+      tt.n += 1
       totals.set(a.currency, tt)
     }
     flush()
@@ -390,14 +420,16 @@ function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMont
     <div>
       <Space wrap className="filters">
         <MonthPicker month={month} onMonth={onMonth} />
-        <Select
-          allowClear
-          placeholder={t('全部分组')}
-          style={{ width: 170 }}
-          value={group}
-          onChange={setGroup}
-          options={groups.map((g) => ({ value: g, label: t(g) }))}
-        />
+        {groups.length > 1 && (
+          <Select
+            allowClear
+            placeholder={t('全部分组')}
+            style={{ width: 170 }}
+            value={group}
+            onChange={setGroup}
+            options={groups.map((g) => ({ value: g, label: t(g) }))}
+          />
+        )}
         <Checkbox checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)}>
           {t('不看停用、没钱也没发生额的账户')}
         </Checkbox>
@@ -409,33 +441,45 @@ function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMont
         {totals.map(([cur, v]) => (
           <Col key={cur} xs={24} sm={12} lg={6}>
             <Card size="small">
-              <div className="hint">{t('{cur} 余额合计', { cur: t(CURRENCY_ZH[cur] ?? cur) })}</div>
+              <div className="hint">{scope === 'bank' ? t('{cur} 银行余额合计', { cur: t(CURRENCY_ZH[cur] ?? cur) }) : t('{cur} 现金余额合计', { cur: t(CURRENCY_ZH[cur] ?? cur) })}</div>
               <div className="balance-big num">
-                {cur} {money(round2(v.bank + v.cash))}
+                {cur} {money(v.closing)}
               </div>
-              <div className="hint num">
-                {t('银行 {bank} · 现金 {cash}', { bank: money(v.bank), cash: money(v.cash) })}
-              </div>
+              <div className="hint">{t('{n} 个账户', { n: v.n })}</div>
             </Card>
           </Col>
         ))}
         <Col xs={24} sm={24} lg={12}>
-          <Card size="small">
-            <div className="hint">{t('这个月的银行流水')}</div>
-            <Space size={[14, 4]} wrap className="check-counts">
-              <span>
-                <CheckCircleFilled className="text-ok" /> {t('已填完 {n} 个账户', { n: counts.ok })}
-              </span>
-              <span>
-                <ExclamationCircleFilled className={counts.lines ? 'text-orange' : 'hint'} /> {t('待填 {n} 条', { n: counts.lines })}
-              </span>
-              <span>
-                <CloseCircleFilled className={counts.broken ? 'text-danger' : 'hint'} /> {t('余额接不上 {n} 个', { n: counts.broken })}
-              </span>
-              <span className="hint">{t('没有流水 {n} 个', { n: counts.none })}</span>
-              <Link to="/reconcile">{t('去银行对账导入、填写 →')}</Link>
-            </Space>
-          </Card>
+          {scope === 'bank' ? (
+            <Card size="small">
+              <div className="hint">{t('这个月的银行流水')}</div>
+              <Space size={[14, 4]} wrap className="check-counts">
+                <span>
+                  <CheckCircleFilled className="text-ok" /> {t('已填完 {n} 个账户', { n: counts.ok })}
+                </span>
+                <span>
+                  <ExclamationCircleFilled className={counts.lines ? 'text-orange' : 'hint'} /> {t('待填 {n} 条', { n: counts.lines })}
+                </span>
+                <span>
+                  <CloseCircleFilled className={counts.broken ? 'text-danger' : 'hint'} /> {t('余额接不上 {n} 个', { n: counts.broken })}
+                </span>
+                <span className="hint">{t('没有流水 {n} 个', { n: counts.none })}</span>
+                <Link to="/reconcile">{t('去银行对账导入、填写 →')}</Link>
+              </Space>
+            </Card>
+          ) : (
+            <Card size="small">
+              <div className="hint">{t('这个月的现金')}</div>
+              <Space size={[14, 4]} wrap className="check-counts">
+                <span>
+                  <CheckCircleFilled className="text-ok" /> {t('记了 {n} 笔', { n: counts.entries })}
+                </span>
+                <span>
+                  <ClockCircleOutlined className={counts.pending ? 'text-orange' : 'hint'} /> {t('{n} 笔现金到账在审批中', { n: counts.pending })}
+                </span>
+              </Space>
+            </Card>
+          )}
         </Col>
       </Row>
       <Table<SumRow>
@@ -451,7 +495,9 @@ function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMont
         onRow={(r) => (r.type === 'acct' ? { onClick: () => onPick(r.a.id) } : {})}
       />
       <Typography.Paragraph type="secondary" className="journal-note">
-        {t('银行账户的收付就是导进来的银行流水（在「银行对账」里导入、填写），余额跟着银行走；还没填的流水也算进余额，标「待填」。现金账户的收付在这里一笔一笔记，客户交的现金走到账录入，审批通过后自动进来。')}
+        {scope === 'bank'
+          ? t('银行账户的收付就是导进来的银行流水（在「银行对账」里导入、填写），余额跟着银行走；还没填的流水也算进余额，标「待填」。现金存现、银行取现记一次，银行日记账和现金日记账都会出现。')
+          : t('现金、momo 账户的收付在这里一笔一笔记；客户交的现金走到账录入，审批通过后自动进来。存进银行、从银行取现记成「账户互转」，银行那一边等流水导进来自动对上。')}
       </Typography.Paragraph>
     </div>
   )
@@ -459,6 +505,7 @@ function SummaryTab({ month, onMonth, version, onPick }: { month: string; onMont
 
 // ---------------------------------------------------------------- 日记账明细
 function LedgerTab({
+  scope,
   month,
   accountId,
   onAccount,
@@ -466,6 +513,7 @@ function LedgerTab({
   onOpen,
   onFill,
 }: {
+  scope: JournalScope
   month: string
   accountId?: number
   onAccount: (id: number | undefined) => void
@@ -474,10 +522,11 @@ function LedgerTab({
   onFill: (l: JournalLine, how: FillHow) => void
 }) {
   const t = useT()
-  const { canEdit } = useAuth()
+  const { canEdit, mine } = useAuth()
   const jEdit = canEdit('journal')
   const rxEdit = canEdit('receipts')
-  const { accounts, accountById } = useRefData()
+  const { accounts: all, accountById } = useRefData()
+  const accounts = useMemo(() => all.filter((a) => scopeOf(a) === scope), [all, scope])
   const [range, setRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>(() => {
     const [a, b] = monthRange(month)
     const end = dayjs(b).isAfter(dayjs(todayAccra())) ? dayjs(todayAccra()) : dayjs(b)
@@ -512,6 +561,7 @@ function LedgerTab({
       .order('seq', { ascending: true })
       .limit(5000)
     if (accountId) query = query.eq('account_id', accountId)
+    else query = scope === 'bank' ? query.eq('account_kind', 'bank') : query.neq('account_kind', 'bank')
     const [{ data }, m] = await Promise.all([
       query,
       accountId ? supabase.rpc('journal_month', { p_from: from, p_to: to, p_account: accountId }) : Promise.resolve({ data: null }),
@@ -519,7 +569,7 @@ function LedgerTab({
     setLines(data ?? [])
     setHead(m.data?.[0] ?? null)
     setLoading(false)
-  }, [range, accountId])
+  }, [range, accountId, scope])
 
   useEffect(() => {
     void load()
@@ -545,8 +595,9 @@ function LedgerTab({
   const usdTip = (l: JournalLine) =>
     l.currency !== 'USD' && l.amount_usd ? t('≈ {usd}（汇率 {rate}）', { usd: usd(l.amount_usd), rate: Number(l.fx_rate ?? 0) }) : undefined
 
-  // 待填的流水：付出去的填付款或互转；收进来的录成到账、其他收入或互转
+  // 待填的流水：付出去的填付款或互转；收进来的录成到账、其他收入或互转。按分工：不是自己那一摊的不出按钮
   const fillButtons = (l: JournalLine) => {
+    if (!mine(l.amount_out ? 'out' : 'in')) return <span className="hint">{l.amount_out ? t('付款归填付款的人填') : t('收款归填收款的人填')}</span>
     const btn = (how: FillHow, label: string, primary = false) => (
       <Button key={how} size="small" type={primary ? 'primary' : 'default'} ghost={primary} onClick={() => onFill(l, how)}>
         {label}
@@ -819,6 +870,98 @@ function LedgerTab({
           ) : null
         }
       />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------- 修改记录
+const LOG_LIMIT = 2000
+
+/** 这本日记账的修改记录：谁、什么时候、做了什么（数据库触发器记的，同一次操作合成一条） */
+function LogTab({ scope, version }: { scope: JournalScope; version: number }) {
+  const t = useT()
+  const { accounts: all, accountById } = useRefData()
+  const accounts = useMemo(() => all.filter((a) => scopeOf(a) === scope), [all, scope])
+  const [range, setRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>(() => [dayjs(todayAccra()).subtract(6, 'day'), dayjs(todayAccra())])
+  const [accountId, setAccountId] = useState<number | undefined>()
+  const [kind, setKind] = useState<string | undefined>()
+  const [who, setWho] = useState<string | undefined>()
+  const [rows, setRows] = useState<JournalLog[]>([])
+  const [loading, setLoading] = useState(false)
+  // 现金日记账没有流水：只有新记、修改、删除、期初
+  const kinds = LOG_KINDS.filter((k) => scope === 'bank' || ['create', 'update', 'delete', 'opening'].includes(k.key))
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    let q = supabase
+      .from('v_journal_log')
+      .select('*')
+      .gte('at', range[0].startOf('day').toISOString())
+      .lte('at', range[1].endOf('day').toISOString())
+      .order('id', { ascending: false })
+      .limit(LOG_LIMIT)
+    // 期初（不分账户）两本都出
+    q = accountId ? q.eq('account_id', accountId) : q.or(scope === 'bank' ? 'account_kind.eq.bank,account_id.is.null' : 'account_kind.neq.bank,account_id.is.null')
+    const k = LOG_KINDS.find((x) => x.key === kind)
+    if (k) q = q.in('action', k.actions)
+    const { data } = await q
+    setRows(data ?? [])
+    setLoading(false)
+  }, [range, accountId, kind, scope])
+
+  useEffect(() => {
+    void load()
+  }, [load, version])
+
+  const people = [...new Set(rows.map((r) => r.by_name ?? ''))].filter(Boolean).sort()
+  const groups = groupLogs(who ? rows.filter((r) => r.by_name === who) : rows)
+  const name = (id: number) => accountById.get(id)?.short_name ?? ''
+
+  return (
+    <div>
+      <Space wrap className="filters">
+        <DatePicker.RangePicker value={range} allowClear={false} onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])} />
+        <Select
+          allowClear
+          showSearch={{ optionFilterProp: 'label' }}
+          placeholder={t('全部账户')}
+          style={{ width: 260 }}
+          value={accountId}
+          onChange={setAccountId}
+          options={accountOptions(accounts, false)}
+        />
+        <Select allowClear placeholder={t('全部类型')} style={{ width: 130 }} value={kind} onChange={setKind} options={kinds.map((k) => ({ value: k.key, label: t(k.label) }))} />
+        <Select allowClear placeholder={t('所有人')} style={{ width: 150 }} value={who} onChange={setWho} options={people.map((p) => ({ value: p, label: p }))} />
+        <Button icon={<ReloadOutlined />} onClick={() => void load()}>
+          {t('刷新')}
+        </Button>
+      </Space>
+      {rows.length >= LOG_LIMIT && <div className="hint filters">{t('只显示最近的 {n} 条，看更早的请把日期范围缩短', { n: LOG_LIMIT })}</div>}
+      <Table<LogGroup>
+        size="small"
+        rowKey="key"
+        loading={loading}
+        dataSource={groups}
+        className="journal-log-table"
+        pagination={{ defaultPageSize: 50, showSizeChanger: true, pageSizeOptions: [50, 100, 200], showTotal: (n) => t('共 {n} 次操作', { n }) }}
+        scroll={{ x: 760 }}
+        columns={[
+          { title: t('时间'), width: 150, render: (_, g) => <span className="num">{dayjs(g.at).format('YYYY-MM-DD HH:mm')}</span> },
+          { title: t('操作人'), width: 120, render: (_, g) => g.by || t('系统') },
+          {
+            title: t('做了什么'),
+            render: (_, g) =>
+              describeGroup(g, t, name).map((line, i) => (
+                <div key={i} className="log-line">
+                  {line}
+                </div>
+              )),
+          },
+        ]}
+      />
+      <Typography.Paragraph type="secondary" className="journal-note">
+        {t('修改记录由系统自动记下，谁都改不了、删不了：记一笔、改了什么（从什么改成什么）、删掉的那一笔原来的样子；填流水、配到账、忽略、导流水、改期初也都有。')}
+      </Typography.Paragraph>
     </div>
   )
 }

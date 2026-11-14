@@ -1,11 +1,14 @@
-// 银行现金日记账：每个账户每天收了多少、付了多少、还剩多少（数据库 36）。
+// 银行日记账、现金日记账：每个账户每天收了多少、付了多少、还剩多少（数据库 36）。
+// 分两个模块（菜单、权限各一个）：银行日记账（银行账户，权限 journal）、现金日记账（现金、momo，权限 cash）。
 // 银行账户先导流水再填：日记账就是银行流水本身，一条一行，金额、日期、余额都是银行的；
 //   收进来的配上到账（设备回款 / 配件回款）或填成其他收入、互转；付出去的填成付款或互转；没填的标“待填”，照样算余额。
 // 现金账户（cash、momo）没有流水：一笔笔记（支出、其他收入、互转），加上审批通过的现金到账。
 // 账户之间的钱（资金拨付、货币兑换、现金存现、银行取现）录一次“账户互转”，两边各记一笔；银行那一边没流水就“等流水”，导进来自动对上。
 // 读：v_journal（一笔一行）、journal_month（每个账户一段时间的期初 / 收 / 付 / 期末 / 银行余额）。
 // 写：save_cash_entry、delete_cash_entry、fill_statement_lines（勾几条一起填）、save_openings。
+import { useBadges } from './badges'
 import { round2 } from './format'
+import type { Duty } from './perms'
 import type { Account } from './supabase'
 import type { Database } from './database.types'
 
@@ -78,6 +81,14 @@ export function moduleOptions(kind: EntryKind): string[] {
 
 /** 现金类的账户（现金、momo）：没有银行流水，不用对账 */
 export const isCashLike = (a: Pick<Account, 'kind'> | undefined | null) => !!a && a.kind !== 'bank'
+
+/** 哪本日记账：bank 银行日记账（银行账户）、cash 现金日记账（现金、momo） */
+export type JournalScope = 'bank' | 'cash'
+export const scopeOf = (a: Pick<Account, 'kind'> | undefined | null): JournalScope => (isCashLike(a) ? 'cash' : 'bank')
+/** 每本日记账看哪个模块权限 */
+export const SCOPE_PERM: Record<JournalScope, 'journal' | 'cash'> = { bank: 'journal', cash: 'cash' }
+export const SCOPE_TITLE: Record<JournalScope, string> = { bank: '银行日记账', cash: '现金日记账' }
+export const SCOPE_PATH: Record<JournalScope, string> = { bank: '/journal', cash: '/cash' }
 
 /** 账户互转是哪一种：现金→银行 现金存现，银行→现金 银行取现，币种不同 货币兑换，其余 资金拨付 */
 export function transferModule(from: Account | undefined, to: Account | undefined): string {
@@ -198,4 +209,13 @@ export function monthRange(month: string): [string, string] {
 /** 通知别的页面：日记账变了（录了一笔、改了期初） */
 export function notifyJournalChanged() {
   window.dispatchEvent(new Event('journal-changed'))
+}
+
+/**
+ * 菜单角标：银行流水还没填的条数，按分工算（填收款的只算收进来的，填付款的只算付出去的，没分工的两样加起来）。
+ * 数字由 badges.ts 的共用轮询取，5 分钟一次；填了、导了流水马上重取
+ */
+export function useLineTodo(enabled: boolean, duty: Duty | null): number {
+  const b = useBadges(enabled, false, true)
+  return duty === 'in' ? b.lineIn : duty === 'out' ? b.lineOut : b.lineIn + b.lineOut
 }

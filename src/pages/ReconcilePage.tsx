@@ -1,4 +1,4 @@
-import { DeleteOutlined, InboxOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
+import { DeleteOutlined, HistoryOutlined, InboxOutlined, ReloadOutlined, SyncOutlined } from '@ant-design/icons'
 import {
   Alert,
   App,
@@ -27,6 +27,7 @@ import type { Key } from 'react'
 import * as XLSX from 'xlsx'
 import CashEntryEditor from '../components/CashEntryEditor'
 import type { CashEntryPrefill } from '../components/CashEntryEditor'
+import JournalLogList from '../components/JournalLogList'
 import ReceiptEditor from '../components/ReceiptEditor'
 import type { ReceiptPrefill } from '../components/ReceiptEditor'
 import { useAuth } from '../lib/auth'
@@ -36,6 +37,9 @@ import { money, round2, todayAccra } from '../lib/format'
 import { accountOptions, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import { moduleColor, moduleOptions, notifyJournalChanged } from '../lib/journal'
+import { fetchLineLogs } from '../lib/journalLog'
+import type { JournalLog } from '../lib/journalLog'
+import type { Duty } from '../lib/perms'
 import { DATE_FORMATS, findHeaderRow, guessMapping, matchAccount, toLines } from '../lib/statement'
 import type { ImportResult, Mapping, ParsedLine } from '../lib/statement'
 import type { ImportFormat, Receipt, StatementLine } from '../lib/supabase'
@@ -45,8 +49,10 @@ import { useT } from '../lib/i18n'
 export default function ReconcilePage() {
   const t = useT()
   // 导入流水、配对、忽略要“银行对账”可编辑；只看的看得到三张表
-  const rcEdit = useAuth().canEdit('reconcile')
-  const [tab, setTab] = useState('unmatched')
+  const { canEdit, duty } = useAuth()
+  const rcEdit = canEdit('reconcile')
+  // 分工：填付款的一打开就是「付款待填」，填收款的（和没分工的）是「银行有、没人报」
+  const [tab, setTab] = useState(duty === 'out' ? 'payments' : 'unmatched')
   const [accountId, setAccountId] = useState<number | undefined>()
   const [editor, setEditor] = useState<{ open: boolean; id: number | null; prefill: ReceiptPrefill | null }>({
     open: false,
@@ -54,7 +60,7 @@ export default function ReconcilePage() {
     prefill: null,
   })
   const [version, setVersion] = useState(0)
-  // 填付款、其他收入、互转（银行现金日记账的收支）；id = 打开已经填好的那一笔
+  // 填付款、其他收入、互转（银行日记账的收支）；id = 打开已经填好的那一笔
   const [entry, setEntry] = useState<{ id: number | null; prefill: CashEntryPrefill | null } | null>(null)
   const { accounts } = useRefData()
   const bankAccounts = accounts.filter((a) => a.kind !== 'cash')
@@ -81,7 +87,7 @@ export default function ReconcilePage() {
         />
       </div>
       <Typography.Paragraph type="secondary">
-        {t('先导银行流水，再一条一条填：收进来的按“同账户、同金额、日期相差 3 天内”自动和已录的到账配对，配不上的在「银行有、没人报」里录成到账；付出去的在「付款待填」里填业务模块和摘要。填好的流水就是银行现金日记账。')}
+        {t('先导银行流水，再一条一条填：收进来的按“同账户、同金额、日期相差 3 天内”自动和已录的到账配对，配不上的在「银行有、没人报」里录成到账；付出去的在「付款待填」里填业务模块和摘要。填好的流水就是银行日记账。')}
       </Typography.Paragraph>
       <Tabs
         activeKey={tab}
@@ -90,7 +96,7 @@ export default function ReconcilePage() {
         items={[
           {
             key: 'unmatched',
-            label: t('银行有、没人报'),
+            label: <DutyLabel text={t('银行有、没人报')} dir="in" />,
             children: (
               <UnmatchedLines
                 accountId={accountId}
@@ -116,7 +122,7 @@ export default function ReconcilePage() {
           },
           {
             key: 'payments',
-            label: t('付款待填'),
+            label: <DutyLabel text={t('付款待填')} dir="out" />,
             children: <UnfilledPayments accountId={accountId} version={version} onFill={fillLine} />,
           },
           {
@@ -176,6 +182,40 @@ export default function ReconcilePage() {
     </div>
   )
 }
+
+/** 标签页名字；按分工是我这一摊的，后面标个“我的” */
+function DutyLabel({ text, dir }: { text: string; dir: Duty }) {
+  const t = useT()
+  const { duty } = useAuth()
+  return (
+    <span>
+      {text}
+      {duty === dir && (
+        <Tag color="purple" className="tag-mini">
+          {t('我的')}
+        </Tag>
+      )}
+    </span>
+  )
+}
+
+/** 分工：这一摊是别人负责的，只能看 */
+function DutyNote({ dir }: { dir: Duty }) {
+  const t = useT()
+  const { duty } = useAuth()
+  if (!duty || duty === dir) return null
+  return (
+    <Alert
+      type="info"
+      showIcon
+      className="duty-note"
+      title={duty === 'in' ? t('按分工你负责填收款，这里是填付款那一摊，只能看。') : t('按分工你负责填付款，这里是填收款那一摊，只能看。')}
+    />
+  )
+}
+
+/** 别人刚动过这条流水（填了、配上了、忽略了）：报错里说清楚是谁，列表重读 */
+const isStale = (e: { message: string }) => /请刷新/.test(e.message)
 
 /**
  * 多选流水：管理员可以删除选中的（已配对、已填的不删：要删先取消配对或删掉填的那一笔；删掉的行再导入同一份对账单时会重新进来）；
@@ -253,12 +293,14 @@ function UnmatchedLines({
 }) {
   const t = useT()
   const { message } = App.useApp()
-  const { canEdit } = useAuth()
+  const { canEdit, mine } = useAuth()
+  /** 收进来的：按分工归填收款的人（没分工都能填）；别人那一摊只能看 */
+  const my = mine('in')
   /** 关联、忽略、重新配对：“银行对账”可编辑；录成到账还要“到账录入”可编辑 */
-  const rcEdit = canEdit('reconcile')
+  const rcEdit = canEdit('reconcile') && my
   const canCreate = rcEdit && canEdit('receipts')
-  /** 填成其他收入、互转：“银行现金日记账”可编辑 */
-  const canFill = canEdit('journal')
+  /** 填成其他收入、互转：“银行日记账”可编辑 */
+  const canFill = canEdit('journal') && my
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [linkFor, setLinkFor] = useState<StatementLine | null>(null)
@@ -303,10 +345,16 @@ function UnmatchedLines({
       .from('bank_statement_lines')
       .update({ ignored: true, note: ignoreNote.trim() || null })
       .eq('id', ignoreFor.id as number)
-    if (error) message.error(errorText(error))
-    else {
+    if (error) {
+      message.error(errorText(error))
+      if (isStale(error)) {
+        setIgnoreFor(null)
+        void load()
+      }
+    } else {
       message.success(t('已忽略'))
       setIgnoreFor(null)
+      notifyJournalChanged()
       void load()
     }
   }
@@ -374,6 +422,7 @@ function UnmatchedLines({
 
   return (
     <div>
+      <DutyNote dir="in" />
       <Space wrap style={{ marginBottom: 8 }}>
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
         {rcEdit && (
@@ -417,10 +466,12 @@ function UnfilledPayments({
 }) {
   const t = useT()
   const { message } = App.useApp()
-  const { canEdit } = useAuth()
-  /** 忽略：“银行对账”可编辑；填付款、互转、一起填：“银行现金日记账”可编辑 */
-  const rcEdit = canEdit('reconcile')
-  const canFill = canEdit('journal')
+  const { canEdit, mine } = useAuth()
+  /** 付出去的：按分工归填付款的人（没分工都能填）；别人那一摊只能看 */
+  const my = mine('out')
+  /** 忽略：“银行对账”可编辑；填付款、互转、一起填：“银行日记账”可编辑 */
+  const rcEdit = canEdit('reconcile') && my
+  const canFill = canEdit('journal') && my
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [ignoreFor, setIgnoreFor] = useState<StatementLine | null>(null)
@@ -455,10 +506,16 @@ function UnfilledPayments({
       .from('bank_statement_lines')
       .update({ ignored: true, note: ignoreNote.trim() || null })
       .eq('id', ignoreFor.id as number)
-    if (error) message.error(errorText(error))
-    else {
+    if (error) {
+      message.error(errorText(error))
+      if (isStale(error)) {
+        setIgnoreFor(null)
+        void load()
+      }
+    } else {
       message.success(t('已忽略'))
       setIgnoreFor(null)
+      notifyJournalChanged()
       void load()
     }
   }
@@ -524,6 +581,7 @@ function UnfilledPayments({
 
   return (
     <div>
+      <DutyNote dir="out" />
       <Space wrap style={{ marginBottom: 8 }}>
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
         {canFill && bulk.chosen.length > 0 && (
@@ -599,7 +657,11 @@ function BatchFillModal({ lines, onClose }: { lines: StatementLine[] | null; onC
     })
     setSaving(false)
     if (error) return message.error(errorText(error))
-    message.success(t('已填 {n} 条', { n: data ?? 0 }))
+    // 几个人同时填：勾上以后别人刚填了、忽略了的跳过
+    const n = data ?? 0
+    const skipped = (lines?.length ?? 0) - n
+    if (skipped > 0) message.warning(t('已填 {n} 条；{m} 条刚被别人填了或忽略了，跳过了', { n, m: skipped }), 6)
+    else message.success(t('已填 {n} 条', { n }))
     notifyJournalChanged()
     onClose(true)
   }
@@ -674,9 +736,12 @@ function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok
       .from('bank_statement_lines')
       .update({ receipt_id: picked, match_type: 'manual' })
       .eq('id', line.id as number)
-    if (error) message.error(errorText(error))
-    else {
+    if (error) {
+      message.error(errorText(error))
+      if (isStale(error)) onClose(true)
+    } else {
       message.success(t('已关联'))
+      notifyJournalChanged()
       onClose(true)
     }
   }
@@ -791,11 +856,13 @@ function AllLines({
 }) {
   const t = useT()
   const { message } = App.useApp()
-  const { canEdit, canView } = useAuth()
-  /** 取消配对、取消忽略：“银行对账”可编辑；点开到账：“到账录入”看得到；点开填的那一笔：“银行现金日记账”看得到 */
+  const { canEdit, canView, mine } = useAuth()
+  /** 取消配对、取消忽略：“银行对账”可编辑，还要是自己那一摊（分工）；点开到账：“到账录入”看得到；点开填的那一笔：“银行日记账”看得到 */
   const rcEdit = canEdit('reconcile')
   const rxView = canView('receipts')
   const jView = canView('journal')
+  const myLine = (l: StatementLine) => mine(Number(l.amount_orig) < 0 ? 'out' : 'in')
+  const [logFor, setLogFor] = useState<StatementLine | null>(null)
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<string | undefined>()
@@ -825,9 +892,12 @@ function AllLines({
 
   const patch = async (id: number, p: { receipt_id?: null; match_type?: null; ignored?: boolean }, ok: string) => {
     const { error } = await supabase.from('bank_statement_lines').update(p).eq('id', id)
-    if (error) message.error(errorText(error))
-    else {
+    if (error) {
+      message.error(errorText(error))
+      if (isStale(error)) void load()
+    } else {
       message.success(ok)
+      notifyJournalChanged()
       void load()
     }
   }
@@ -916,7 +986,7 @@ function AllLines({
                   {Number(l.receipt_amount_orig) !== Number(l.amount_orig) && (
                     <Tag color="orange">{t('差')} {money(Number(l.receipt_amount_orig) - Number(l.amount_orig))}</Tag>
                   )}
-                  {rcEdit && (
+                  {rcEdit && myLine(l) && (
                     <Button size="small" type="link" onClick={() => patch(l.id as number, { receipt_id: null, match_type: null }, t('已取消配对'))}>
                       {t('取消配对')}
                     </Button>
@@ -924,15 +994,56 @@ function AllLines({
                 </Space>
               ) : l.entry_id ? (
                 jView ? <a onClick={() => onEntry(l.entry_id as number)}>{l.entry_no}</a> : l.entry_no
-              ) : l.ignored && rcEdit ? (
+              ) : l.ignored && rcEdit && myLine(l) ? (
                 <Button size="small" type="link" onClick={() => patch(l.id as number, { ignored: false }, t('已取消忽略'))}>
                   {t('取消忽略')}
                 </Button>
               ) : null,
           },
+          {
+            title: '',
+            width: 48,
+            render: (_, l) => (
+              <Button size="small" type="text" icon={<HistoryOutlined />} title={t('修改记录')} aria-label={t('修改记录')} onClick={() => setLogFor(l)} />
+            ),
+          },
         ]}
       />
+      <LineLogModal line={logFor} onClose={() => setLogFor(null)} />
     </div>
+  )
+}
+
+/** 一条银行流水的修改记录：谁导进来的、谁填的 / 配的 / 忽略的、填成的那一笔改过什么 */
+function LineLogModal({ line, onClose }: { line: StatementLine | null; onClose: () => void }) {
+  const t = useT()
+  const [rows, setRows] = useState<JournalLog[]>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!line?.id) return
+    let alive = true
+    setLoading(true)
+    setRows([])
+    void fetchLineLogs({ id: line.id, entry_id: line.entry_id, account_id: line.account_id, batch_id: line.batch_id }).then((r) => {
+      if (!alive) return
+      setRows(r)
+      setLoading(false)
+    })
+    return () => {
+      alive = false
+    }
+  }, [line])
+
+  return (
+    <Modal open={!!line} title={t('这条流水的修改记录')} footer={null} onCancel={onClose} width={680} destroyOnHidden>
+      {line && (
+        <Typography.Paragraph type="secondary">
+          {line.account_name} · {line.line_date} · {line.currency} {money(line.amount_orig)} · {line.payer_summary}
+        </Typography.Paragraph>
+      )}
+      {loading ? <div className="hint">{t('读取中…')}</div> : <JournalLogList rows={rows} />}
+    </Modal>
   )
 }
 

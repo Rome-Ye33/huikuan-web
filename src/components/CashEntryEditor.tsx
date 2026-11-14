@@ -1,5 +1,5 @@
 import { DeleteOutlined, SwapRightOutlined } from '@ant-design/icons'
-import { Alert, App, AutoComplete, Button, Col, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Row, Segmented, Select, Space, Tag, Typography } from 'antd'
+import { Alert, App, AutoComplete, Button, Col, Collapse, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Row, Segmented, Select, Space, Tag, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../lib/auth'
@@ -8,9 +8,13 @@ import { money, round2, todayAccra, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { isCashLike, moduleColor, moduleOptions, notifyJournalChanged, transferModule, transferSummary } from '../lib/journal'
 import type { CashEntry, EntryKind } from '../lib/journal'
+import { fetchEntryLogs } from '../lib/journalLog'
+import type { JournalLog } from '../lib/journalLog'
+import type { Duty } from '../lib/perms'
 import { accountOptions, lookupRate, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
+import JournalLogList from './JournalLogList'
 import Vouchers from './Vouchers'
 
 // 收支录入：支出、其他收入、账户互转。一笔一行，存进 cash_entries（数据库 36 的 save_cash_entry）。
@@ -21,6 +25,10 @@ import Vouchers from './Vouchers'
 // 账户互转录一次，两个账户各记一笔（转出账户记支出、转入账户记收入），两笔互相指着对方（peer_id）；币种不同就是货币兑换。
 // 互转里银行那一边：从流水填的就是那条流水；从现金这边先记的，银行那边“等流水”，流水导进来按同账户、同金额、3 天内自动对上。
 // “保存并记下一笔”：日期、账户、业务模块留着，金额、摘要清空，出纳一天记几十笔现金不用每次重选。
+// 谁能改（数据库 36）：从流水填要能改“银行日记账”；记现金要能改“现金日记账”；改、删一笔要能改其中一边账户所在的那本。
+// 银行流水分工：对上的流水不是自己那一摊（填收款 / 填付款）的，只能看。
+// 几个人同时改：存的时候带上打开时的版本，别人刚改过就挡住、说是谁改的，点“重新打开”看最新的；
+// 同一天、同账户、同金额已经有人记了一笔现金，先提醒，确定了再记。下面有这一笔的修改记录。
 
 /** 从银行流水填的时候带过来的内容 */
 export type CashEntryPrefill = {
@@ -72,8 +80,10 @@ export default function CashEntryEditor({
   onClose: (changed: boolean) => void
 }) {
   const t = useT()
-  const { message } = App.useApp()
-  const canEdit = useAuth().canEdit('journal')
+  const { message, modal } = App.useApp()
+  const { canEdit, mine } = useAuth()
+  const canBank = canEdit('journal')
+  const canCash = canEdit('cash')
   const { accounts, accountById, customers } = useRefData()
   const [form] = Form.useForm<FormValues>()
   const [kind, setKind] = useState<EntryKind>('out')
@@ -85,12 +95,28 @@ export default function CashEntryEditor({
   const [saving, setSaving] = useState(false)
   const [changed, setChanged] = useState(false)
   const [count, setCount] = useState(0)
+  const [logs, setLogs] = useState<JournalLog[]>([])
+  // 别人刚改过 / 删了 / 流水被别人填了：说清楚，存不了；stale 可以重新打开看最新的
+  const [conflict, setConflict] = useState<{ kind: 'stale' | 'gone' | 'line'; msg: string } | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
   const editing = entryId !== null
-  const readOnly = !canEdit
   // 从银行流水填：流水那一边的日期、账户、金额照银行的，不能改
   const fromLine = !editing && !!prefill?.line_id
   // 收进来的流水（填成其他收入，或者互转的转入那一边）
   const lineCredit = fromLine && (!!prefill?.to_account_id || prefill?.kind === 'in')
+  // 能不能改：现金账户那一边看“现金日记账”；银行账户那一边看“银行日记账”，对上了流水的还要是自己那一摊（分工）
+  const sideOk = (accId: number | null | undefined, lineDir: Duty | null, duty = true) => {
+    const a = accId ? accountById.get(accId) : undefined
+    if (!a) return false
+    if (isCashLike(a)) return canCash
+    return canBank && (!duty || !lineDir || mine(lineDir))
+  }
+  const outDir: Duty | null = linked.out ? (peer ? 'out' : ((entry?.direction as Duty | undefined) ?? null)) : null
+  const editableAs = (duty: boolean) => !!entry && (sideOk(entry.account_id, outDir, duty) || (!!peer && sideOk(peer.account_id, linked.in ? 'in' : null, duty)))
+  const allowed = fromLine ? canBank && mine(lineCredit ? 'in' : 'out') : editing ? editableAs(true) : canCash
+  // 能改，只是按分工这条流水归别人管
+  const dutyLocked = editing && !!entry && !editableAs(true) && editableAs(false)
+  const readOnly = !allowed
   const lockFrom = (fromLine && !lineCredit) || linked.out
   const lockTo = (fromLine && lineCredit) || linked.in
   const lockDate = fromLine || linked.out || linked.in
@@ -103,6 +129,8 @@ export default function CashEntryEditor({
     setEntry(null)
     setPeer(null)
     setLinked({ out: false, in: false })
+    setLogs([])
+    setConflict(null)
     form.resetFields()
     if (entryId === null) {
       const k = prefill?.kind ?? 'out'
@@ -137,10 +165,14 @@ export default function CashEntryEditor({
       }
       const ids = [out.id, other?.id].filter((x): x is number => !!x)
       const [{ data: fee }, { data: lines }] = await Promise.all([
-        other ? supabase.from('cash_entries').select('amount').eq('fee_of', out.id).maybeSingle() : Promise.resolve({ data: null }),
-        supabase.from('bank_statement_lines').select('entry_id').in('entry_id', ids),
+        other ? supabase.from('cash_entries').select('id, amount').eq('fee_of', out.id).maybeSingle() : Promise.resolve({ data: null }),
+        supabase.from('bank_statement_lines').select('id, entry_id').in('entry_id', ids),
       ])
       if (!alive) return
+      // 修改记录：这一笔（互转两边、手续费）和对上的流水
+      void fetchEntryLogs([...ids, ...(fee ? [fee.id] : [])], (lines ?? []).map((l) => l.id)).then((rows) => {
+        if (alive) setLogs(rows)
+      })
       const on = new Set((lines ?? []).map((l) => l.entry_id))
       setLinked({ out: on.has(out.id), in: !!other && on.has(other.id) })
       setEntry(out)
@@ -166,7 +198,7 @@ export default function CashEntryEditor({
     return () => {
       alive = false
     }
-  }, [open, entryId, prefill, defaultAccountId, accountById, form])
+  }, [open, entryId, prefill, defaultAccountId, accountById, form, reloadKey])
 
   const accountId = Form.useWatch('account_id', form)
   const toAccountId = Form.useWatch('to_account_id', form)
@@ -222,6 +254,18 @@ export default function CashEntryEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers, open, count])
 
+  /** 存不了：别人刚改过、删了、流水被别人填了的，在上面说清楚（列表也重读）；别的报错照常提示 */
+  const fail = (error: { message: string }) => {
+    const msg = errorText(error)
+    const kind = /请关掉重新打开/.test(error.message) ? 'stale' : /已经不在了/.test(error.message) ? 'gone' : /请刷新/.test(error.message) ? 'line' : null
+    if (!kind) {
+      message.error(msg)
+      return
+    }
+    setConflict({ kind, msg })
+    notifyJournalChanged()
+  }
+
   const save = async (next: boolean) => {
     let v: FormValues
     try {
@@ -231,6 +275,8 @@ export default function CashEntryEditor({
     }
     const p: Record<string, Json | undefined> = {
       id: entry?.id,
+      // 打开时读到的版本（互转是转出那一边的）：别人在这之后改过就存不了，免得悄悄盖掉
+      updated_at: entry?.updated_at,
       kind,
       entry_date: v.entry_date.format('YYYY-MM-DD'),
       account_id: v.account_id,
@@ -251,10 +297,23 @@ export default function CashEntryEditor({
       p.fee = v.fee || null
     }
     setSaving(true)
-    const { error } = await supabase.rpc('save_cash_entry', { p })
+    let { error } = await supabase.rpc('save_cash_entry', { p })
+    // 同一天、同账户、同金额已经有人记了一笔：问一下，确定了再记
+    if (error?.hint === 'dup_cash_entry') {
+      setSaving(false)
+      const again = await modal.confirm({
+        title: t('可能记重了'),
+        content: errorText(error),
+        okText: t('确定，再记一笔'),
+        cancelText: t('不记了'),
+      })
+      if (!again) return
+      setSaving(true)
+      ;({ error } = await supabase.rpc('save_cash_entry', { p: { ...p, confirm_dup: true } }))
+    }
     setSaving(false)
     if (error) {
-      message.error(errorText(error))
+      fail(error)
       return
     }
     notifyJournalChanged()
@@ -274,10 +333,10 @@ export default function CashEntryEditor({
   const remove = async () => {
     if (!entry) return
     setSaving(true)
-    const { error } = await supabase.rpc('delete_cash_entry', { p_id: entry.id })
+    const { error } = await supabase.rpc('delete_cash_entry', { p_id: entry.id, p_updated_at: entry.updated_at })
     setSaving(false)
     if (error) {
-      message.error(errorText(error))
+      fail(error)
       return
     }
     notifyJournalChanged()
@@ -311,7 +370,7 @@ export default function CashEntryEditor({
 
   const footer = (
     <div className="entry-footer">
-      {editing && canEdit ? (
+      {editing && allowed ? (
         <Popconfirm
           title={
             peer
@@ -324,7 +383,7 @@ export default function CashEntryEditor({
           okButtonProps={{ danger: true }}
           onConfirm={() => void remove()}
         >
-          <Button danger icon={<DeleteOutlined />} loading={saving}>
+          <Button danger icon={<DeleteOutlined />} loading={saving} disabled={!!conflict}>
             {t('删除')}
           </Button>
         </Popconfirm>
@@ -333,13 +392,13 @@ export default function CashEntryEditor({
       )}
       <Space wrap>
         <Button onClick={() => onClose(changed)}>{readOnly ? t('关闭') : t('取消')}</Button>
-        {!editing && !fromLine && canEdit && (
-          <Button onClick={() => void save(true)} loading={saving}>
+        {!editing && !fromLine && allowed && (
+          <Button onClick={() => void save(true)} loading={saving} disabled={!!conflict}>
             {t('保存并记下一笔')}
           </Button>
         )}
-        {canEdit && (
-          <Button type="primary" onClick={() => void save(false)} loading={saving}>
+        {allowed && (
+          <Button type="primary" onClick={() => void save(false)} loading={saving} disabled={!!conflict}>
             {t('保存')}
           </Button>
         )}
@@ -349,6 +408,37 @@ export default function CashEntryEditor({
 
   return (
     <Modal open={open} title={title} onCancel={() => onClose(changed)} footer={footer} width={760} destroyOnHidden className="cash-entry-editor">
+      {conflict && (
+        <Alert
+          type="warning"
+          showIcon
+          className="entry-tip"
+          title={conflict.msg}
+          action={
+            conflict.kind === 'stale' ? (
+              <Button size="small" type="primary" onClick={() => setReloadKey((k) => k + 1)}>
+                {t('重新打开')}
+              </Button>
+            ) : (
+              <Button size="small" onClick={() => onClose(true)}>
+                {t('关闭')}
+              </Button>
+            )
+          }
+        />
+      )}
+      {dutyLocked && (
+        <Alert
+          type="info"
+          showIcon
+          className="entry-tip"
+          title={
+            outDir === 'in' || (!linked.out && linked.in)
+              ? t('这一笔对上的是收进来的银行流水，按分工归填收款的人管，你只能看。')
+              : t('这一笔对上的是付出去的银行流水，按分工归填付款的人管，你只能看。')
+          }
+        />
+      )}
       {!editing && (
         <Segmented<EntryKind>
           block
@@ -519,6 +609,13 @@ export default function CashEntryEditor({
                     ({ getFieldValue }) => ({
                       validator: (_, v) => (v && v === getFieldValue('account_id') ? Promise.reject(new Error(t('转出、转入不能是同一个账户'))) : Promise.resolve()),
                     }),
+                    // 手工记的互转（现金日记账里记）：至少一边是现金账户；银行账户之间的在银行对账里从流水填
+                    ({ getFieldValue }) => ({
+                      validator: (_, v) =>
+                        !fromLine && !editing && v && !isCashLike(accountById.get(v)) && !isCashLike(accountById.get(getFieldValue('account_id')))
+                          ? Promise.reject(new Error(t('这里记的互转至少一边是现金账户；银行账户之间的转账在「银行对账」里从流水填')))
+                          : Promise.resolve(),
+                    }),
                   ]}
                 >
                   <Select showSearch={{ optionFilterProp: 'label' }} options={allAccounts} disabled={readOnly || lockTo} />
@@ -590,6 +687,14 @@ export default function CashEntryEditor({
         </Typography.Paragraph>
       ) : null}
       {editing && entry && <div className="hint entry-meta">{t('录入时间 {at}', { at: dayjs(entry.created_at).format('YYYY-MM-DD HH:mm') })}</div>}
+      {editing && logs.length > 0 && (
+        <Collapse
+          ghost
+          size="small"
+          className="entry-log"
+          items={[{ key: 'log', label: t('修改记录（{n}）', { n: logs.length }), children: <JournalLogList rows={logs} /> }]}
+        />
+      )}
     </Modal>
   )
 }
