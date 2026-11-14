@@ -541,7 +541,7 @@ html[lang='en'] .logo-name {
   word-break: break-word;
 }
 .cv-table th {
-  background: #f2f2f2;
+  background: #fff;
   font-weight: 600;
   text-align: left;
   font-size: 10px;
@@ -581,7 +581,7 @@ html[lang='en'] .logo-name {
   padding: 0 0 4px !important;
 }
 .cv-table td.cv-section {
-  background: #dde4f0;
+  background: #fff;
   font-weight: 700;
 }
 .cv-vin {
@@ -592,14 +592,14 @@ html[lang='en'] .logo-name {
   font-size: 13px;
 }
 .cv-warn {
-  color: #d4380d;
+  font-weight: 700;
 }
 .cv-stamp {
   display: inline-block;
   margin-right: 12px;
   padding: 1px 6px;
-  border: 2px solid #d4380d;
-  color: #d4380d;
+  border: 1px solid #000;
+  color: #000;
   font-weight: 700;
 }
 .cv-sign {
@@ -624,7 +624,6 @@ html[lang='en'] .logo-name {
 .cv-sign-note {
   font-size: 9px;
   margin-top: 6px;
-  color: #555;
 }
 .cv-paid {
   margin-top: 12px;
@@ -639,7 +638,6 @@ html[lang='en'] .logo-name {
   padding: 2px 4px;
 }
 .cv-trail-en {
-  color: #444;
   font-size: 9px;
 }
 .cv-trail tr {
@@ -660,11 +658,6 @@ html[lang='en'] .logo-name {
   }
   .print-page {
     padding: 0;
-  }
-  .cv-table th,
-  .cv-table td.cv-section {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
   }
 }
 
@@ -817,4 +810,89 @@ html[lang='en'] .logo-name {
 .ai-fill-notes {
   margin: 0 0 6px;
   padding-left: 18px;
+}
+
+/* 支票详情：左边的项目名不要折行 */
+.cheque-desc .ant-descriptions-item-label {
+  white-space: nowrap;
+}
+
+/* 用户与权限：财务的模块权限（31）。表格里一格放几个标签加“设置”；弹窗里每个模块一行三档 */
+.perm-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 0;
+}
+.perm-cell .perm-set {
+  padding-inline: 4px;
+}
+.perm-editor .ant-radio-group {
+  white-space: nowrap;
+}
+/* 已注册用户那一行的“修改 / 重设密码 / 删除”：每个链接不拆开（多了模块权限一列以后表格挤），挤不下时整个链接换到下一行 */
+.user-actions .ant-space {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.user-actions a {
+  white-space: nowrap;
+}
+
+/* 车型常常是导车辆时整张订单的描述（「8台6x4自卸车，单价…」），灰字里只占一行，鼠标放上去看全文 */
+.model-clip {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* 批量导入到账：对应列分“到账 / 拆分到车”两段；预览表的状态一格里提示一行一条，拆分一车一行，不导的划掉 */
+.receipt-import .ri-part {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  color: #4a5160;
+}
+.receipt-import .ri-status > div {
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 2px;
+}
+.receipt-import .ri-claim {
+  line-height: 1.6;
+}
+.receipt-import .ri-claim-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.receipt-import .ri-claim + .ri-claim {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed #e3e6eb;
+}
+.receipt-import .ri-amt {
+  white-space: nowrap;
+}
+.receipt-import .ri-dropped {
+  color: #a0a4ab;
+  text-decoration: line-through;
+}
+.receipt-import .ri-dropped .ant-tag {
+  text-decoration: none;
+}
+
+/* 打印页“缩到一页”：里面那层用 transform 缩小（不占位置），外面这一层按缩完的高度裁，分页才按缩完的算。
+   屏幕上和打印时单子的宽度可能不一样（窗口窄时会被挤高），所以两个高度分开给。 */
+.cv-fit-on {
+  height: var(--fit-h);
+  overflow: hidden;
+}
+@media print {
+  .cv-fit-on {
+    height: var(--fit-h-print);
+  }
 }

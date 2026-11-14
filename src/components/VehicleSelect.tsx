@@ -5,7 +5,9 @@ import { supabase } from '../lib/supabase'
 import type { Vehicle } from '../lib/supabase'
 import { useT } from '../lib/i18n'
 
-// 按大架号或客户名搜车辆（远程搜索）
+// 按大架号或客户名搜车辆（远程搜索）。VehicleSelect 选一台，VehicleMultiSelect 选几台（一张订单几台车）。
+// 选好以后框里只显示大架号（Rome 2026-11-13「填大架号的」）——车型是导车辆时整张订单的描述，
+// 放在框里又长又挤；车型、客户在下拉里和框底下的灰字里照样看得到。
 
 type Props = {
   value?: number | null
@@ -17,12 +19,22 @@ type Props = {
   disabled?: boolean
 }
 
+type MultiProps = {
+  value?: number[] | null
+  onChange?: (ids: number[], vehicles: Vehicle[]) => void
+  known?: Vehicle[]
+  placeholder?: string
+  style?: React.CSSProperties
+  disabled?: boolean
+  maxCount?: number
+}
+
 export function vehicleLabel(v: Vehicle): string {
   return `${v.vin} · ${v.model} · ${v.customer_name}`
 }
 
-export default function VehicleSelect({ value, onChange, known = [], placeholder, style, disabled }: Props) {
-  const t = useT()
+/** 搜车辆 + 把已知的和搜到的合起来（两个下拉共用） */
+function useVehicleSearch(known: Vehicle[]) {
   const [found, setFound] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(false)
   const timer = useRef<number | undefined>(undefined)
@@ -58,6 +70,28 @@ export default function VehicleSelect({ value, onChange, known = [], placeholder
     vehicle: v,
   }))
 
+  return { search, loading, all, options }
+}
+
+function optionRender(o: { data: unknown }, t: (s: string) => string) {
+  const v = (o.data as { vehicle: Vehicle }).vehicle
+  return (
+    <div>
+      <div>
+        <b>{v.vin}</b> · {v.model}
+      </div>
+      <div className="hint">
+        {v.customer_name} · {v.salesperson_name ?? t('无业务员')} · {t(v.payment_method ?? '')} · {t('合同')} {usd(v.contract_usd)} · {t('余额')}{' '}
+        {usd(v.balance_usd)}
+      </div>
+    </div>
+  )
+}
+
+export default function VehicleSelect({ value, onChange, known = [], placeholder, style, disabled }: Props) {
+  const t = useT()
+  const { search, loading, all, options } = useVehicleSearch(known)
+
   return (
     <Select
       showSearch={{ filterOption: false, onSearch: search }}
@@ -69,21 +103,34 @@ export default function VehicleSelect({ value, onChange, known = [], placeholder
       loading={loading}
       notFoundContent={loading ? t('搜索中…') : t('输入至少 2 个字搜索')}
       options={options}
-      optionRender={(o) => {
-        const v = (o.data as { vehicle: Vehicle }).vehicle
-        return (
-          <div>
-            <div>
-              <b>{v.vin}</b> · {v.model}
-            </div>
-            <div className="hint">
-              {v.customer_name} · {v.salesperson_name ?? t('无业务员')} · {t(v.payment_method ?? '')} · {t('合同')} {usd(v.contract_usd)} · {t('余额')}{' '}
-              {usd(v.balance_usd)}
-            </div>
-          </div>
-        )
-      }}
+      optionRender={(o) => optionRender(o, t)}
+      labelRender={(p) => all.get(p.value as number)?.vin ?? p.label}
       onChange={(id: number | undefined) => onChange?.(id ?? null, id != null ? (all.get(id) ?? null) : null)}
+    />
+  )
+}
+
+/** 选几台车（一张销售订单几台车、一张支票对整张订单） */
+export function VehicleMultiSelect({ value, onChange, known = [], placeholder, style, disabled, maxCount }: MultiProps) {
+  const t = useT()
+  const { search, loading, all, options } = useVehicleSearch(known)
+
+  return (
+    <Select
+      mode="multiple"
+      showSearch={{ filterOption: false, onSearch: search }}
+      allowClear
+      value={value ?? []}
+      placeholder={placeholder ?? t('输入大架号或客户名搜索')}
+      style={style}
+      disabled={disabled}
+      loading={loading}
+      maxCount={maxCount}
+      notFoundContent={loading ? t('搜索中…') : t('输入至少 2 个字搜索')}
+      options={options}
+      optionRender={(o) => optionRender(o, t)}
+      labelRender={(p) => all.get(p.value as number)?.vin ?? p.label}
+      onChange={(ids: number[]) => onChange?.(ids, ids.map((id) => all.get(id)).filter((v): v is Vehicle => !!v))}
     />
   )
 }

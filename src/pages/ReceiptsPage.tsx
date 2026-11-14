@@ -1,14 +1,16 @@
-import { PaperClipOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { PaperClipOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { Badge, Button, DatePicker, Input, Select, Space, Table, Tabs, Tag, Tooltip } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useState } from 'react'
 import ReceiptEditor from '../components/ReceiptEditor'
+import ReceiptImport from '../components/ReceiptImport'
 import SubmissionList from '../components/SubmissionList'
 import { RECEIPT_STATUS_LABEL, receiptStatus, useFlow } from '../lib/flow'
 import type { ReceiptStatus } from '../lib/flow'
 import { pickCol, textCol } from '../lib/colFilter'
 import { cleanSearch, money, todayAccra, usd } from '../lib/format'
+import { useAuth } from '../lib/auth'
 import { tr, useT } from '../lib/i18n'
 import { accountOptions, useRefData } from '../lib/refdata'
 import { useSubmissionCount } from '../lib/submissions'
@@ -26,6 +28,8 @@ export function reportTag(r: Receipt) {
 
 function ReceiptList() {
   const t = useT()
+  // 新建到账要“到账录入”可编辑；只看的点开到账也只能看
+  const rxEdit = useAuth().canEdit('receipts')
   const { accounts } = useRefData()
   const rflow = useFlow('receipt')
   const [rows, setRows] = useState<Receipt[]>([])
@@ -38,6 +42,7 @@ function ReceiptList() {
   const [bankStatus, setBankStatus] = useState<string | undefined>()
   const [q, setQ] = useState('')
   const [editor, setEditor] = useState<{ open: boolean; id: number | null }>({ open: false, id: null })
+  const [importOpen, setImportOpen] = useState(false)
   /** 列头筛选后表里实际显示的行（合计按它算） */
   const [shown, setShown] = useState<Receipt[] | null>(null)
 
@@ -179,9 +184,16 @@ function ReceiptList() {
         />
         <Input.Search allowClear placeholder={t('编号、摘要、参考号、支票号')} style={{ width: 240 }} onSearch={setQ} />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
-          {t('新建到账')}
-        </Button>
+        {rxEdit && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
+            {t('新建到账')}
+          </Button>
+        )}
+        {rxEdit && (
+          <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>
+            {t('批量导入')}
+          </Button>
+        )}
       </Space>
       <Table
         rowKey="id"
@@ -201,6 +213,18 @@ function ReceiptList() {
         onClose={(changed) => {
           setEditor({ open: false, id: null })
           if (changed) void load()
+        }}
+      />
+      <ReceiptImport
+        open={importOpen}
+        onClose={(changed, dates) => {
+          setImportOpen(false)
+          if (!changed) return
+          // 导进来的日期不在现在的日期范围里：把范围放宽到包含它们，不然列表里看不见（范围没变就直接重新读）
+          const lo = dates && dayjs(dates[0]).isBefore(range[0], 'day') ? dayjs(dates[0]) : range[0]
+          const hi = dates && dayjs(dates[1]).isAfter(range[1], 'day') ? dayjs(dates[1]) : range[1]
+          if (lo !== range[0] || hi !== range[1]) setRange([lo, hi])
+          else void load()
         }}
       />
     </div>

@@ -15,7 +15,7 @@ import type { MField, MRow } from '../lib/masterImport'
 import { useRefData } from '../lib/refdata'
 import { parseAmount, parseDate } from '../lib/statement'
 import { supabase } from '../lib/supabase'
-import type { Account, Customer, FxRate, Salesperson } from '../lib/supabase'
+import type { Account, ChequeBank, Customer, FxRate, Salesperson } from '../lib/supabase'
 import { useT } from '../lib/i18n'
 
 export default function BaseDataPage() {
@@ -33,6 +33,7 @@ export default function BaseDataPage() {
           { key: 'sales', label: t('业务员'), children: <Salespersons /> },
           { key: 'accounts', label: t('收款账户'), children: <Accounts /> },
           { key: 'natures', label: t('款项性质'), children: <Natures /> },
+          { key: 'cheque_banks', label: t('支票银行'), children: <ChequeBanks /> },
         ]}
       />
     </div>
@@ -40,7 +41,7 @@ export default function BaseDataPage() {
 }
 
 const CHUNK = 200
-async function insertChunks<T extends object>(table: 'customers' | 'salespersons' | 'bank_accounts', rows: T[]) {
+async function insertChunks<T extends object>(table: 'customers' | 'salespersons' | 'bank_accounts' | 'cheque_banks', rows: T[]) {
   for (let i = 0; i < rows.length; i += CHUNK) {
     const { error } = await supabase.from(table).insert(rows.slice(i, i + CHUNK) as never)
     if (error) throw error
@@ -134,7 +135,9 @@ const FX_FIELDS: MField[] = [
 
 function FxRates() {
   const t = useT()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canEdit } = useAuth()
+  /** 录、改、导入汇率：“基础资料”可编辑（删除照旧只有管理员） */
+  const bxEdit = canEdit('base')
   const { message } = App.useApp()
   const [rows, setRows] = useState<FxRate[]>([])
   const [open, setOpen] = useState(false)
@@ -210,20 +213,24 @@ function FxRates() {
   return (
     <div>
       <Space wrap style={{ marginBottom: 8 }}>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            form.resetFields()
-            form.setFieldsValue({ rate_date: dayjs(todayAccra()), currency: 'GHS' })
-            setOpen(true)
-          }}
-        >
-          {t('录汇率')}
-        </Button>
-        <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
-          {t('批量导入')}
-        </Button>
+        {bxEdit && (
+          <>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => {
+                form.resetFields()
+                form.setFieldsValue({ rate_date: dayjs(todayAccra()), currency: 'GHS' })
+                setOpen(true)
+              }}
+            >
+              {t('录汇率')}
+            </Button>
+            <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+              {t('批量导入')}
+            </Button>
+          </>
+        )}
         {isAdmin && sel.length > 0 && (
           <Popconfirm title={t('删除选中的 {n} 条汇率？', { n: sel.length })} okButtonProps={{ danger: true }} onConfirm={() => void removeSelected()}>
             <Button danger icon={<DeleteOutlined />} loading={busy}>
@@ -244,27 +251,31 @@ function FxRates() {
           { title: t('币种'), dataIndex: 'currency', width: 80 },
           { title: t('汇率'), dataIndex: 'rate', width: 120, render: (v) => Number(v) },
           { title: t('来源'), dataIndex: 'source' },
-          {
-            title: '',
-            width: 120,
-            render: (_, r) => (
-              <Space>
-                <a
-                  onClick={() => {
-                    form.setFieldsValue({ rate_date: dayjs(r.rate_date), currency: r.currency, rate: Number(r.rate), source: r.source ?? '' })
-                    setOpen(true)
-                  }}
-                >
-                  {t('修改')}
-                </a>
-                {isAdmin && (
-                  <Popconfirm title={t('删除这条汇率？')} onConfirm={() => remove(r)}>
-                    <a className="text-danger">{t('删除')}</a>
-                  </Popconfirm>
-                )}
-              </Space>
-            ),
-          },
+          ...(bxEdit
+            ? [
+                {
+                  title: '',
+                  width: 120,
+                  render: (_: unknown, r: FxRate) => (
+                    <Space>
+                      <a
+                        onClick={() => {
+                          form.setFieldsValue({ rate_date: dayjs(r.rate_date), currency: r.currency, rate: Number(r.rate), source: r.source ?? '' })
+                          setOpen(true)
+                        }}
+                      >
+                        {t('修改')}
+                      </a>
+                      {isAdmin && (
+                        <Popconfirm title={t('删除这条汇率？')} onConfirm={() => remove(r)}>
+                          <a className="text-danger">{t('删除')}</a>
+                        </Popconfirm>
+                      )}
+                    </Space>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
       <Modal open={open} title={t('汇率')} okText={t('保存')} onOk={save} onCancel={() => setOpen(false)} forceRender>
@@ -319,7 +330,9 @@ const CUSTOMER_FIELDS: MField[] = [
 
 function Customers() {
   const t = useT()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canEdit } = useAuth()
+  /** 新增、修改、导入客户：“基础资料”可编辑（删除照旧只有管理员） */
+  const bxEdit = canEdit('base')
   const { customers, salespersons, reload } = useRefData()
   const { message } = App.useApp()
   const [q, setQ] = useState('')
@@ -376,12 +389,16 @@ function Customers() {
     <div>
       <Space wrap style={{ marginBottom: 8 }}>
         <Input.Search allowClear placeholder={t('搜索客户')} onSearch={setQ} style={{ width: 240 }} />
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
-          {t('新增客户')}
-        </Button>
-        <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
-          {t('批量导入')}
-        </Button>
+        {bxEdit && (
+          <>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit('new')}>
+              {t('新增客户')}
+            </Button>
+            <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+              {t('批量导入')}
+            </Button>
+          </>
+        )}
         {isAdmin && <BulkBar count={bulk.sel.length} busy={bulk.busy} onDelete={() => void bulk.remove()} />}
       </Space>
       <Table
@@ -395,20 +412,24 @@ function Customers() {
           { title: t('业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
           { title: t('电话'), dataIndex: 'phone', width: 140 },
           { title: t('国家'), dataIndex: 'country', width: 100 },
-          {
-            title: '',
-            width: 120,
-            render: (_, c) => (
-              <Space>
-                <a onClick={() => openEdit(c)}>{t('修改')}</a>
-                {isAdmin && (
-                  <Popconfirm title={t('删除这个客户？有车或到账记录的删不掉')} onConfirm={() => remove(c)}>
-                    <a className="text-danger">{t('删除')}</a>
-                  </Popconfirm>
-                )}
-              </Space>
-            ),
-          },
+          ...(bxEdit
+            ? [
+                {
+                  title: '',
+                  width: 120,
+                  render: (_: unknown, c: Customer) => (
+                    <Space>
+                      <a onClick={() => openEdit(c)}>{t('修改')}</a>
+                      {isAdmin && (
+                        <Popconfirm title={t('删除这个客户？有车或到账记录的删不掉')} onConfirm={() => remove(c)}>
+                          <a className="text-danger">{t('删除')}</a>
+                        </Popconfirm>
+                      )}
+                    </Space>
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
       <Modal open={edit !== null} title={edit === 'new' ? t('新增客户') : t('修改客户')} okText={t('保存')} onOk={save} onCancel={() => setEdit(null)} forceRender>
@@ -773,5 +794,170 @@ function Natures() {
         { title: t('结清时加“可过户”'), dataIndex: 'settled_remark', width: 150, render: (v: boolean) => (v ? t('是') : '') },
       ]}
     />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 支票银行：客户开支票的那家银行，录支票时从这个列表里选（Rome 2026-11-13「在基础资料设置」）。
+// 和收款账户不是一回事：那是我们自己收钱的账户。支票上存的是银行名字（文本），
+// 所以从列表里删掉一条不会动已经录好的支票，只是以后录支票时选不到了。
+type ChequeBankIn = { name: string; active: boolean }
+const CB_FIELDS: MField[] = [
+  { key: 'name', label: '银行', required: true, alias: /^(银行|bank|name)$/ },
+  { key: 'active', label: '启用', alias: /active|status|状态/ },
+]
+const normBank = (v: string) => v.replace(/\s+/g, ' ').trim().toUpperCase()
+
+function ChequeBanks() {
+  const t = useT()
+  const { isAdmin } = useAuth()
+  const { chequeBanks, reload } = useRefData()
+  const { message } = App.useApp()
+  const [edit, setEdit] = useState<ChequeBank | null | 'new'>(null)
+  const [imp, setImp] = useState(false)
+  const [sel, setSel] = useState<number[]>([])
+  const [busy, setBusy] = useState(false)
+  const [form] = Form.useForm<{ name: string; sort_order: number; active: boolean }>()
+
+  const save = async () => {
+    const v = await form.validateFields()
+    const row = { name: normBank(v.name), sort_order: v.sort_order ?? 100, active: v.active }
+    if (!row.name) return message.error(t('{label}不能为空', { label: t('银行') }))
+    const res = edit === 'new' ? await supabase.from('cheque_banks').insert(row) : await supabase.from('cheque_banks').update(row).eq('id', (edit as ChequeBank).id)
+    if (res.error) return message.error(errorText(res.error))
+    message.success(t('已保存'))
+    setEdit(null)
+    void reload()
+  }
+
+  // 支票上的银行是文本，不是外键，所以删掉不会连累已经录好的支票
+  const removeSelected = async () => {
+    setBusy(true)
+    const { error } = await supabase.from('cheque_banks').delete().in('id', sel)
+    setBusy(false)
+    if (error) return message.error(errorText(error))
+    message.success(t('已删除 {n} 个银行（已经录好的支票不受影响）', { n: sel.length }))
+    setSel([])
+    void reload()
+  }
+  const activateSelected = async (active: boolean) => {
+    setBusy(true)
+    const { error } = await supabase.from('cheque_banks').update({ active }).in('id', sel)
+    setBusy(false)
+    if (error) return message.error(errorText(error))
+    message.success(active ? t('已启用 {n} 个', { n: sel.length }) : t('已停用 {n} 个', { n: sel.length }))
+    setSel([])
+    void reload()
+  }
+
+  const existing = new Set(chequeBanks.map((b) => normKey(b.name)))
+  const parseBank = (c: MRow): ParseResult<ChequeBankIn> => {
+    const name = normBank(c.name ?? '')
+    if (!name) return { issue: t('{label}不能为空', { label: t('银行') }) }
+    const active = parseBool(c.active ?? '', true)
+    if (active == null) return { issue: t('启用只能填 是 或 否') }
+    return { key: normKey(name), data: { name, active } }
+  }
+
+  return (
+    <div>
+      <div className="hint" style={{ marginBottom: 8 }}>
+        {t('客户开支票的银行。录支票时「支票银行」从这里选；这里改了，已经录好的支票不受影响。')}
+      </div>
+      {isAdmin && (
+        <Space wrap style={{ marginBottom: 8 }}>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              form.resetFields()
+              form.setFieldsValue({ active: true, sort_order: 100 })
+              setEdit('new')
+            }}
+          >
+            {t('新增银行')}
+          </Button>
+          <Button icon={<UploadOutlined />} onClick={() => setImp(true)}>
+            {t('批量导入')}
+          </Button>
+          {sel.length > 0 && (
+            <>
+              <Popconfirm
+                title={t('删除选中的 {n} 个银行？已经录好的支票不受影响。', { n: sel.length })}
+                okButtonProps={{ danger: true }}
+                onConfirm={() => void removeSelected()}
+              >
+                <Button danger icon={<DeleteOutlined />} loading={busy} className="cb-bulk-delete">
+                  {t('删除选中 {n} 条', { n: sel.length })}
+                </Button>
+              </Popconfirm>
+              <Button disabled={busy} onClick={() => void activateSelected(false)}>
+                {t('停用选中')}
+              </Button>
+              <Button disabled={busy} onClick={() => void activateSelected(true)}>
+                {t('启用选中')}
+              </Button>
+            </>
+          )}
+        </Space>
+      )}
+      <Table
+        rowKey="id"
+        size="small"
+        className="cheque-banks"
+        dataSource={chequeBanks}
+        pagination={false}
+        rowSelection={isAdmin ? { selectedRowKeys: sel, onChange: (k: Key[]) => setSel(k as number[]) } : undefined}
+        columns={[
+          { title: t('银行'), dataIndex: 'name' },
+          { title: t('排序'), dataIndex: 'sort_order', width: 80 },
+          { title: t('状态'), dataIndex: 'active', width: 80, render: (v: boolean) => (v ? <Tag color="green">{t('启用')}</Tag> : <Tag>{t('停用')}</Tag>) },
+          ...(isAdmin
+            ? [
+                {
+                  title: '',
+                  width: 80,
+                  render: (_: unknown, b: ChequeBank) => (
+                    <a
+                      onClick={() => {
+                        form.setFieldsValue({ name: b.name, sort_order: b.sort_order, active: b.active })
+                        setEdit(b)
+                      }}
+                    >
+                      {t('修改')}
+                    </a>
+                  ),
+                },
+              ]
+            : []),
+        ]}
+      />
+      <Modal open={edit !== null} title={t('支票银行')} okText={t('保存')} onOk={save} onCancel={() => setEdit(null)} forceRender>
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label={t('银行（照支票上印的，如 STANBIC、GCB）')} rules={[{ required: true }]}>
+            <Input maxLength={60} />
+          </Form.Item>
+          <Form.Item name="sort_order" label={t('排序（小的排前面）')}>
+            <InputNumber min={1} max={999} precision={0} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="active" label={t('启用')} valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
+      <MasterImport<ChequeBankIn>
+        open={imp}
+        title={t('批量导入支票银行')}
+        fields={CB_FIELDS}
+        example={['STANBIC', t('是')]}
+        parse={parseBank}
+        exists={(k) => existing.has(k)}
+        save={(list) => insertChunks('cheque_banks', list)}
+        onClose={(changed) => {
+          setImp(false)
+          if (changed) void reload()
+        }}
+      />
+    </div>
   )
 }

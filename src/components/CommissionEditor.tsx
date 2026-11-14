@@ -34,6 +34,7 @@ import {
   parseVehicles,
   paymentDisplay,
   payStateVars,
+  perCarCommission,
   printVoucher,
   qtyModelText,
   savedTotals,
@@ -46,7 +47,7 @@ import type { Json } from '../lib/database.types'
 import { errorText } from '../lib/errors'
 import { dateTime, money, num, round2, todayAccra } from '../lib/format'
 import { useT } from '../lib/i18n'
-import { useRefData } from '../lib/refdata'
+import { lookupRate, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Claim, Vehicle } from '../lib/supabase'
 import ApprovalTrail from './ApprovalTrail'
@@ -81,22 +82,25 @@ type Head = {
   commission_usd: number | null
   /** 本次发放比例，界面上用百分数 */
   payout_pct: number | null
+  /** 美元转赛地汇率（1 美元 = ? 赛地）：有人要美元、有人要赛地，打印时两个金额都印 */
+  payout_rate: number | null
   remarks: string
 }
 
-type VehRow = { vehicle_id: number; note: string }
+type VehRow = { vehicle_id: number; note: string; commission: number | null }
 type PayRow = { claim_id: number; share_usd: number | null; note: string }
 type Sel = { veh: VehRow[]; pay: PayRow[] }
 /** 同一个客户的其他提成单（提示重复算） */
 type Other = { id: number; no: string; status: string | null; step: string | null; vehicleIds: Set<number>; shares: Map<number, number> }
-type Touched = { qty: boolean; discount: boolean; terms: boolean; ratio: boolean }
+type Touched = { qty: boolean; discount: boolean; terms: boolean; ratio: boolean; rate: boolean }
 
 const EMPTY_SEL: Sel = { veh: [], pay: [] }
-const ALL_TOUCHED: Touched = { qty: true, discount: true, terms: true, ratio: true }
-const NONE_TOUCHED: Touched = { qty: false, discount: false, terms: false, ratio: false }
+const ALL_TOUCHED: Touched = { qty: true, discount: true, terms: true, ratio: true, rate: true }
+const NONE_TOUCHED: Touched = { qty: false, discount: false, terms: false, ratio: false, rate: false }
 
 const optNum = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : num(v))
 const usd2 = (v: unknown): string => (v === null || v === undefined || v === '' ? '' : '$ ' + money(v))
+const ghs2 = (v: unknown): string => (v === null || v === undefined || v === '' ? '' : 'GH₵ ' + money(v))
 const isPayKind = (c: Claim) => c.nature_kind === 'payment' || c.nature_kind === 'opening'
 
 function newHead(spId: number | null, dept: string): Head {
@@ -115,6 +119,7 @@ function newHead(spId: number | null, dept: string): Head {
     per_term_usd: null,
     commission_usd: null,
     payout_pct: 100,
+    payout_rate: null,
     remarks: '',
   }
 }
@@ -135,6 +140,7 @@ function headFrom(v: CommissionVoucher): Head {
     per_term_usd: optNum(v.per_term_usd),
     commission_usd: optNum(v.commission_usd),
     payout_pct: v.payout_ratio != null ? round2(num(v.payout_ratio) * 100) : null,
+    payout_rate: optNum(v.payout_rate),
     remarks: v.remarks ?? '',
   }
 }
@@ -148,7 +154,9 @@ function eligible(c: Claim, vids: Set<number>, spId: number | null, staff: boole
 
 export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const t = useT()
-  const { isStaff, isAdmin, profile, session, posts } = useAuth()
+  const { isAdmin, profile, session, posts, canEdit } = useAuth()
+  /** 能替业务员开单、改单、发放：“提成申请单”可编辑的财务、管理员。只看的财务和有审批岗位的人一样，只能看和审 */
+  const cvEdit = canEdit('commission')
   const { salespersons, customers, steps } = useRefData()
   const flow = useFlow()
   const { message, modal } = App.useApp()
@@ -199,8 +207,8 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const step: string | null = status === 'submitted' ? (voucher?.step ?? null) : null
   /** 这张单提交时记下的审批流（谁、什么时候通过的）；草稿没有 */
   const ownFlow = parseFlow(voucher?.flow)
-  /** 能改这张单的人：财务、管理员，或这张单的业务员（有审批岗位的人只能看和审别人的单） */
-  const mine = !voucher || isStaff || (mySp != null && voucher.salesperson_id === mySp)
+  /** 能改这张单的人：“提成申请单”可编辑的财务、管理员，或这张单的业务员（有审批岗位的人只能看和审别人的单） */
+  const mine = !voucher || cvEdit || (mySp != null && voucher.salesperson_id === mySp)
   const editable = !voucher || (isEditableStatus(status) && mine)
   const id = voucher?.id ?? null
   const custId = head.customer_id
@@ -227,11 +235,12 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       setVoucher(data)
       setHead(headFrom(data))
       setSel({
-        veh: parseVehicles(data.vehicles).map((v) => ({ vehicle_id: v.vehicle_id, note: v.note ?? '' })),
+        veh: parseVehicles(data.vehicles).map((v) => ({ vehicle_id: v.vehicle_id, note: v.note ?? '', commission: v.commission_usd })),
         pay: parsePayments(data.payments).map((p) => ({ claim_id: p.claim_id, share_usd: p.share_usd, note: p.note ?? '' })),
       })
       setAtts(data.attachments ?? [])
-      touched.current = { ...ALL_TOUCHED }
+      // 没填过汇率的老单子，下面的 effect 会带出基础资料里的汇率
+      touched.current = { ...ALL_TOUCHED, rate: data.payout_rate != null }
       noticePrune.current = true
       setDropped(null)
       setDirty(false)
@@ -257,13 +266,26 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       return
     }
     setVoucher(null)
-    setHead(newHead(isStaff ? null : mySp, t('销售部')))
+    setHead(newHead(cvEdit ? null : mySp, t('销售部')))
     setSel(EMPTY_SEL)
     setAtts([])
     touched.current = { ...NONE_TOUCHED }
     noticePrune.current = false
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在打开时取一次语言
-  }, [open, voucherId, loadVoucher, isStaff, mySp])
+  }, [open, voucherId, loadVoucher, cvEdit, mySp])
+
+  // 转赛地的汇率：自己没填过就取基础资料里单据日期（或之前最近一天）的汇率
+  const vdate = head.voucher_date.format('YYYY-MM-DD')
+  useEffect(() => {
+    if (!open || touched.current.rate) return
+    let alive = true
+    void lookupRate('GHS', vdate).then((r) => {
+      if (alive && r != null && !touched.current.rate) setHead((h) => ({ ...h, payout_rate: r }))
+    })
+    return () => {
+      alive = false
+    }
+  }, [open, vdate])
 
   // 同一个客户的其他提成单：同一台车、同一笔付款算进了几张单
   useEffect(() => {
@@ -337,7 +359,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       const byId = new Map(list.map((c) => [c.id, c]))
       const pay = cur.pay.filter((p) => {
         const c = byId.get(p.claim_id)
-        return !!c && eligible(c, vids, spId, isStaff)
+        return !!c && eligible(c, vids, spId, cvEdit)
       })
       if (veh.length !== cur.veh.length || pay.length !== cur.pay.length) {
         setSel({ veh, pay })
@@ -356,11 +378,11 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     return () => {
       alive = false
     }
-  }, [open, editable, custId, spId, isStaff, id, t])
+  }, [open, editable, custId, spId, cvEdit, id, t])
 
   // 财务开单：这个客户的车在哪些业务员名下（业务员下拉里显示台数）
   useEffect(() => {
-    if (!open || !isStaff || !editable || !custId) {
+    if (!open || !cvEdit || !editable || !custId) {
       setSpCounts(new Map())
       return
     }
@@ -371,7 +393,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     return () => {
       alive = false
     }
-  }, [open, isStaff, editable, custId])
+  }, [open, cvEdit, editable, custId])
 
   const ledgerById = useMemo(() => new Map(ledger.map((v) => [v.id as number, v])), [ledger])
   const claimById = useMemo(() => new Map(claims.map((c) => [c.id as number, c])), [claims])
@@ -390,9 +412,12 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const vehOthers = (vid: number) => others.filter((o) => o.vehicleIds.has(vid))
 
   const vehIds = useMemo(() => new Set(sel.veh.map((r) => r.vehicle_id)), [sel.veh])
-  const payCandidates = useMemo(() => claims.filter((c) => eligible(c, vehIds, spId, isStaff)), [claims, vehIds, spId, isStaff])
+  const payCandidates = useMemo(() => claims.filter((c) => eligible(c, vehIds, spId, cvEdit)), [claims, vehIds, spId, cvEdit])
   const savedVehicles = useMemo(() => (voucher ? parseVehicles(voucher.vehicles) : []), [voucher])
   const savedPayments = useMemo(() => (voucher ? parsePayments(voucher.payments) : []), [voucher])
+
+  /** 每台车分开填的提成之和（有车填了就以它为准，整单那个框跟着显示、不让手改） */
+  const perCar = useMemo(() => perCarCommission(sel.veh.map((r) => ({ commission_usd: r.commission }))), [sel.veh])
 
   const totals = useMemo(() => {
     if (!editable && voucher) return savedTotals(voucher)
@@ -405,10 +430,11 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       termsCount: head.terms_count,
       perTerm: head.per_term_usd,
       payments: sel.pay.map((p) => ({ share_usd: num(p.share_usd), nature: claimById.get(p.claim_id)?.nature ?? null })),
-      commission: head.commission_usd,
+      commission: perCar ?? head.commission_usd,
       payoutRatio: head.payout_pct == null ? null : head.payout_pct / 100,
+      payoutRate: head.payout_rate,
     })
-  }, [editable, voucher, sel, ledgerById, claimById, head])
+  }, [editable, voucher, sel, ledgerById, claimById, head, perCar])
 
   /** 选车以后自动带出的：数量与设备型号、折扣（系统里的优惠折让）、是否全款和首付、发放比例。手改过的不再覆盖 */
   const withAuto = (h: Head, vs: Vehicle[]): Head => {
@@ -441,7 +467,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     setDirty(true)
     setSel(EMPTY_SEL)
     let sp = head.salesperson_id
-    if (isStaff && cid) {
+    if (cvEdit && cid) {
       // 默认业务员：客户资料上的；他名下没有这个客户的车时，用这个客户的车最多的那个业务员
       const counts = await vehicleCountsBySp(cid)
       if (!sp || !counts.has(sp)) {
@@ -450,7 +476,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
         sp = own && counts.has(own) ? own : (most ?? own ?? sp)
       }
     }
-    setHead(withAuto({ ...head, customer_id: cid, salesperson_id: isStaff ? sp : mySp }, []))
+    setHead(withAuto({ ...head, customer_id: cid, salesperson_id: cvEdit ? sp : mySp }, []))
   }
 
   // 选了业务员后只能选他名下的客户：客户资料上记的是他的，或者有车在他名下的（Rome 2026-11-11）
@@ -469,7 +495,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const setVehicles = (ids: number[]) => {
     setDirty(true)
     const keep = new Map(sel.veh.map((r) => [r.vehicle_id, r]))
-    const veh = ids.map((vid) => keep.get(vid) ?? { vehicle_id: vid, note: '' })
+    const veh = ids.map((vid) => keep.get(vid) ?? { vehicle_id: vid, note: '', commission: null })
     const vids = new Set(ids)
     const added = new Set(ids.filter((vid) => !keep.has(vid)))
     const pay = sel.pay.filter((p) => {
@@ -488,6 +514,12 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   const setVehNote = (vid: number, note: string) => {
     setDirty(true)
     setSel((s) => ({ ...s, veh: s.veh.map((r) => (r.vehicle_id === vid ? { ...r, note } : r)) }))
+  }
+
+  /** 这台车单独的提成（每台可以不一样；一台都不填就还是整单填一个数） */
+  const setVehComm = (vid: number, commission: number | null) => {
+    setDirty(true)
+    setSel((s) => ({ ...s, veh: s.veh.map((r) => (r.vehicle_id === vid ? { ...r, commission } : r)) }))
   }
 
   /** 勾选付款：车上的默认整笔；大架号未锁定的（可能分给几张单）默认扣掉别的单子已经算的 */
@@ -525,10 +557,11 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     down_payment_usd: head.full_payment ? null : head.down_payment_usd,
     terms_count: head.full_payment ? null : head.terms_count,
     per_term_usd: head.full_payment ? null : head.per_term_usd,
-    commission_usd: head.commission_usd,
+    commission_usd: perCar ?? head.commission_usd,
     payout_ratio: head.payout_pct == null ? null : Math.round(head.payout_pct * 100) / 10000,
+    payout_rate: head.payout_rate,
     remarks: head.remarks,
-    vehicles: sel.veh.map((r) => ({ vehicle_id: r.vehicle_id, note: r.note })),
+    vehicles: sel.veh.map((r) => ({ vehicle_id: r.vehicle_id, note: r.note, commission_usd: r.commission })),
     payments: sel.pay.map((p) => ({ claim_id: p.claim_id, share_usd: p.share_usd, note: p.note })),
   })
 
@@ -623,7 +656,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
         ? t('请至少选一台车（大架号必填）')
         : !sel.pay.length
           ? t('请勾选客户的付款')
-          : !(num(head.commission_usd) > 0)
+          : !(num(perCar ?? head.commission_usd) > 0)
             ? t('请填提成金额')
             : head.payout_pct == null
               ? t('请填本次发放比例')
@@ -696,14 +729,14 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
   // ---------- 显示 ----------
   const spName = salespersons.find((s) => s.id === spId)?.name ?? ''
   // 第一级还没审之前可以撤回：业务员撤自己名下的，财务撤自己开的
-  const canWithdraw = !!id && !!step && step === ownFlow[0]?.step && (isStaff ? voucher?.prepared_by === myUid : mine)
+  const canWithdraw = !!id && !!step && step === ownFlow[0]?.step && (cvEdit ? voucher?.prepared_by === myUid : mine)
   // 轮到我这一级，或者我是管理员（代办）
   const holdsStep = !!step && posts.includes(step)
   const canApprove = !!id && !!step && (holdsStep || isAdmin)
   // 全部批完、还没发放的，这张单的最后一级可以退回
   const lastStep = ownFlow[ownFlow.length - 1]?.step ?? 'company_head'
   const canReject = !!id && (canApprove || (status === 'approved' && (isAdmin || posts.includes(lastStep))))
-  const canPay = !!id && status === 'approved' && isStaff
+  const canPay = !!id && status === 'approved' && cvEdit
   const canUnpay = !!id && status === 'paid' && isAdmin
   const canDelete = !!id && editable
 
@@ -738,6 +771,25 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     { title: t('付款方式'), width: 90, render: (_, r) => t(ledgerById.get(r.vehicle_id)?.payment_method ?? '') },
     { title: t('单价（USD）'), width: 120, align: 'right', render: (_, r) => <span className="num">{usd2(ledgerById.get(r.vehicle_id)?.contract_usd)}</span> },
     {
+      // 每台车的提成可以一样、也可以不一样（Rome 2026-11-13）；一台都不填就还是整单填一个数
+      title: t('本车提成'),
+      width: 120,
+      align: 'right',
+      render: (_, r) => (
+        <InputNumber
+          size="small"
+          min={0}
+          precision={2}
+          controls={false}
+          className="cv-veh-comm"
+          style={{ width: '100%' }}
+          placeholder={t('不分开')}
+          value={r.commission}
+          onChange={(x) => setVehComm(r.vehicle_id, x == null ? null : Number(x))}
+        />
+      ),
+    },
+    {
       title: t('已到账 / 余额'),
       width: 150,
       render: (_, r) => {
@@ -764,12 +816,17 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
     },
   ]
 
+  /** 存好的单子里每台车有没有自己的提成（有才多那一列） */
+  const savedPerCar = savedVehicles.some((x) => x.commission_usd != null)
   const savedVehColumns: ColumnsType<VoucherVehicle> = [
     { title: t('序号'), width: 56, render: (_, __, i) => i + 1 },
     { title: t('大架号'), dataIndex: 'vin', width: 190, render: (x: string) => <b>{x}</b> },
     { title: t('品牌 / 车型'), dataIndex: 'model', ellipsis: true },
     { title: t('付款方式'), dataIndex: 'payment_method', width: 90, render: (x: string | null) => t(x ?? '') },
     { title: t('单价（USD）'), dataIndex: 'unit_price_usd', width: 120, align: 'right', render: (x: number) => <span className="num">{usd2(x)}</span> },
+    ...(savedPerCar
+      ? [{ title: t('本车提成'), dataIndex: 'commission_usd', width: 120, align: 'right' as const, render: (x: number | null) => <span className="num">{x == null ? '' : usd2(x)}</span> }]
+      : []),
     { title: t('其他提成单'), width: 130, render: (_, r) => othersTags(vehOthers(r.vehicle_id)) },
     { title: t('备注'), dataIndex: 'note', ellipsis: true },
   ]
@@ -1044,7 +1101,7 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
               </Col>
               <Col xs={24} md={6}>
                 <Form.Item label={t('业务员')} required>
-                  {isStaff ? (
+                  {cvEdit ? (
                     <Select
                       showSearch={{ optionFilterProp: 'label' }}
                       value={spId ?? undefined}
@@ -1110,12 +1167,12 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
                 pagination={false}
                 dataSource={sel.veh}
                 columns={vehColumns}
-                scroll={{ x: 1000 }}
+                scroll={{ x: 1180 }}
                 locale={{ emptyText: t('还没选车') }}
               />
             </>
           ) : (
-            <Table rowKey="vehicle_id" size="small" pagination={false} dataSource={savedVehicles} columns={savedVehColumns} scroll={{ x: 860 }} />
+            <Table rowKey="vehicle_id" size="small" pagination={false} dataSource={savedVehicles} columns={savedVehColumns} scroll={{ x: savedPerCar ? 980 : 860 }} />
           )}
           <div style={{ marginTop: 8 }}>
             {t('台数合计 {n} 台，车辆合计 {amt}', { n: totals.units, amt: usd2(totals.vehiclesUsd) })}
@@ -1273,13 +1330,14 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
           <Form layout="vertical" disabled={!editable}>
             <Row gutter={12}>
               <Col xs={12} md={6}>
-                <Form.Item label={t('提成金额（USD）')} required>
+                <Form.Item label={t('提成金额（USD）')} required tooltip={perCar != null ? t('每台车都填了提成，这里就是它们相加') : undefined}>
                   <InputNumber
                     min={0}
                     precision={2}
                     prefix="$"
                     style={{ width: '100%' }}
-                    value={head.commission_usd}
+                    disabled={perCar != null}
+                    value={perCar ?? head.commission_usd}
                     onChange={(x) => edit({ commission_usd: x == null ? null : Number(x) })}
                   />
                 </Form.Item>
@@ -1298,7 +1356,19 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
                   />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={12}>
+              <Col xs={12} md={6}>
+                <Form.Item label={t('转赛地汇率')} tooltip={t('1 美元 = ? 赛地。默认取基础资料里当天的汇率，不填就只印美元')}>
+                  <InputNumber
+                    min={0.0001}
+                    precision={4}
+                    style={{ width: '100%' }}
+                    placeholder={t('1 美元 = ? 赛地')}
+                    value={head.payout_rate}
+                    onChange={(x) => edit({ payout_rate: x == null ? null : Number(x) }, 'rate')}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={12} md={6}>
                 <Form.Item label={t('备注')}>
                   <Input value={head.remarks} onChange={(e) => edit({ remarks: e.target.value })} />
                 </Form.Item>
@@ -1307,13 +1377,23 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
           </Form>
           <Typography.Text strong>
             {t('本次发放提成合计')}：<span className="num">{totals.payout == null ? '—' : usd2(totals.payout)}</span>
+            {totals.payoutGhs != null && (
+              <>
+                <span style={{ margin: '0 6px' }}>·</span>
+                {t('折合赛地')}：<span className="num">{ghs2(totals.payoutGhs)}</span>
+              </>
+            )}
           </Typography.Text>
+          {perCar != null && <div className="hint">{t('提成金额是上面每台车填的提成相加，要改在车辆那一栏改；都清空就回到整单填一个数')}</div>}
+          {totals.payoutGhs != null && (
+            <div className="hint">{t('有人要美元、有人要赛地，打印的单子上两个金额都印，汇率按 1 美元 = {rate} 赛地', { rate: totals.payoutRate ?? 0 })}</div>
+          )}
         </Card>
         <Card size="small" title={t('附件')} className="cv-attachments" style={{ marginTop: 12 }}>
           <Vouchers
             kind="attachment"
             value={atts}
-            prefix={isStaff ? 'cv' : `sub/${myUid ?? ''}`}
+            prefix={cvEdit ? 'cv' : `sub/${myUid ?? ''}`}
             readOnly={!editable && !id}
             canRemove={editable}
             paste={editable}
@@ -1367,6 +1447,12 @@ export default function CommissionEditor({ open, voucherId, onClose }: Props) {
       >
         <Typography.Paragraph>
           {t('本次发放提成合计')}：<b className="num">{usd2(totals.payout)}</b>
+          {totals.payoutGhs != null && (
+            <>
+              <span style={{ margin: '0 6px' }}>·</span>
+              <b className="num">{ghs2(totals.payoutGhs)}</b>
+            </>
+          )}
         </Typography.Paragraph>
         <div className="field-label">{t('发放日期')}</div>
         <DatePicker value={payDate} allowClear={false} onChange={(d) => d && setPayDate(d)} style={{ width: '100%' }} />

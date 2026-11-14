@@ -1,5 +1,5 @@
 // 提成申请单：状态、车和付款明细、合计。合计、已还期数、分期情况和 Excel 模板（提成单模板 Commission Voucher Template）的公式一致。
-import { useEffect, useState } from 'react'
+import { useBadges } from './badges'
 import type { Json } from './database.types'
 import { money, num, round2 } from './format'
 import { supabase } from './supabase'
@@ -45,13 +45,14 @@ export function isEditableStatus(s: VoucherStatus): boolean {
   return s === 'draft' || s === 'rejected'
 }
 
-/** 提成单上的一台车（保存时从系统带出） */
+/** 提成单上的一台车（保存时从系统带出；commission_usd 是这台车单独的提成，空 = 这张单不按车分） */
 export type VoucherVehicle = {
   vehicle_id: number
   vin: string
   model: string
   payment_method: string | null
   unit_price_usd: number
+  commission_usd: number | null
   note: string | null
 }
 
@@ -89,8 +90,15 @@ export function parseVehicles(j: Json | null | undefined): VoucherVehicle[] {
     model: str(x.model) ?? '',
     payment_method: str(x.payment_method),
     unit_price_usd: num(x.unit_price_usd),
+    commission_usd: x.commission_usd === null || x.commission_usd === undefined || x.commission_usd === '' ? null : num(x.commission_usd),
     note: str(x.note),
   }))
+}
+
+/** 每台车分开填的提成之和（有车填了才算；都没填 = null，整单按手填的一个数） */
+export function perCarCommission(list: { commission_usd: number | null }[]): number | null {
+  const filled = list.filter((x) => x.commission_usd != null)
+  return filled.length ? round2(filled.reduce((a, x) => a + num(x.commission_usd), 0)) : null
 }
 
 export function parsePayments(j: Json | null | undefined): VoucherPayment[] {
@@ -153,6 +161,10 @@ export type VoucherTotals = {
   termsLeft: number | null
   state: PayState
   payout: number | null
+  /** 美元转赛地的汇率（1 美元 = ? 赛地），没填为 null */
+  payoutRate: number | null
+  /** 本次发放提成折合赛地，没填汇率为 null */
+  payoutGhs: number | null
 }
 
 type TotalsInput = {
@@ -167,6 +179,8 @@ type TotalsInput = {
   commission: number | null | undefined
   /** 0–1 */
   payoutRatio: number | null | undefined
+  /** 美元转赛地汇率（1 美元 = ? 赛地），不填就不换算 */
+  payoutRate?: number | null
 }
 
 /** 余额差 1 美元以内算付清（系统里美元保留两位小数，模板是四舍五入到整数） */
@@ -200,6 +214,8 @@ export function voucherTotals(i: TotalsInput): VoucherTotals {
   else state = { kind: 'terms', paid: termsPaid, total: terms }
 
   const ratio = i.payoutRatio
+  const payout = i.commission != null && ratio != null ? round2(num(i.commission) * num(ratio)) : null
+  const rate = num(i.payoutRate) > 0 ? num(i.payoutRate) : null
   return {
     units: i.vehiclePrices.length,
     vehiclesUsd,
@@ -210,7 +226,9 @@ export function voucherTotals(i: TotalsInput): VoucherTotals {
     termsPaid,
     termsLeft: termsPaid === null ? null : terms - termsPaid,
     state,
-    payout: i.commission != null && ratio != null ? round2(num(i.commission) * num(ratio)) : null,
+    payout,
+    payoutRate: rate,
+    payoutGhs: payout != null && rate != null ? round2(payout * rate) : null,
   }
 }
 
@@ -227,6 +245,7 @@ export function savedTotals(v: CommissionVoucher): VoucherTotals {
     payments: parsePayments(v.payments),
     commission: v.commission_usd,
     payoutRatio: v.payout_ratio,
+    payoutRate: v.payout_rate,
   })
 }
 
@@ -276,32 +295,9 @@ export function notifyVouchersChanged() {
   window.dispatchEvent(new Event(EVENT))
 }
 
-/** 等我处理的提成单有几张（数据库视图 v_workbench 按岗位算好）。每分钟、切回窗口、提交或审批之后刷新 */
+/** 等我处理的提成单有几张（数据库视图 v_workbench 按岗位算好）。数字由 badges.ts 的共用轮询取 */
 export function useVoucherTodo(enabled: boolean): number {
-  const [n, setN] = useState(0)
-  useEffect(() => {
-    if (!enabled) return
-    let alive = true
-    const load = async () => {
-      const { count } = await supabase
-        .from('v_workbench')
-        .select('doc_id', { count: 'exact', head: true })
-        .eq('doc_type', 'voucher')
-        .eq('in_todo', true)
-      if (alive) setN(count ?? 0)
-    }
-    void load()
-    const timer = window.setInterval(load, 60_000)
-    window.addEventListener(EVENT, load)
-    window.addEventListener('focus', load)
-    return () => {
-      alive = false
-      window.clearInterval(timer)
-      window.removeEventListener(EVENT, load)
-      window.removeEventListener('focus', load)
-    }
-  }, [enabled])
-  return enabled ? n : 0
+  return useBadges(enabled).voucher
 }
 
 /** 等我处理的提成单的 id（列表里“待我处理”用） */

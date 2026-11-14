@@ -14,6 +14,44 @@ export type Database = {
   }
   public: {
     Tables: {
+      approval_cc: {
+        Row: {
+          at: string
+          doc_id: number
+          doc_type: string
+          id: number
+          log_id: number | null
+          user_id: string
+          user_name: string | null
+        }
+        Insert: {
+          at?: string
+          doc_id: number
+          doc_type: string
+          id?: never
+          log_id?: number | null
+          user_id: string
+          user_name?: string | null
+        }
+        Update: {
+          at?: string
+          doc_id?: number
+          doc_type?: string
+          id?: never
+          log_id?: number | null
+          user_id?: string
+          user_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "approval_cc_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       approval_logs: {
         Row: {
           action: string
@@ -371,6 +409,167 @@ export type Database = {
           },
         ]
       }
+      cheque_logs: {
+        Row: {
+          action: string
+          actor: string | null
+          actor_name: string | null
+          at: string
+          cheque_id: number
+          from_status: string | null
+          id: number
+          note: string | null
+          to_status: string | null
+        }
+        Insert: {
+          action: string
+          actor?: string | null
+          actor_name?: string | null
+          at?: string
+          cheque_id: number
+          from_status?: string | null
+          id?: never
+          note?: string | null
+          to_status?: string | null
+        }
+        Update: {
+          action?: string
+          actor?: string | null
+          actor_name?: string | null
+          at?: string
+          cheque_id?: number
+          from_status?: string | null
+          id?: never
+          note?: string | null
+          to_status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cheque_logs_cheque_id_fkey"
+            columns: ["cheque_id"]
+            isOneToOne: false
+            referencedRelation: "cheques"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cheque_banks: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: number
+          name: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: never
+          name: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: never
+          name?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      cheques: {
+        Row: {
+          amount: number | null
+          cheque_key: string | null
+          cheque_no: string
+          contract_no: string | null
+          created_at: string
+          created_by: string | null
+          currency: string
+          customer_id: number
+          deposit_account_id: number | null
+          deposit_date: string | null
+          drawer_bank: string | null
+          drawer_name: string | null
+          due_date: string | null
+          id: number
+          installment_count: number | null
+          installment_no: number | null
+          installment_usd: number | null
+          note: string | null
+          plan_date: string | null
+          purpose: string
+          reason: string | null
+          receipt_id: number | null
+          salesperson_id: number | null
+          status: string
+          updated_at: string
+          vehicle_id: number | null
+          vehicle_ids: number[]
+        }
+        Insert: {
+          amount?: number | null
+          cheque_key?: never
+          cheque_no: string
+          contract_no?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          customer_id: number
+          deposit_account_id?: number | null
+          deposit_date?: string | null
+          drawer_bank?: string | null
+          drawer_name?: string | null
+          due_date?: string | null
+          id?: never
+          installment_count?: number | null
+          installment_no?: number | null
+          installment_usd?: number | null
+          note?: string | null
+          plan_date?: string | null
+          purpose?: string
+          reason?: string | null
+          receipt_id?: number | null
+          salesperson_id?: number | null
+          status?: string
+          updated_at?: string
+          vehicle_id?: number | null
+          vehicle_ids?: number[]
+        }
+        Update: {
+          amount?: number | null
+          cheque_key?: never
+          cheque_no?: string
+          contract_no?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          customer_id?: number
+          deposit_account_id?: number | null
+          deposit_date?: string | null
+          drawer_bank?: string | null
+          drawer_name?: string | null
+          due_date?: string | null
+          id?: never
+          installment_count?: number | null
+          installment_no?: number | null
+          installment_usd?: number | null
+          note?: string | null
+          plan_date?: string | null
+          purpose?: string
+          reason?: string | null
+          receipt_id?: number | null
+          salesperson_id?: number | null
+          status?: string
+          updated_at?: string
+          vehicle_id?: number | null
+          vehicle_ids?: number[]
+        }
+        Relationships: []
+      }
       commission_vouchers: {
         Row: {
           ar_at: string | null
@@ -403,6 +602,7 @@ export type Database = {
           paid_on: string | null
           payments: Json
           payout_ratio: number | null
+          payout_rate: number | null
           per_term_usd: number | null
           prepared_at: string | null
           prepared_by: string | null
@@ -453,6 +653,7 @@ export type Database = {
           paid_on?: string | null
           payments?: Json
           payout_ratio?: number | null
+          payout_rate?: number | null
           per_term_usd?: number | null
           prepared_at?: string | null
           prepared_by?: string | null
@@ -503,6 +704,7 @@ export type Database = {
           paid_on?: string | null
           payments?: Json
           payout_ratio?: number | null
+          payout_rate?: number | null
           per_term_usd?: number | null
           prepared_at?: string | null
           prepared_by?: string | null
@@ -758,12 +960,14 @@ export type Database = {
         Row: {
           active: boolean
           approval_posts: string[]
+          cc_docs: string[]
           created_at: string
           email: string | null
           full_name: string | null
           id: string
           notify_email: boolean
           notify_lang: string
+          perms: Json | null
           role: Database["public"]["Enums"]["app_role"] | null
           salesperson_id: number | null
           whatsapp: string | null
@@ -771,12 +975,14 @@ export type Database = {
         Insert: {
           active?: boolean
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email?: string | null
           full_name?: string | null
           id: string
           notify_email?: boolean
           notify_lang?: string
+          perms?: Json | null
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
           whatsapp?: string | null
@@ -784,12 +990,14 @@ export type Database = {
         Update: {
           active?: boolean
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email?: string | null
           full_name?: string | null
           id?: string
           notify_email?: boolean
           notify_lang?: string
+          perms?: Json | null
           role?: Database["public"]["Enums"]["app_role"] | null
           salesperson_id?: number | null
           whatsapp?: string | null
@@ -1095,28 +1303,34 @@ export type Database = {
       user_invites: {
         Row: {
           approval_posts: string[]
+          cc_docs: string[]
           created_at: string
           email: string
           full_name: string | null
           invited_by: string | null
+          perms: Json | null
           role: Database["public"]["Enums"]["app_role"]
           salesperson_id: number | null
         }
         Insert: {
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email: string
           full_name?: string | null
           invited_by?: string | null
+          perms?: Json | null
           role: Database["public"]["Enums"]["app_role"]
           salesperson_id?: number | null
         }
         Update: {
           approval_posts?: string[]
+          cc_docs?: string[]
           created_at?: string
           email?: string
           full_name?: string | null
           invited_by?: string | null
+          perms?: Json | null
           role?: Database["public"]["Enums"]["app_role"]
           salesperson_id?: number | null
         }
@@ -1265,6 +1479,55 @@ export type Database = {
           },
         ]
       }
+      v_cheques: {
+        Row: {
+          amount: number | null
+          cheque_key: string | null
+          cheque_no: string | null
+          contract_no: string | null
+          created_at: string | null
+          created_by: string | null
+          currency: string | null
+          customer_id: number | null
+          customer_name: string | null
+          days_deposited: number | null
+          days_to_due: number | null
+          deposit_account_id: number | null
+          deposit_account_name: string | null
+          deposit_date: string | null
+          drawer_bank: string | null
+          drawer_name: string | null
+          due_date: string | null
+          id: number | null
+          installment_count: number | null
+          installment_no: number | null
+          installment_usd: number | null
+          is_reported: boolean | null
+          last_note: string | null
+          last_note_at: string | null
+          last_note_by: string | null
+          model: string | null
+          models: string | null
+          note: string | null
+          plan_date: string | null
+          purpose: string | null
+          reason: string | null
+          receipt_date: string | null
+          receipt_id: number | null
+          receipt_no: string | null
+          receipt_status: string | null
+          salesperson_id: number | null
+          salesperson_name: string | null
+          status: string | null
+          updated_at: string | null
+          vehicle_count: number | null
+          vehicle_id: number | null
+          vehicle_ids: number[] | null
+          vin: string | null
+          vins: string | null
+        }
+        Relationships: []
+      }
       v_commission_vouchers: {
         Row: {
           ar_at: string | null
@@ -1299,6 +1562,8 @@ export type Database = {
           paid_on: string | null
           paid_usd: number | null
           payments: Json | null
+          payout_ghs: number | null
+          payout_rate: number | null
           payout_ratio: number | null
           payout_usd: number | null
           per_term_usd: number | null
@@ -1565,6 +1830,7 @@ export type Database = {
           doc_id: number | null
           doc_no: string | null
           doc_type: string | null
+          in_cc: boolean | null
           in_done: boolean | null
           in_ended: boolean | null
           in_mine: boolean | null
@@ -1596,6 +1862,11 @@ export type Database = {
     }
     Functions: {
       cn_num: { Args: { n: number }; Returns: string }
+      cheque_action: {
+        Args: { p?: Json; p_action: string; p_id: number }
+        Returns: Json
+      }
+      cheque_alert_count: { Args: never; Returns: number }
       commission_voucher_action: {
         Args: {
           p_action: string
@@ -1621,6 +1892,7 @@ export type Database = {
         }
         Returns: Json
       }
+      import_cheques: { Args: { p_rows: Json }; Returns: Json }
       import_vehicles: {
         Args: { p_opening_date: string; p_rows: Json; p_update?: boolean }
         Returns: Json
@@ -1697,6 +1969,7 @@ export type Database = {
         Returns: undefined
       }
       save_commission_voucher: { Args: { p: Json }; Returns: number }
+      save_cheques: { Args: { p_rows: Json }; Returns: Json }
       save_receipt: {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number

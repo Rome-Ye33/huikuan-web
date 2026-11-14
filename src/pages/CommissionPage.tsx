@@ -17,7 +17,7 @@ const usd2 = (v: unknown): string => (v === null || v === undefined ? '' : '$ ' 
 
 export default function CommissionPage() {
   const t = useT()
-  const { role, isStaff, posts } = useAuth()
+  const { role, isStaff, posts, canEdit } = useAuth()
   const todoCount = useVoucherTodo(!!role)
   const flow = useFlow()
   // 有审批岗位的人会看到别的业务员的提成单
@@ -130,9 +130,12 @@ export default function CommissionPage() {
         <h2>{t('提成申请单')}</h2>
         <Space wrap>
           <Button icon={<ReloadOutlined />} onClick={() => void load()} />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
-            {t('新建提成单')}
-          </Button>
+          {/* 业务员给自己开；财务要“提成申请单”可编辑才能开 */}
+          {(role === 'sales' || canEdit('commission')) && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setEditor({ open: true, id: null })}>
+              {t('新建提成单')}
+            </Button>
+          )}
         </Space>
       </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>

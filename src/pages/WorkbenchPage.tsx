@@ -13,21 +13,22 @@ import { useRefData } from '../lib/refdata'
 import { claimsSummary, isFillRequest } from '../lib/submissions'
 import type { Submission } from '../lib/submissions'
 import { supabase } from '../lib/supabase'
-import { BOX_LABEL, BOX_ORDER, BOXES, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
+import { BOX_LABEL, BOX_ORDER, BOXES, boxCounts, boxQuery, DOC_COLOR, DOC_LABEL, docType, useDocLabels } from '../lib/workbench'
 import type { Box, DocType, WorkItem } from '../lib/workbench'
 
-// 工作台：到账提交、提成单、到账（录入后的审批）三种审批，按“待办 / 已办 / 已发起 / 已结束”分栏。点开就是原来的审核、修改页面
+// 工作台：到账提交、提成单、到账（录入后的审批）三种审批，按“待办 / 已办 / 已发起 / 已结束 / 抄送”分栏。点开就是原来的审核、修改页面
 
 const PAGE = 20
 type TypeFilter = DocType | 'all'
 type Counts = Record<Box, number | null>
-const NO_COUNTS: Counts = { todo: null, done: null, mine: null, ended: null }
+const NO_COUNTS: Counts = { todo: null, done: null, mine: null, ended: null, cc: null }
 
 const EMPTY_TEXT: Record<Box, string> = {
   todo: '没有待办，都处理完了',
   done: '没有处理过、还在流程中的单据',
   mine: '还没有发起过',
   ended: '还没有结束的单据',
+  cc: '没有抄送给你的单据',
 }
 
 function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp: boolean; onOpen: () => void }) {
@@ -111,7 +112,9 @@ function ItemCard({ it, box, showSp, onOpen }: { it: WorkItem; box: Box; showSp:
 export default function WorkbenchPage() {
   const t = useT()
   const { message } = App.useApp()
-  const { isStaff, role, posts } = useAuth()
+  const { isStaff, role, posts, canEdit } = useAuth()
+  // 审核业务员的到账提交要“到账录入”可编辑；只看的打开是只读的提交内容（审批岗位上的审批照旧）
+  const rxEdit = canEdit('receipts')
   // 有审批岗位的人会看到别的业务员的提成单，卡片上要写是谁的
   const showSp = isStaff || posts.length > 0
   const isSales = role === 'sales'
@@ -131,16 +134,17 @@ export default function WorkbenchPage() {
     setLoading(true)
     const order = BOX_ORDER[box]
     const from = (page - 1) * PAGE
-    const [list, ...heads] = await Promise.all([
+    // 列表 + 一个数数字的查询（原来是列表 + 每栏一个计数查询，一共 6 个）
+    const [list, boxes] = await Promise.all([
       boxQuery(box, type, 'exact')
         .order(order.column, { ascending: order.ascending, nullsFirst: false })
         .order('doc_id', { ascending: order.ascending })
         .range(from, from + PAGE - 1),
-      ...BOXES.map((b) => boxQuery(b, type, 'exact', true)),
+      boxCounts(type),
     ])
     setRows(list.data ?? [])
     setTotal(list.count ?? 0)
-    setCounts({ todo: heads[0].count, done: heads[1].count, mine: heads[2].count, ended: heads[3].count })
+    setCounts(boxes)
     setLoading(false)
     if (list.error) message.error(list.error.message)
   }, [box, type, page, message])
@@ -177,11 +181,11 @@ export default function WorkbenchPage() {
       }
       // 财务请业务员填写的：财务在那笔到账的页面看、审核；业务员打开填写表单
       if (isStaff && isFillRequest(data) && data.receipt_id) setReceiptId(data.receipt_id)
-      else if (isStaff && data.status === 'pending') setReview(data)
+      else if (rxEdit && data.status === 'pending') setReview(data)
       else if (isStaff && data.status === 'approved' && data.receipt_id) setReceiptId(data.receipt_id)
       else setSubForm({ open: true, sub: data })
     },
-    [isStaff, load, message, t],
+    [isStaff, rxEdit, load, message, t],
   )
 
   /** 从邮件提醒点进来的：先看看这张单还在不在、我能不能看，再打开 */
@@ -257,13 +261,15 @@ export default function WorkbenchPage() {
               {t('提交到账')}
             </Button>
           )}
-          <Button icon={<FileDoneOutlined />} onClick={() => setVoucher({ open: true, id: null })}>
-            {t('新建提成单')}
-          </Button>
+          {(isSales || canEdit('commission')) && (
+            <Button icon={<FileDoneOutlined />} onClick={() => setVoucher({ open: true, id: null })}>
+              {t('新建提成单')}
+            </Button>
+          )}
         </Space>
       </div>
       <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
-        {t('到账提交、到账和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交（录入）的，已结束是流程走完的。点开就能处理。')}
+        {t('到账提交、到账和提成单的审批都在这里：待办是等你处理的，已办是你处理过、流程还没走完的，已发起是你提交（录入）的，已结束是流程走完的，抄送是生效后抄送给你看一眼的。点开就能看、能处理。')}
       </Typography.Paragraph>
       <Tabs
         className="wb-tabs"

@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { aiSession } from '../lib/aiFill'
 import type { AiFilled } from '../lib/aiFill'
 import { useAuth } from '../lib/auth'
+import { notifyChequesChanged } from '../lib/cheques'
 import { errorText } from '../lib/errors'
 import { parseFlow, receiptStatus, useFlow } from '../lib/flow'
 import { dateTime, money, num, round2, todayAccra, usd } from '../lib/format'
@@ -54,6 +55,10 @@ export type ReceiptPrefill = {
   cheque_no?: string | null
   /** 由哪条银行对账单流水生成 */
   line_id?: number
+  /** 由哪张支票生成（26）：保存后把到账对到这张支票上 */
+  cheque_id?: number
+  /** 预填的拆分（支票上选了车就带一行） */
+  claims?: { nature?: string; vehicle_id?: number | null; customer_id?: number | null; amount_orig?: number | null }[]
 }
 
 /** 配对的银行流水里，按银行为准的几项 */
@@ -120,7 +125,11 @@ const nowSp = (r: Receipt | null): boolean => !!r?.step && parseFlow(r.flow).som
 
 export default function ReceiptEditor({ open, receiptId, prefill, submission, onClose }: Props) {
   const t = useT()
-  const { isStaff, isAdmin, posts, profile } = useAuth()
+  const { isStaff, isAdmin, posts, profile, canEdit } = useAuth()
+  /** 能改到账（“到账录入”可编辑的财务、管理员）；只看的财务、业务员只能看，轮到自己那一级照样能批 */
+  const rxEdit = canEdit('receipts')
+  /** 车不在系统里可以当场新增（要“车辆台账”可编辑） */
+  const vxEdit = canEdit('vehicles')
   const rflow = useFlow('receipt')
   const { accounts, accountById, natures, natureByName, salespersons, customers } = useRefData()
   const { message, modal } = App.useApp()
@@ -164,7 +173,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const account = accountId ? accountById.get(accountId) : undefined
   const currency = account?.currency ?? ''
   const isUsd = currency === 'USD'
-  const readOnly = !isStaff
+  const readOnly = !rxEdit
   const bankLocked = !!bankLine
   /** 银行流水里有这一项（非空）就不让改；银行没给的可以补 */
   const bankGave = (k: 'payer_summary' | 'bank_ref' | 'cheque_no') => !!bankLine?.[k]?.trim()
@@ -189,10 +198,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const isClaimSp = !!mySp && claimSpIds.includes(mySp)
   const holdsStep = stepIsSp ? isClaimSp : !!rStep && posts.includes(rStep)
   const canApprove = !!currentId && rStatus === 'pending' && !!rStep && (holdsStep || isAdmin)
-  const canResubmit = !!currentId && (rStatus === 'rejected' || rStatus === 'withdrawn') && isStaff
+  const canResubmit = !!currentId && (rStatus === 'rejected' || rStatus === 'withdrawn') && rxEdit
   /** 第一级还没人批：录入的人或管理员可以撤回（撤回后不算到账，改好再重新提交；批过一级就只能请审核人退回） */
   const canWithdraw =
-    !!currentId && rStatus === 'pending' && isStaff && (isAdmin || (!!profile && receipt?.created_by === profile.id)) && rFlowItems.length > 0 && rStep === rFlowItems[0].step
+    !!currentId && rStatus === 'pending' && rxEdit && (isAdmin || (!!profile && receipt?.created_by === profile.id)) && rFlowItems.length > 0 && rStep === rFlowItems[0].step
 
   const rememberVehicles = useCallback((list: (Vehicle | null | undefined)[]) => {
     setVehicles((m) => {
@@ -341,7 +350,11 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       bank_ref: prefill?.bank_ref ?? '',
       cheque_no: prefill?.cheque_no ?? '',
     })
-    setClaims([{ key: newKey() }])
+    if (prefill?.claims?.length) {
+      setClaims(prefill.claims.map((c) => ({ key: newKey(), nature: c.nature, vehicle_id: c.vehicle_id ?? null, customer_id: c.customer_id ?? null, amount_orig: c.amount_orig ?? null })))
+      const vids = prefill.claims.map((c) => c.vehicle_id).filter((x): x is number => !!x)
+      if (vids.length) void supabase.from('v_vehicle_ledger').select('*').in('id', vids).then((v) => rememberVehicles(v.data ?? []))
+    } else setClaims([{ key: newKey() }])
   }, [open, receiptId, prefill, submission, load, form, rememberVehicles])
 
   // 审核时：看看财务是不是已经录过这笔（同账户、同金额、日期相差 3 天内，还没关联别的提交）
@@ -558,6 +571,12 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     }
     const wasReview = !!review
     const wasApproved = !!currentId && rStatus === 'approved'
+    // 由支票生成的：对到那张支票上（到账录入时填了支票号、同账户同金额的，数据库已经自动对上，再对一次不会重复）
+    if (!currentId && prefill?.cheque_id && data) {
+      const link = await supabase.rpc('cheque_action', { p_id: prefill.cheque_id, p_action: 'link', p: { receipt_id: data } })
+      if (link.error) message.warning(t('到账已保存，但没对上支票：{err}', { err: errorText(link.error) }))
+      notifyChequesChanged()
+    }
     if (review) setReview(null)
     if (aiIndex !== null) {
       aiSession.markSaved(aiIndex)
@@ -874,7 +893,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                 disabled={readOnly}
                 onChange={(id, veh) => pickVehicle(r.key, id, veh)}
               />
-              {!readOnly && (
+              {!readOnly && vxEdit && (
                 <Tooltip title={t('系统里还没有这台车？新增一台')}>
                   <Button icon={<PlusOutlined />} onClick={() => setNewVehicleFor(r.key)} />
                 </Tooltip>
@@ -892,6 +911,14 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             )}
             {v ? (
               <div className="hint">
+                {v.model ? (
+                  <>
+                    <span className="model-clip" title={v.model}>
+                      {v.model}
+                    </span>
+                    {' · '}
+                  </>
+                ) : null}
                 {t('{customer} · {sp} · 合同 {contract} · 已到 {received} · 余额 {balance}', {
                   customer: v.customer_name,
                   sp: v.salesperson_name ?? t('无业务员'),
@@ -1100,7 +1127,11 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             title={t('{name} 在 {when} 提交，等你审核', { name: reviewer ?? t('业务员'), when: dateTime(review.submitted_at) })}
             description={
               <div>
-                <div>{t('核对凭证和金额，选好车（车不在系统里可以点 + 新增），没问题点“通过，生成到账”；不对就点“退回”写明原因。')}</div>
+                <div>
+                  {vxEdit
+                    ? t('核对凭证和金额，选好车（车不在系统里可以点 + 新增），没问题点“通过，生成到账”；不对就点“退回”写明原因。')
+                    : t('核对凭证和金额，选好车，没问题点“通过，生成到账”；不对就点“退回”写明原因。')}
+                </div>
                 {review.note && <div>{t('业务员说明：{note}', { note: review.note })}</div>}
                 {review.review_note && <div>{t('上次退回原因：{reason}', { reason: review.review_note })}</div>}
               </div>
@@ -1136,7 +1167,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             style={{ marginBottom: 12 }}
             title={t('被退回：{reason}', { reason: receipt.reject_note ?? '' })}
             description={
-              isStaff
+              rxEdit
                 ? t('{name} 于 {when} 退回。改好后点“重新提交”。', { name: receipt.rejected_name ?? '', when: dateTime(receipt.rejected_at) })
                 : t('{name} 于 {when} 退回，等财务改好后重新提交。', { name: receipt.rejected_name ?? '', when: dateTime(receipt.rejected_at) })
             }
@@ -1148,7 +1179,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             showIcon
             style={{ marginBottom: 12 }}
             title={t('已撤回，不算到账')}
-            description={isStaff ? t('改好后点“重新提交”，按现在的审批流从第一级开始；不要了请管理员删掉。') : t('等财务重新提交。')}
+            description={rxEdit ? t('改好后点“重新提交”，按现在的审批流从第一级开始；不要了请管理员删掉。') : t('等财务重新提交。')}
           />
         )}
         {currentId && receipt && rStatus === 'pending' && canApprove && (
@@ -1187,7 +1218,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                 : t('审批中，等{name}审批', { name: rflow.name(rStep) })
             }
             description={
-              isStaff
+              rxEdit
                 ? stepIsSp
                   ? t('业务员确认后才到下一级审批，全部批完才算到账。不知道是谁的钱可以点“请业务员填写”，他填好、你采用就算他确认了。')
                   : t('批完才算到账（才进余额和报表、才能报款）。改了日期、账户、金额或汇率会从第一级重新审批。')
@@ -1207,7 +1238,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                 { title: t('生效'), content: rStatus === 'approved' && receipt?.approved_at ? dateTime(receipt.approved_at) : '' },
               ]}
             />
-            {rStatus === 'approved' && isStaff && !isAdmin && (
+            {rStatus === 'approved' && rxEdit && !isAdmin && (
               <div className="hint" style={{ marginTop: 8 }}>
                 {t('已生效。改了日期、账户、金额或汇率会回到审批中，重新批完才再算到账。')}
               </div>
@@ -1223,13 +1254,15 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             description={
               <div>
                 {fillReq.request_note && <div>{t('留言：{note}', { note: fillReq.request_note })}</div>}
-                <div>{t('他填好提交后会提醒你，到时在这里核对、采用。等他填的期间这笔到账照常可以审批、算到账。')}</div>
+                {rxEdit && <div>{t('他填好提交后会提醒你，到时在这里核对、采用。等他填的期间这笔到账照常可以审批、算到账。')}</div>}
               </div>
             }
             action={
-              <Button size="small" onClick={cancelFill}>
-                {t('取消请填写')}
-              </Button>
+              rxEdit && (
+                <Button size="small" onClick={cancelFill}>
+                  {t('取消请填写')}
+                </Button>
+              )
             }
           />
         )}
@@ -1246,25 +1279,29 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                 ))}
                 {fillReq.note && <div>{t('业务员说明：{note}', { note: fillReq.note })}</div>}
                 {fillNewFiles > 0 && <div>{t('他传了 {n} 个凭证，采用后会挂到这笔到账上', { n: fillNewFiles })}</div>}
-                <div className="hint">{t('“采用并通过”：拆分照他填的存到这笔到账（替换已有的拆分）。想先看看、改一改，点“先放进拆分”，改好再采用。')}</div>
-                <Space wrap style={{ marginTop: 8 }}>
-                  <Button type="primary" size="small" loading={acting === 'accept'} onClick={() => void acceptFill()}>
-                    {t('采用并通过')}
-                  </Button>
-                  <Button size="small" disabled={fillApplied} onClick={() => void applyFill()}>
-                    {fillApplied ? t('已放进拆分') : t('先放进拆分')}
-                  </Button>
-                  <Button
-                    size="small"
-                    danger
-                    onClick={() => {
-                      setRejectReason('')
-                      setRejecting('fill')
-                    }}
-                  >
-                    {t('退回给业务员')}
-                  </Button>
-                </Space>
+                {rxEdit && (
+                  <>
+                    <div className="hint">{t('“采用并通过”：拆分照他填的存到这笔到账（替换已有的拆分）。想先看看、改一改，点“先放进拆分”，改好再采用。')}</div>
+                    <Space wrap style={{ marginTop: 8 }}>
+                      <Button type="primary" size="small" loading={acting === 'accept'} onClick={() => void acceptFill()}>
+                        {t('采用并通过')}
+                      </Button>
+                      <Button size="small" disabled={fillApplied} onClick={() => void applyFill()}>
+                        {fillApplied ? t('已放进拆分') : t('先放进拆分')}
+                      </Button>
+                      <Button
+                        size="small"
+                        danger
+                        onClick={() => {
+                          setRejectReason('')
+                          setRejecting('fill')
+                        }}
+                      >
+                        {t('退回给业务员')}
+                      </Button>
+                    </Space>
+                  </>
+                )}
               </div>
             }
           />
@@ -1275,11 +1312,13 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             showIcon
             style={{ marginBottom: 12 }}
             title={t('退回了 {name} 填的（{when}）：{reason}', { name: fillName, when: dateTime(fillReq.reviewed_at), reason: fillReq.review_note ?? '' })}
-            description={t('等他改好重新提交。不等了可以取消。')}
+            description={rxEdit ? t('等他改好重新提交。不等了可以取消。') : undefined}
             action={
-              <Button size="small" onClick={cancelFill}>
-                {t('取消请填写')}
-              </Button>
+              rxEdit && (
+                <Button size="small" onClick={cancelFill}>
+                  {t('取消请填写')}
+                </Button>
+              )
             }
           />
         )}
@@ -1289,13 +1328,20 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             showIcon
             style={{ marginBottom: 12 }}
             title={
-              currentId
-                ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。', {
+              // 只看的人整张都改不了，不用教他怎么取消配对再改
+              currentId && readOnly
+                ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）。', {
                     date: bankLine.line_date ?? '',
                     cur: bankLine.currency ?? currency,
                     amt: money(bankLine.amount_orig ?? 0),
                   })
-                : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
+                : currentId
+                  ? t('这笔到账已和银行流水配对（{date} · {cur} {amt}）：账户、日期、金额和银行给的摘要、参考号、支票号不能改。确实录错的，先到“银行对账 → 全部流水明细”取消配对再改。', {
+                      date: bankLine.line_date ?? '',
+                      cur: bankLine.currency ?? currency,
+                      amt: money(bankLine.amount_orig ?? 0),
+                    })
+                  : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
             }
           />
         )}

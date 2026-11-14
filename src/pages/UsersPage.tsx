@@ -1,8 +1,11 @@
 import { ArrowRightOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { accountCall, MIN_PASSWORD, randomPassword } from '../lib/account'
 import FlowEditor from '../components/FlowEditor'
+import PermEditor, { PermSummary } from '../components/PermEditor'
+import type { PermTarget } from '../components/PermEditor'
 import { ROLE_LABEL, useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { useFlow } from '../lib/flow'
@@ -30,7 +33,10 @@ export default function UsersPage() {
   const [pwUser, setPwUser] = useState<Profile | null>(null)
   const [pwBusy, setPwBusy] = useState(false)
   const [postBusy, setPostBusy] = useState<string | null>(null)
+  const [ccBusy, setCcBusy] = useState(false)
   const [flowOpen, setFlowOpen] = useState<FlowDocType | null>(null)
+  /** 正在设模块权限的财务（已注册的账号或邀请名单上的人） */
+  const [permFor, setPermFor] = useState<PermTarget | null>(null)
   const [pform] = Form.useForm<{ password: string }>()
   const [uform] = Form.useForm<{
     full_name?: string
@@ -112,8 +118,69 @@ export default function UsersPage() {
   }
   const postTags = (list: string[]) => flow.sortKeys(list).map((k) => <Tag key={k}>{flow.name(k)}</Tag>)
 
+  // ---------- 到账抄送名单（30）：到账生效后抄送给谁看一眼（不用审批）。已注册的记在 profiles.cc_docs，还没注册的记在邀请名单、注册时带过去 ----------
+  const ccOf = (x: { cc_docs: string[] | null }) => x.cc_docs ?? []
+  const isCc = (x: { cc_docs: string[] | null }) => ccOf(x).includes('receipt')
+  const ccValue = (): string[] => [...profiles.filter(isCc).map((p) => 'p:' + p.id), ...waiting.filter(isCc).map((i) => 'i:' + i.email)]
+  const ccOptions = () => [
+    ...profiles
+      .filter((p) => usable(p) || isCc(p))
+      .map((p) => ({ value: 'p:' + p.id, label: usable(p) ? personName(p) : t('{name}（已停用）', { name: personName(p) }) })),
+    ...waiting.map((i) => ({ value: 'i:' + i.email, label: t('{name}（等待注册）', { name: personName(i) }) })),
+  ]
+  const setCc = async (next: string[]) => {
+    const cur = ccValue()
+    const changed = [...next.filter((k) => !cur.includes(k)), ...cur.filter((k) => !next.includes(k))]
+    if (!changed.length) return
+    setCcBusy(true)
+    let failed: string | null = null
+    for (const key of changed) {
+      const on = next.includes(key)
+      const withCc = (list: string[]) => (on ? [...list.filter((x) => x !== 'receipt'), 'receipt'] : list.filter((x) => x !== 'receipt'))
+      if (key.startsWith('p:')) {
+        const p = profiles.find((x) => 'p:' + x.id === key)
+        if (!p) continue
+        const { error } = await supabase.from('profiles').update({ cc_docs: withCc(ccOf(p)) }).eq('id', p.id)
+        if (error) failed = errorText(error)
+      } else {
+        const i = invites.find((x) => 'i:' + x.email === key)
+        if (!i) continue
+        const { error } = await supabase.from('user_invites').update({ cc_docs: withCc(ccOf(i)) }).eq('email', i.email)
+        if (error) failed = errorText(error)
+      }
+    }
+    setCcBusy(false)
+    if (failed) message.error(failed)
+    else message.success(t('已保存'))
+    await load()
+  }
+  const ccTag = (x: { cc_docs: string[] | null }) => (isCc(x) ? <Tag color="cyan">{t('到账抄送')}</Tag> : null)
+  /** 到账审批流卡片下面的抄送名单 */
+  const ccBlock = (
+    <div className="flow-cc" style={{ marginTop: 12 }}>
+      <div className="flow-name" style={{ marginBottom: 4 }}>
+        {t('抄送')}
+      </div>
+      <Select
+        mode="multiple"
+        style={{ width: '100%', maxWidth: 560 }}
+        placeholder={t('选抄送人（可以不选）')}
+        loading={ccBusy}
+        disabled={ccBusy}
+        showSearch={{ optionFilterProp: 'label' }}
+        value={ccValue()}
+        options={ccOptions()}
+        onChange={(v: string[]) => void setCc(v)}
+      />
+      <div className="hint" style={{ marginTop: 2 }}>
+        {t('到账生效（最后一级通过）后抄送给这些人看一眼，不用审批：合在提醒邮件里发给他们，工作台“抄送”里也能点开看。业务员账号也可以选，他只看得到抄送给他的到账。改了只影响之后生效的到账。')}
+        {rflow.active.length === 0 && ' ' + t('现在没有审批级别，到账录入后直接生效，不会抄送。')}
+      </div>
+    </div>
+  )
+
   /** 一条审批流的卡片：开头、每一级（选审核人）、结尾 */
-  const flowCard = (f: FlowApi, title: string, start: string, end: string, hint: string, empty: string) => (
+  const flowCard = (f: FlowApi, title: string, start: string, end: string, hint: string, empty: string, after?: ReactNode) => (
     <Card
       size="small"
       className={`flow-card flow-card-${f.docType}`}
@@ -180,29 +247,39 @@ export default function UsersPage() {
           {empty}
         </div>
       )}
+      {after}
       <div className="hint" style={{ marginTop: 8 }}>
         {hint}
       </div>
     </Card>
   )
 
+  // 改自己时只能改姓名（角色、启用、提醒要由别的管理员改，免得把自己锁在外面）
+  const editingSelf = !!editUser && editUser.id === session?.user.id
+
   const saveUser = async () => {
     // 填得不对时表单自己会标红，这里不用再报错
     const v = await uform.validateFields().catch(() => null)
     if (!v) return
+    const full_name = v.full_name?.trim() || null
     const { error } = await supabase
       .from('profiles')
-      .update({
-        full_name: v.full_name?.trim() || null,
-        role: v.role,
-        salesperson_id: v.role === 'sales' ? (v.salesperson_id ?? null) : null,
-        active: v.active,
-        notify_email: v.notify_email !== false,
-      })
+      .update(
+        editingSelf
+          ? { full_name }
+          : {
+              full_name,
+              role: v.role,
+              salesperson_id: v.role === 'sales' ? (v.salesperson_id ?? null) : null,
+              active: v.active,
+              notify_email: v.notify_email !== false,
+            },
+      )
       .eq('id', editUser!.id)
     if (error) return message.error(errorText(error))
     message.success(t('已保存'))
     setEditUser(null)
+    if (editingSelf) await reloadProfile() // 右上角的名字跟着变
     void load()
   }
 
@@ -288,7 +365,15 @@ export default function UsersPage() {
         t('财务录的到账、业务员提交经财务审核转成的到账，录入后都按这个顺序一级一级审，全部通过才算到账（才进余额和报表、才能报款）。一个岗位可以有几个人（谁先审都行），管理员任何一级都可以代办；审批人可以是业务员账号，他只看得到走审批的到账。') +
           t('要加一级、删一级、改名字或调顺序，点右上角“调整审批流”；改了只影响之后录入的到账。'),
         t('还没有审批级别：现在到账录入后直接生效。点“调整审批流”加级别。'),
+        ccBlock,
       )}
+      <PermEditor
+        target={permFor}
+        onClose={(saved) => {
+          setPermFor(null)
+          if (saved) void load()
+        }}
+      />
       <FlowEditor
         open={flowOpen !== null}
         docType={flowOpen ?? 'voucher'}
@@ -307,13 +392,43 @@ export default function UsersPage() {
         size="small"
         dataSource={profiles}
         pagination={false}
-        style={{ marginBottom: 24 }}
+        style={{ marginBottom: 8 }}
         columns={[
           { title: t('邮箱'), dataIndex: 'email' },
           { title: t('姓名'), dataIndex: 'full_name', width: 160 },
           { title: t('角色'), dataIndex: 'role', width: 90, render: (r: AppRole | null) => (r ? <Tag color={ROLE_COLOR[r]}>{t(ROLE_LABEL[r])}</Tag> : <Tag>{t('未授权')}</Tag>) },
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
-          { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
+          {
+            title: t('审批岗位 / 抄送'),
+            dataIndex: 'approval_posts',
+            width: 200,
+            render: (v: string[] | null, p) => (
+              <>
+                {postTags(v ?? [])}
+                {ccTag(p)}
+              </>
+            ),
+          },
+          {
+            title: t('模块权限'),
+            width: 240,
+            render: (_, p) => (
+              <div className="perm-cell">
+                <PermSummary role={p.role} perms={p.perms} />
+                {p.role === 'finance' && (
+                  <Button
+                    size="small"
+                    type="link"
+                    icon={<EditOutlined />}
+                    className="perm-set"
+                    onClick={() => setPermFor({ kind: 'profile', id: p.id, name: personName(p), perms: p.perms })}
+                  >
+                    {t('设置')}
+                  </Button>
+                )}
+              </div>
+            ),
+          },
           {
             title: t('邮件提醒'),
             dataIndex: 'notify_email',
@@ -333,9 +448,20 @@ export default function UsersPage() {
           {
             title: '',
             width: 200,
+            className: 'user-actions',
             render: (_, p) =>
               p.id === session?.user.id ? (
-                <span className="hint">{t('自己')}</span>
+                <Space size="middle">
+                  <a
+                    onClick={() => {
+                      uform.setFieldsValue({ full_name: p.full_name ?? '' })
+                      setEditUser(p)
+                    }}
+                  >
+                    {t('修改姓名')}
+                  </a>
+                  <span className="hint">{t('自己')}</span>
+                </Space>
               ) : (
                 <Space size="middle">
                   <a
@@ -374,6 +500,9 @@ export default function UsersPage() {
           },
         ]}
       />
+      <div className="hint" style={{ marginBottom: 24 }}>
+        {t('模块权限只对财务有用：蓝色的能改，灰色的只能看，没列出来的看不到（菜单里没有）。管理员全部能改；业务员只看得到自己名下的。')}
+      </div>
       <Space wrap style={{ marginBottom: 8 }}>
         <Typography.Title level={5} style={{ margin: 0 }}>
           {t('邀请名单')}
@@ -401,7 +530,42 @@ export default function UsersPage() {
           { title: t('姓名'), dataIndex: 'full_name', width: 160 },
           { title: t('角色'), dataIndex: 'role', width: 90, render: (r: AppRole) => <Tag color={ROLE_COLOR[r]}>{t(ROLE_LABEL[r])}</Tag> },
           { title: t('对应业务员'), dataIndex: 'salesperson_id', width: 140, render: (v: number | null) => (v ? spName.get(v) : '') },
-          { title: t('审批岗位'), dataIndex: 'approval_posts', width: 200, render: (v: string[] | null) => postTags(v ?? []) },
+          {
+            title: t('审批岗位 / 抄送'),
+            dataIndex: 'approval_posts',
+            width: 200,
+            render: (v: string[] | null, i) => (
+              <>
+                {postTags(v ?? [])}
+                {ccTag(i)}
+              </>
+            ),
+          },
+          {
+            title: t('模块权限'),
+            width: 240,
+            render: (_, i) =>
+              registered.has(i.email) ? (
+                i.role === 'finance' ? (
+                  <span className="hint">{t('已注册，在上面账号那一行改')}</span>
+                ) : null
+              ) : (
+                <div className="perm-cell">
+                  <PermSummary role={i.role} perms={i.perms} />
+                  {i.role === 'finance' && (
+                    <Button
+                      size="small"
+                      type="link"
+                      icon={<EditOutlined />}
+                      className="perm-set"
+                      onClick={() => setPermFor({ kind: 'invite', email: i.email, name: personName(i), perms: i.perms })}
+                    >
+                      {t('设置')}
+                    </Button>
+                  )}
+                </div>
+              ),
+          },
           {
             title: t('状态'),
             width: 90,
@@ -419,30 +583,41 @@ export default function UsersPage() {
         ]}
       />
 
-      <Modal open={!!editUser} title={t('修改 {email}', { email: editUser?.email ?? '' })} okText={t('保存')} onOk={saveUser} onCancel={() => setEditUser(null)} forceRender>
+      <Modal
+        open={!!editUser}
+        title={editingSelf ? t('修改自己的姓名') : t('修改 {email}', { email: editUser?.email ?? '' })}
+        okText={t('保存')}
+        onOk={saveUser}
+        onCancel={() => setEditUser(null)}
+        forceRender
+      >
         <Form form={uform} layout="vertical">
-          <Form.Item name="full_name" label={t('姓名')}>
+          <Form.Item name="full_name" label={t('姓名')} extra={editingSelf ? t('自己只能改姓名；角色、启用要由别的管理员改。') : undefined}>
             <Input />
           </Form.Item>
-          <Form.Item name="role" label={t('角色')} rules={[{ required: true }]}>
-            <Select options={roleOptions} />
-          </Form.Item>
-          {uRole === 'sales' && (
-            <Form.Item name="salesperson_id" label={t('对应业务员（只看得到这个业务员名下的车）')} rules={[{ required: true, message: t('业务员角色必须选') }]}>
-              <Select showSearch={{ optionFilterProp: 'label' }} options={spOptions} />
-            </Form.Item>
+          {!editingSelf && (
+            <>
+              <Form.Item name="role" label={t('角色')} rules={[{ required: true }]}>
+                <Select options={roleOptions} />
+              </Form.Item>
+              {uRole === 'sales' && (
+                <Form.Item name="salesperson_id" label={t('对应业务员（只看得到这个业务员名下的车）')} rules={[{ required: true, message: t('业务员角色必须选') }]}>
+                  <Select showSearch={{ optionFilterProp: 'label' }} options={spOptions} />
+                </Form.Item>
+              )}
+              <Form.Item name="active" label={t('启用')} valuePropName="checked">
+                <Switch />
+              </Form.Item>
+              <Form.Item
+                name="notify_email"
+                label={t('邮件提醒（有新的待办时发到他的登录邮箱）')}
+                extra={t('工作日上午 10 点、下午 4 点（加纳时间）汇总发。本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。')}
+                valuePropName="checked"
+              >
+                <Switch />
+              </Form.Item>
+            </>
           )}
-          <Form.Item name="active" label={t('启用')} valuePropName="checked">
-            <Switch />
-          </Form.Item>
-          <Form.Item
-            name="notify_email"
-            label={t('邮件提醒（有新的待办时发到他的登录邮箱）')}
-            extra={t('工作日上午 10 点、下午 4 点（加纳时间）汇总发。本人也可以在页头“邮件提醒”里自己改。提醒邮件的语言跟着他在网站上用的语言。')}
-            valuePropName="checked"
-          >
-            <Switch />
-          </Form.Item>
         </Form>
       </Modal>
       <Modal
@@ -477,7 +652,12 @@ export default function UsersPage() {
           <Form.Item name="full_name" label={t('姓名')}>
             <Input />
           </Form.Item>
-          <Form.Item name="role" label={t('角色')} rules={[{ required: true }]}>
+          <Form.Item
+            name="role"
+            label={t('角色')}
+            rules={[{ required: true }]}
+            extra={iRole === 'finance' ? t('财务默认所有模块都能看、能改；要限制的，加入名单后在“模块权限”那一列点“设置”。') : undefined}
+          >
             <Select options={roleOptions} />
           </Form.Item>
           {iRole === 'sales' && (
