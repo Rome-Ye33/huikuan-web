@@ -1,7 +1,7 @@
 import { Alert, App, Button, Modal, Radio, Space, Table, Tag, Typography } from 'antd'
 import { useState } from 'react'
-import { PERM_LEVELS, PERM_MODULES, permOf, storedPerms } from '../lib/perms'
-import type { PermLevel, PermModule, Perms } from '../lib/perms'
+import { asDuty, PERM_LEVELS, PERM_MODULES, permOf, storedPerms } from '../lib/perms'
+import type { Duty, PermLevel, PermModule, Perms } from '../lib/perms'
 import type { Json } from '../lib/database.types'
 import { errorText } from '../lib/errors'
 import { useT } from '../lib/i18n'
@@ -10,10 +10,13 @@ import type { AppRole } from '../lib/supabase'
 
 // 财务的模块权限（数据库 31）：每个财务账号（邀请名单上还没注册的也行）、每个模块一档 不可见 / 只看 / 可编辑。
 // 管理员永远全部可编辑；业务员不用这个（只看得到自己名下的）。
+// 还有银行流水分工（数据库 36）：填收款 / 填付款 / 都填，和模块权限一起存。
 
 /** 每个模块“可编辑”能做什么（只看 = 能打开看，这些都做不了） */
 const MODULE_HINT: Record<PermModule, string> = {
   receipts: '录到账、拆分、审核业务员提交、请业务员填写、报款',
+  journal: '填银行流水（付款、其他收入、互转、一起填），设银行账户的期初余额',
+  cash: '记现金支出、其他收入、账户互转，设现金账户的期初余额',
   cheques: '录支票、存票、退票、导入表格',
   vehicles: '新增、修改、导入车辆，录期初、优惠折让',
   commission: '替业务员开提成单、修改、标记发放',
@@ -23,12 +26,24 @@ const MODULE_HINT: Record<PermModule, string> = {
 
 const LEVEL_COLOR: Record<PermLevel, string> = { none: 'default', view: 'default', edit: 'blue' }
 
-/** 表格里的一格：这个人现在的模块权限 */
-export function PermSummary({ role, perms }: { role: AppRole | null; perms: Json | null }) {
+/** 表格里的一格：这个人现在的模块权限（和银行流水分工） */
+export function PermSummary({ role, perms, duty }: { role: AppRole | null; perms: Json | null; duty?: string | null }) {
   const t = useT()
   if (role === 'admin') return <span className="hint">{t('管理员：全部可编辑')}</span>
   if (role !== 'finance') return null
-  if (perms === null) return <Tag color="green">{t('全部可编辑')}</Tag>
+  const d = asDuty(duty)
+  const dutyTag = d ? (
+    <Tag color="purple" key="duty">
+      {d === 'in' ? t('分工：填收款') : t('分工：填付款')}
+    </Tag>
+  ) : null
+  if (perms === null)
+    return (
+      <Space size={[0, 4]} wrap className="perm-tags">
+        <Tag color="green">{t('全部可编辑')}</Tag>
+        {dutyTag}
+      </Space>
+    )
   const shown = PERM_MODULES.map((m) => ({ ...m, level: permOf('finance', perms, m.key) })).filter((m) => m.level !== 'none')
   if (!shown.length) return <Tag>{t('全部不可见')}</Tag>
   return (
@@ -38,26 +53,33 @@ export function PermSummary({ role, perms }: { role: AppRole | null; perms: Json
           {m.level === 'edit' ? t(m.label) : t('{module}（只看）', { module: t(m.label) })}
         </Tag>
       ))}
+      {dutyTag}
     </Space>
   )
 }
 
 export type PermTarget =
-  | { kind: 'profile'; id: string; name: string; perms: Json | null }
-  | { kind: 'invite'; email: string; name: string; perms: Json | null }
+  | { kind: 'profile'; id: string; name: string; perms: Json | null; duty: string | null }
+  | { kind: 'invite'; email: string; name: string; perms: Json | null; duty: string | null }
 
 /** 设置一个财务账号（或邀请名单上的人）的模块权限 */
 export default function PermEditor({ target, onClose }: { target: PermTarget | null; onClose: (saved: boolean) => void }) {
   const t = useT()
   const { message } = App.useApp()
   const [levels, setLevels] = useState<Perms>({})
+  const [duty, setDuty] = useState<Duty | null>(null)
   const [saving, setSaving] = useState(false)
   // 打开另一个人时，按他现在的权限重新填（在渲染时对上，不用 effect）
   const [shownFor, setShownFor] = useState<PermTarget | null>(null)
   if (target !== shownFor) {
     setShownFor(target)
-    if (target) setLevels(Object.fromEntries(PERM_MODULES.map((m) => [m.key, permOf('finance', target.perms, m.key)])) as Perms)
+    if (target) {
+      setLevels(Object.fromEntries(PERM_MODULES.map((m) => [m.key, permOf('finance', target.perms, m.key)])) as Perms)
+      setDuty(asDuty(target.duty))
+    }
   }
+  // 分工只对填银行流水的人有用：银行日记账或银行对账能编辑
+  const fillsLines = levels.journal === 'edit' || levels.reconcile === 'edit'
 
   const setAll = (level: PermLevel) => setLevels(Object.fromEntries(PERM_MODULES.map((m) => [m.key, level])) as Perms)
 
@@ -65,10 +87,11 @@ export default function PermEditor({ target, onClose }: { target: PermTarget | n
     if (!target) return
     setSaving(true)
     const perms = storedPerms(levels)
+    const journal_duty = fillsLines ? duty : null
     const { error } =
       target.kind === 'profile'
-        ? await supabase.from('profiles').update({ perms }).eq('id', target.id)
-        : await supabase.from('user_invites').update({ perms }).eq('email', target.email)
+        ? await supabase.from('profiles').update({ perms, journal_duty }).eq('id', target.id)
+        : await supabase.from('user_invites').update({ perms, journal_duty }).eq('email', target.email)
     setSaving(false)
     if (error) {
       message.error(errorText(error))
@@ -138,6 +161,27 @@ export default function PermEditor({ target, onClose }: { target: PermTarget | n
       />
       <div className="hint" style={{ marginTop: 8 }}>
         {t('从支票、银行流水生成到账，还要“到账录入”可编辑。客户在车辆、支票的录入框里也能直接新建。')}
+      </div>
+      <div className="duty-box">
+        <div>
+          <Typography.Text strong>{t('银行流水分工')}</Typography.Text>
+          <div className="hint">
+            {t('几个人一起填银行流水时设：填收款的打开银行对账先看「银行有、没人报」，填付款的先看「付款待填」，别人那一摊只能看。')}
+          </div>
+        </div>
+        <Radio.Group
+          optionType="button"
+          buttonStyle="solid"
+          size="small"
+          disabled={!fillsLines}
+          value={fillsLines ? (duty ?? 'all') : 'all'}
+          onChange={(e) => setDuty(e.target.value === 'all' ? null : (e.target.value as Duty))}
+          options={[
+            { value: 'all', label: t('都填') },
+            { value: 'in', label: t('只填收款') },
+            { value: 'out', label: t('只填付款') },
+          ]}
+        />
       </div>
     </Modal>
   )
