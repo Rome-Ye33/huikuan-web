@@ -23,7 +23,7 @@ import {
 } from 'antd'
 import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { aiSession } from '../lib/aiFill'
+import { AI_FILL_ENABLED, aiSession } from '../lib/aiFill'
 import type { AiFilled } from '../lib/aiFill'
 import { useAuth } from '../lib/auth'
 import { notifyChequesChanged } from '../lib/cheques'
@@ -1345,7 +1345,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             }
           />
         )}
-        {isAdmin && !currentId && !receiptId && !review && !submission && (
+        {AI_FILL_ENABLED && isAdmin && !currentId && !receiptId && !review && !submission && (
           <AiFill
             attachments={attachments}
             lockedAmount={prefill?.line_id ? (prefill.amount_orig ?? null) : null}
