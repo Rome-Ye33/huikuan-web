@@ -1111,3 +1111,9 @@ html[lang='en'] .logo-name {
 .duty-note {
   margin-bottom: 8px;
 }
+
+/* 表格里整段显示的备注：放不下就换行，不截断 */
+.ant-table-cell.wrap-note {
+  white-space: normal;
+  word-break: break-word;
+}
