@@ -1,4 +1,4 @@
-import { DeleteOutlined, SwapRightOutlined } from '@ant-design/icons'
+import { DeleteOutlined, PlusOutlined, SwapRightOutlined } from '@ant-design/icons'
 import { Alert, App, AutoComplete, Button, Col, Collapse, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Row, Segmented, Select, Space, Tag, Typography } from 'antd'
 import dayjs from 'dayjs'
 import { useEffect, useMemo, useState } from 'react'
@@ -6,8 +6,20 @@ import { useAuth } from '../lib/auth'
 import { errorText } from '../lib/errors'
 import { money, round2, todayAccra, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
-import { isCashLike, moduleColor, moduleOptions, notifyJournalChanged, transferModule, transferSummary } from '../lib/journal'
-import type { CashEntry, EntryKind } from '../lib/journal'
+import {
+  isCashLike,
+  moduleColor,
+  moduleOptions,
+  newPart,
+  notifyJournalChanged,
+  parseParts,
+  partsPayload,
+  partsTotal,
+  RECEIPT_MODULE,
+  transferModule,
+  transferSummary,
+} from '../lib/journal'
+import type { CashEntry, EntryKind, PartDraft } from '../lib/journal'
 import { fetchEntryLogs } from '../lib/journalLog'
 import type { JournalLog } from '../lib/journalLog'
 import type { Duty } from '../lib/perms'
@@ -15,6 +27,8 @@ import { accountOptions, lookupRate, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
 import JournalLogList from './JournalLogList'
+import PartsEditor from './PartsEditor'
+import type { ReceiptPrefill } from './ReceiptEditor'
 import Vouchers from './Vouchers'
 
 // 收支录入：支出、其他收入、账户互转。一笔一行，存进 cash_entries（数据库 36 的 save_cash_entry）。
@@ -29,6 +43,9 @@ import Vouchers from './Vouchers'
 // 银行流水分工：对上的流水不是自己那一摊（填收款 / 填付款）的，只能看。
 // 几个人同时改：存的时候带上打开时的版本，别人刚改过就挡住、说是谁改的，点“重新打开”看最新的；
 // 同一天、同账户、同金额已经有人记了一笔现金，先提醒，确定了再记。下面有这一笔的修改记录。
+// 一笔里分几种业务（数据库 37）：点「分几种业务」，每种一个业务模块、客户 / 供应商、摘要、金额，加起来等于这一笔（流水还是一条）。
+//   填收进来的流水时可以选「设备回款」：那几行要选大架号，点「下一步：录成到账」转到到账录入，别的几种跟着到账一起存。
+//   流水已经配上了到账、钱还有剩的（prefill.with_receipt）：这里填剩下的钱。和到账一起填的这一笔金额不能改、不能单删。
 
 /** 从银行流水填的时候带过来的内容 */
 export type CashEntryPrefill = {
@@ -45,7 +62,16 @@ export type CashEntryPrefill = {
   bank_summary?: string | null
   /** 填的是哪条银行流水：保存后这条流水就填好了 */
   line_id?: number
+  /** 这条流水已经配上了到账（37）：这里填到账以外剩下的钱，amount 是剩下的 */
+  with_receipt?: boolean
+  receipt_no?: string | null
+  receipt_amount?: number
+  /** 流水本身的金额（填剩下的钱时用来说明） */
+  line_amount?: number
 }
+
+/** 和这一笔一起填同一条流水的到账（37）：流水 = 到账 + 这一笔 */
+type RestOf = { receipt_id: number; receipt_no: string; receipt_amount: number; line_amount: number }
 
 type FormValues = {
   entry_date: dayjs.Dayjs
@@ -71,6 +97,7 @@ export default function CashEntryEditor({
   prefill,
   defaultAccountId,
   onClose,
+  onReceipt,
 }: {
   open: boolean
   entryId: number | null
@@ -78,6 +105,8 @@ export default function CashEntryEditor({
   /** 明细页上选着的账户：新记一笔时默认用它 */
   defaultAccountId?: number
   onClose: (changed: boolean) => void
+  /** 转到到账录入（37）：prefill = 设备回款那几行录成到账（别的几种跟着一起存）；id = 打开和这一笔一起填的到账。没给就不出这两样 */
+  onReceipt?: (r: { id?: number; prefill?: ReceiptPrefill }) => void
 }) {
   const t = useT()
   const { message, modal } = App.useApp()
@@ -99,6 +128,10 @@ export default function CashEntryEditor({
   // 别人刚改过 / 删了 / 流水被别人填了：说清楚，存不了；stale 可以重新打开看最新的
   const [conflict, setConflict] = useState<{ kind: 'stale' | 'gone' | 'line'; msg: string } | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
+  /** 分了几种业务（37）：null = 只有一种（用上面的业务模块、客户） */
+  const [parts, setParts] = useState<PartDraft[] | null>(null)
+  /** 改的这一笔是和到账一起填同一条流水的（37） */
+  const [rest, setRest] = useState<RestOf | null>(null)
   const editing = entryId !== null
   // 从银行流水填：流水那一边的日期、账户、金额照银行的，不能改
   const fromLine = !editing && !!prefill?.line_id
@@ -120,6 +153,13 @@ export default function CashEntryEditor({
   const lockFrom = (fromLine && !lineCredit) || linked.out
   const lockTo = (fromLine && lineCredit) || linked.in
   const lockDate = fromLine || linked.out || linked.in
+  /** 填流水里到账以外剩下的钱（37） */
+  const withReceipt = fromLine && !!prefill?.with_receipt
+  /** 金额定死了（照流水、对上了流水）：分几种业务时要加起来等于它；没定死（记现金）：金额就是几种加起来 */
+  const lockAmount = fromLine || linked.out
+  /** 收进来的流水分几种业务时能选「设备回款」，那几行下一步录成到账（要能录到账、配流水） */
+  const canReceipt = !!onReceipt && fromLine && lineCredit && !withReceipt && canEdit('receipts') && canEdit('reconcile')
+  const carRows = parts?.filter((r) => r.module === RECEIPT_MODULE) ?? []
 
   // 打开时：新记一笔按带过来的内容填；改一笔先读回来（互转的把另一边也读回来）
   useEffect(() => {
@@ -131,6 +171,8 @@ export default function CashEntryEditor({
     setLinked({ out: false, in: false })
     setLogs([])
     setConflict(null)
+    setParts(null)
+    setRest(null)
     form.resetFields()
     if (entryId === null) {
       const k = prefill?.kind ?? 'out'
@@ -166,9 +208,21 @@ export default function CashEntryEditor({
       const ids = [out.id, other?.id].filter((x): x is number => !!x)
       const [{ data: fee }, { data: lines }] = await Promise.all([
         other ? supabase.from('cash_entries').select('id, amount').eq('fee_of', out.id).maybeSingle() : Promise.resolve({ data: null }),
-        supabase.from('bank_statement_lines').select('id, entry_id').in('entry_id', ids),
+        supabase.from('bank_statement_lines').select('id, entry_id, receipt_id, amount_orig').in('entry_id', ids),
       ])
+      // 和到账一起填的同一条流水（37）：读到账的单号、金额，说清楚流水 = 到账 + 这一笔
+      const withR = (lines ?? []).find((l) => l.entry_id === out.id && l.receipt_id)
+      const rcpt = withR?.receipt_id
+        ? (await supabase.from('bank_receipts').select('id, receipt_no, amount_orig').eq('id', withR.receipt_id).maybeSingle()).data
+        : null
       if (!alive) return
+      setRest(
+        withR && rcpt
+          ? { receipt_id: rcpt.id, receipt_no: rcpt.receipt_no ?? '', receipt_amount: Number(rcpt.amount_orig), line_amount: Number(withR.amount_orig) }
+          : null,
+      )
+      const ps = parseParts(out.parts)
+      setParts(ps.length ? ps.map((x) => newPart({ module: x.module, counterparty: x.counterparty ?? undefined, summary: x.summary ?? undefined, amount: x.amount })) : null)
       // 修改记录：这一笔（互转两边、手续费）和对上的流水
       void fetchEntryLogs([...ids, ...(fee ? [fee.id] : [])], (lines ?? []).map((l) => l.id)).then((rows) => {
         if (alive) setLogs(rows)
@@ -254,6 +308,48 @@ export default function CashEntryEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customers, open, count])
 
+  /** 分几种业务时每一行的客户 / 供应商候选：全部客户 */
+  const allCounterparties = useMemo(() => customers.map((c) => ({ value: c.name })), [customers])
+
+  // 分几种业务（37）：记现金时金额就是几种加起来
+  useEffect(() => {
+    if (!parts || lockAmount || kind === 'transfer' || readOnly) return
+    const sum = partsTotal(parts)
+    form.setFieldValue('amount', sum > 0 ? sum : undefined)
+  }, [parts, lockAmount, kind, readOnly, form])
+  /** 开始分几种业务：第一种照上面填的，再空一行 */
+  const startParts = () => {
+    const v = form.getFieldsValue()
+    setParts([newPart({ module: v.module, counterparty: v.counterparty, amount: v.amount ?? null }), newPart()])
+  }
+  /** 不分了：回到一种，业务模块、客户用第一种的 */
+  const stopParts = () => {
+    const first = parts?.[0]
+    setParts(null)
+    if (first) form.setFieldsValue({ module: first.module === RECEIPT_MODULE ? undefined : first.module, counterparty: first.counterparty })
+  }
+  const partModules = [...(canReceipt && kind === 'in' ? [RECEIPT_MODULE] : []), ...moduleOptions(kind)]
+
+  /** 设备回款那几行录成到账（下一步选大架号），别的几种跟着到账一起存（save_receipt_with_parts） */
+  const goReceipt = (v: FormValues) => {
+    if (!prefill?.line_id || !onReceipt || !parts) return
+    const others = parts.filter((r) => r.module !== RECEIPT_MODULE)
+    onReceipt({
+      prefill: {
+        account_id: prefill.account_id,
+        receipt_date: prefill.entry_date,
+        amount_orig: partsTotal(carRows),
+        payer_summary: prefill.bank_summary ?? null,
+        bank_ref: prefill.bank_ref ?? null,
+        line_id: prefill.line_id,
+        line_amount: Number(prefill.amount ?? 0),
+        claims: carRows.map((c) => ({ amount_orig: Number(c.amount ?? 0) })),
+        others: others.map((o) => ({ module: o.module ?? '', counterparty: o.counterparty?.trim() || null, summary: o.summary?.trim() || null, amount: Number(o.amount ?? 0) })),
+        others_summary: v.summary?.trim() || null,
+      },
+    })
+  }
+
   /** 存不了：别人刚改过、删了、流水被别人填了的，在上面说清楚（列表也重读）；别的报错照常提示 */
   const fail = (error: { message: string }) => {
     const msg = errorText(error)
@@ -273,6 +369,23 @@ export default function CashEntryEditor({
     } catch {
       return
     }
+    // 分了几种业务：每种都要选业务模块、填金额，加起来等于这一笔
+    if (parts && kind !== 'transfer') {
+      const bad = parts.findIndex((r) => !r.module || !(Number(r.amount) > 0))
+      if (bad >= 0) {
+        message.error(t('第 {n} 种业务：请选业务模块、填金额', { n: bad + 1 }))
+        return
+      }
+      if (lockAmount && Math.abs(partsTotal(parts) - Number(v.amount ?? 0)) >= 0.005) {
+        message.error(t('几种业务加起来是 {sum}，要等于 {total}', { sum: money(partsTotal(parts)), total: money(v.amount) }))
+        return
+      }
+      if (carRows.length) {
+        goReceipt(v)
+        return
+      }
+    }
+    const split = !!parts && kind !== 'transfer'
     const p: Record<string, Json | undefined> = {
       id: entry?.id,
       // 打开时读到的版本（互转是转出那一边的）：别人在这之后改过就存不了，免得悄悄盖掉
@@ -280,9 +393,11 @@ export default function CashEntryEditor({
       kind,
       entry_date: v.entry_date.format('YYYY-MM-DD'),
       account_id: v.account_id,
-      amount: v.amount,
-      module: kind === 'transfer' ? autoModule : v.module,
-      counterparty: v.counterparty?.trim() || null,
+      amount: split && !lockAmount ? partsTotal(parts) : v.amount,
+      module: kind === 'transfer' ? autoModule : split ? parts[0].module : v.module,
+      counterparty: split ? parts[0].counterparty?.trim() || null : v.counterparty?.trim() || null,
+      parts: split ? partsPayload(parts) : null,
+      with_receipt: withReceipt || undefined,
       summary: v.summary?.trim() || null,
       fx_rate: kind === 'transfer' ? null : (v.fx_rate ?? null),
       bank_ref: v.bank_ref?.trim() || null,
@@ -327,6 +442,7 @@ export default function CashEntryEditor({
     setCount((n) => n + 1)
     setAttachments([])
     setSummaryTouched(false)
+    setParts(null)
     form.setFieldsValue({ amount: undefined, counterparty: undefined, summary: undefined, bank_ref: undefined, cheque_no: undefined, note: undefined, to_amount: undefined, fee: undefined })
   }
 
@@ -370,7 +486,7 @@ export default function CashEntryEditor({
 
   const footer = (
     <div className="entry-footer">
-      {editing && allowed ? (
+      {editing && allowed && !rest ? (
         <Popconfirm
           title={
             peer
@@ -399,7 +515,7 @@ export default function CashEntryEditor({
         )}
         {allowed && (
           <Button type="primary" onClick={() => void save(false)} loading={saving} disabled={!!conflict}>
-            {t('保存')}
+            {carRows.length ? t('下一步：录成到账（选大架号）') : t('保存')}
           </Button>
         )}
       </Space>
@@ -455,14 +571,31 @@ export default function CashEntryEditor({
             setKind(k)
             form.setFieldValue('module', undefined)
             setSummaryTouched(false)
+            // 分几种业务：互转不能分；收、付之间换了，业务模块不一样，重新分
+            setParts(null)
           }}
-          options={(fromLine ? (lineCredit ? ['in', 'transfer'] : ['out', 'transfer']) : (['out', 'in', 'transfer'] as EntryKind[])).map((k) => ({
+          options={(fromLine ? (withReceipt ? ['in'] : lineCredit ? ['in', 'transfer'] : ['out', 'transfer']) : (['out', 'in', 'transfer'] as EntryKind[])).map((k) => ({
             value: k as EntryKind,
             label: t(KIND_LABEL[k as EntryKind]),
           }))}
         />
       )}
-      {fromLine && prefill && (
+      {withReceipt && prefill && (
+        <Alert
+          type="success"
+          showIcon
+          className="entry-tip"
+          title={t('这条银行流水 {cur} {line} 已经配上了到账 {no}（{cur} {rcpt}），这里填剩下的 {cur} {rest}。', {
+            cur: acct?.currency ?? '',
+            line: money(prefill.line_amount),
+            no: prefill.receipt_no ?? '',
+            rcpt: money(prefill.receipt_amount),
+            rest: money(prefill.amount),
+          })}
+          description={t('剩下的钱填成收入（代收代付、其他收入这些），可以再分几种业务；日期、账户、金额照银行的。')}
+        />
+      )}
+      {fromLine && prefill && !withReceipt && (
         <Alert
           type="success"
           showIcon
@@ -479,7 +612,29 @@ export default function CashEntryEditor({
           description={t('日期、账户、金额照银行的，不能改；填好业务模块和摘要，保存后这条流水就填好了。')}
         />
       )}
-      {editing && (linked.out || linked.in) && (
+      {editing && rest && (
+        <Alert
+          type="info"
+          showIcon
+          className="entry-tip"
+          title={t('这一笔和到账 {no} 一起填的同一条银行流水：流水 {cur} {line} = 到账 {rcpt} + 这一笔 {amt}。', {
+            no: rest.receipt_no,
+            cur: acct?.currency ?? '',
+            line: money(rest.line_amount),
+            rcpt: money(rest.receipt_amount),
+            amt: money(amount),
+          })}
+          description={t('业务模块、分几种业务、摘要可以改，金额不能改。要重新分，请到「银行对账 → 全部流水明细」取消那笔到账的配对（这一笔会一起删掉），再重新填。')}
+          action={
+            onReceipt ? (
+              <Button size="small" onClick={() => onReceipt({ id: rest.receipt_id })}>
+                {t('打开到账')}
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+      {editing && !rest && (linked.out || linked.in) && (
         <Alert
           type="success"
           showIcon
@@ -499,8 +654,17 @@ export default function CashEntryEditor({
           }
         />
       )}
-      {kind === 'in' && fromLine && (
-        <Alert type="info" showIcon className="entry-tip" title={t('客户的车款请点「录成到账」，这里记利息、退款、理赔这些其他收入。')} />
+      {kind === 'in' && fromLine && !withReceipt && (
+        <Alert
+          type="info"
+          showIcon
+          className="entry-tip"
+          title={
+            canReceipt
+              ? t('客户的车款请点「录成到账」，这里记利息、退款、理赔这些其他收入。一条流水里既有车款、又有别的钱的，点下面「分几种业务」，车款那几行选「设备回款」，下一步录成到账选大架号。')
+              : t('客户的车款请点「录成到账」，这里记利息、退款、理赔这些其他收入。')
+          }
+        />
       )}
       <Form form={form} layout="vertical" disabled={readOnly} requiredMark={false}>
         <Row gutter={12}>
@@ -526,20 +690,27 @@ export default function CashEntryEditor({
                 </Form.Item>
               </Col>
               <Col xs={24} sm={8}>
-                <Form.Item name="amount" label={t('金额')} rules={[{ required: true, message: t('请填金额') }]}>
-                  <InputNumber style={{ width: '100%' }} min={0.01} precision={2} suffix={cur} disabled={readOnly || fromLine || linked.out} />
+                <Form.Item
+                  name="amount"
+                  label={t('金额')}
+                  rules={[{ required: true, message: parts ? t('几种业务的金额加起来就是这一笔') : t('请填金额') }]}
+                  extra={parts && !lockAmount ? t('几种业务加起来') : undefined}
+                >
+                  <InputNumber style={{ width: '100%' }} min={0.01} precision={2} suffix={cur} disabled={readOnly || lockAmount || !!parts} />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={8}>
-                <Form.Item name="module" label={t('业务模块')} rules={[{ required: true, message: t('请选业务模块') }]}>
-                  <Select
-                    showSearch={{ optionFilterProp: 'label' }}
-                    virtual={false}
-                    options={moduleOptions(kind).map((m) => ({ value: m, label: t(m) }))}
-                    labelRender={(o) => <Tag color={moduleColor(String(o.value))}>{o.label}</Tag>}
-                  />
-                </Form.Item>
-              </Col>
+              {!parts && (
+                <Col xs={24} sm={8}>
+                  <Form.Item name="module" label={t('业务模块')} rules={[{ required: true, message: t('请选业务模块') }]}>
+                    <Select
+                      showSearch={{ optionFilterProp: 'label' }}
+                      virtual={false}
+                      options={moduleOptions(kind).map((m) => ({ value: m, label: t(m) }))}
+                      labelRender={(o) => <Tag color={moduleColor(String(o.value))}>{o.label}</Tag>}
+                    />
+                  </Form.Item>
+                </Col>
+              )}
               <Col xs={24} sm={8}>
                 <Form.Item
                   name="fx_rate"
@@ -550,11 +721,13 @@ export default function CashEntryEditor({
                   <InputNumber style={{ width: '100%' }} min={0.0001} precision={4} disabled={readOnly || cur === 'USD'} />
                 </Form.Item>
               </Col>
-              <Col xs={24} sm={12}>
-                <Form.Item name="counterparty" label={kind === 'out' ? t('收款方 / 供应商') : t('付款方 / 客户')}>
-                  <AutoComplete options={counterpartyOptions} filterOption={(q, o) => String(o?.value ?? '').toLowerCase().includes(q.toLowerCase())} />
-                </Form.Item>
-              </Col>
+              {!parts && (
+                <Col xs={24} sm={12}>
+                  <Form.Item name="counterparty" label={kind === 'out' ? t('收款方 / 供应商') : t('付款方 / 客户')}>
+                    <AutoComplete options={counterpartyOptions} filterOption={(q, o) => String(o?.value ?? '').toLowerCase().includes(q.toLowerCase())} />
+                  </Form.Item>
+                </Col>
+              )}
               <Col xs={24} sm={12}>
                 <Form.Item name="bank_ref" label={t('银行参考号 / 支票号')}>
                   <Input maxLength={80} />
@@ -582,6 +755,48 @@ export default function CashEntryEditor({
             </>
           )}
         </Row>
+        {kind !== 'transfer' &&
+          (parts ? (
+            <div className="parts-wrap">
+              <div className="parts-title">
+                <Typography.Text strong>{t('这一笔分几种业务')}</Typography.Text>
+                <span className="hint">
+                  {lockAmount ? t('加起来要等于 {cur} {amt}（流水还是一条）', { cur, amt: money(amount) }) : t('金额就是几种加起来')}
+                </span>
+                {!readOnly && (
+                  <Button size="small" type="link" onClick={stopParts}>
+                    {t('不分了')}
+                  </Button>
+                )}
+              </div>
+              <PartsEditor
+                rows={parts}
+                onChange={setParts}
+                modules={partModules}
+                total={lockAmount ? Number(amount ?? 0) : null}
+                currency={cur}
+                readOnly={readOnly}
+                counterparties={allCounterparties}
+              />
+              {carRows.length > 0 && (
+                <Alert
+                  type="info"
+                  showIcon
+                  className="parts-car-tip"
+                  title={t('设备回款 {cur} {amt} 要选大架号：点「下一步：录成到账」，在到账里拆到车；别的几种跟着到账一起保存。', {
+                    cur,
+                    amt: money(partsTotal(carRows)),
+                  })}
+                />
+              )}
+            </div>
+          ) : (
+            !readOnly && (
+              <Button type="link" size="small" icon={<PlusOutlined />} className="parts-toggle" onClick={startParts}>
+                {t('分几种业务')}
+              </Button>
+            )
+          ))}
         {kind === 'transfer' && (
           <div className="transfer-box">
             <Row gutter={12}>

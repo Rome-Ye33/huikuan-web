@@ -444,6 +444,7 @@ export type Database = {
           id: number
           module: string
           note: string | null
+          parts: Json | null
           peer_id: number | null
           summary: string | null
           updated_at: string
@@ -468,6 +469,7 @@ export type Database = {
           id?: never
           module?: string
           note?: string | null
+          parts?: Json | null
           peer_id?: number | null
           summary?: string | null
           updated_at?: string
@@ -492,6 +494,7 @@ export type Database = {
           id?: never
           module?: string
           note?: string | null
+          parts?: Json | null
           peer_id?: number | null
           summary?: string | null
           updated_at?: string
@@ -1790,6 +1793,7 @@ export type Database = {
           key: string | null
           line_id: number | null
           module: string | null
+          parts: Json | null
           peer_account_id: number | null
           peer_account_name: string | null
           receipt_id: number | null
@@ -2207,6 +2211,10 @@ export type Database = {
       save_openings: { Args: { p_date: string; p_rows: Json }; Returns: number }
       save_receipt: {
         Args: { p_claims?: Json; p_receipt: Json }
+        Returns: number
+      }
+      save_receipt_with_parts: {
+        Args: { p_claims: Json; p_entry: Json; p_receipt: Json }
         Returns: number
       }
       save_voucher_flow: { Args: { p_steps: Json }; Returns: undefined }

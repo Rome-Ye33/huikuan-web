@@ -10,7 +10,7 @@ import { useBadges } from './badges'
 import { round2 } from './format'
 import type { Duty } from './perms'
 import type { Account } from './supabase'
-import type { Database } from './database.types'
+import type { Database, Json } from './database.types'
 
 export type JournalLine = Database['public']['Views']['v_journal']['Row']
 export type AccountMonth = Database['public']['Functions']['journal_month']['Returns'][number]
@@ -178,6 +178,62 @@ export function buildLedger(lines: JournalLine[], opening: number | null, from: 
   closeDay()
   return out
 }
+
+/**
+ * 一笔里的几种业务（数据库 37）：流水（或一笔现金）还是一条、金额照银行的，里面分几种业务，
+ * 每种一个业务模块、客户 / 供应商、摘要、金额，加起来等于这一笔的金额。
+ * 日记账（v_journal.parts）里还带着：到账的每一笔拆分（设备回款 / 配件回款，带大架号、到账 id），收支那一笔的 id；doc_no 是单号。
+ * 只有一种的是空。
+ */
+export type Part = {
+  module: string
+  counterparty: string | null
+  summary: string | null
+  amount: number
+  vin: string | null
+  receipt_id: number | null
+  entry_id: number | null
+  doc_no: string | null
+}
+
+const optStr = (v: Json | undefined): string | null => (v === null || v === undefined || v === '' ? null : String(v))
+const optNum = (v: Json | undefined): number | null => (v === null || v === undefined || v === '' ? null : Number(v))
+
+/** 数据库里存的几种业务（jsonb 数组）读成 Part[]；不是数组就是空的 */
+export function parseParts(v: Json | null | undefined): Part[] {
+  if (!Array.isArray(v)) return []
+  return v
+    .filter((x): x is { [k: string]: Json | undefined } => !!x && typeof x === 'object' && !Array.isArray(x))
+    .map((x) => ({
+      module: String(x.module ?? ''),
+      counterparty: optStr(x.counterparty),
+      summary: optStr(x.summary),
+      amount: Number(x.amount ?? 0),
+      vin: optStr(x.vin),
+      receipt_id: optNum(x.receipt_id),
+      entry_id: optNum(x.entry_id),
+      doc_no: optStr(x.doc_no),
+    }))
+}
+
+/** 一行日记账里有哪些业务模块（分了几种的每种都算）：按业务模块筛选时，分了几种的里面有就算 */
+export function lineModules(l: Pick<JournalLine, 'module' | 'parts'>): string[] {
+  const ps = parseParts(l.parts)
+  return ps.length ? [...new Set(ps.map((p) => p.module))] : l.module ? [l.module] : []
+}
+
+/** 设备回款：要选大架号，走到账录入（到账拆分选车）；在几种业务里出现时，那部分录成到账 */
+export const RECEIPT_MODULE = '设备回款'
+
+/** 录入框里的一种业务（还没存）：金额可以先空着 */
+export type PartDraft = { key: string; module?: string; counterparty?: string; summary?: string; amount?: number | null }
+let partSeq = 0
+export const newPart = (p: Omit<PartDraft, 'key'> = {}): PartDraft => ({ key: `p${++partSeq}`, ...p })
+/** 几种业务的金额加起来 */
+export const partsTotal = (rows: PartDraft[]) => round2(rows.reduce((s, r) => s + Number(r.amount ?? 0), 0))
+/** 存进数据库的样子：去空白，空的写 null */
+export const partsPayload = (rows: PartDraft[]) =>
+  rows.map((r) => ({ module: r.module ?? null, counterparty: r.counterparty?.trim() || null, summary: r.summary?.trim() || null, amount: round2(Number(r.amount ?? 0)) }))
 
 /** 一条银行流水填了没有：待填（橙）、到账还在审批（金）；填好了不用标 */
 export const FILL_COLOR: Record<string, string> = { 待填: 'orange', 审批中: 'gold' }
