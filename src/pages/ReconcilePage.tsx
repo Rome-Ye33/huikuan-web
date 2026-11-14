@@ -46,6 +46,28 @@ import type { ImportFormat, Receipt, StatementLine } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
 import { useT } from '../lib/i18n'
 
+/** 配上了到账、钱还有剩的流水（37）：剩下的钱填成收入用 */
+type RestLine = {
+  line_id: number
+  account_id: number | null
+  line_date: string | null
+  line_amount: number
+  receipt_no: string | null
+  receipt_amount: number
+  payer_summary: string | null
+  bank_ref: string | null
+}
+const restLine = (l: StatementLine): RestLine => ({
+  line_id: l.id as number,
+  account_id: l.account_id,
+  line_date: l.line_date,
+  line_amount: Number(l.amount_orig),
+  receipt_no: l.receipt_no,
+  receipt_amount: Number(l.receipt_amount_orig),
+  payer_summary: l.payer_summary,
+  bank_ref: l.bank_ref,
+})
+
 export default function ReconcilePage() {
   const t = useT()
   // 导入流水、配对、忽略要“银行对账”可编辑；只看的看得到三张表
@@ -71,6 +93,25 @@ export default function ReconcilePage() {
     if (kind === 'transfer' && Number(l.amount_orig) > 0) setEntry({ id: null, prefill: { ...base, kind, to_account_id: l.account_id ?? undefined, to_amount: amt } })
     else setEntry({ id: null, prefill: { ...base, kind, account_id: l.account_id ?? undefined, amount: amt } })
   }
+  /** 流水配上的到账比流水少（37）：剩下的钱填成收入（代收代付、其他收入……），日期、账户照银行的，金额 = 流水 − 到账 */
+  const fillRest = (r: RestLine) =>
+    setEntry({
+      id: null,
+      prefill: {
+        kind: 'in',
+        with_receipt: true,
+        line_id: r.line_id,
+        account_id: r.account_id ?? undefined,
+        entry_date: r.line_date ?? undefined,
+        amount: round2(r.line_amount - r.receipt_amount),
+        summary: r.payer_summary,
+        bank_summary: r.payer_summary,
+        bank_ref: r.bank_ref,
+        receipt_no: r.receipt_no,
+        receipt_amount: r.receipt_amount,
+        line_amount: r.line_amount,
+      },
+    })
 
   return (
     <div>
@@ -102,6 +143,7 @@ export default function ReconcilePage() {
                 accountId={accountId}
                 version={version}
                 onEntry={fillLine}
+                onRest={fillRest}
                 onCreate={(l) =>
                   setEditor({
                     open: true,
@@ -156,6 +198,7 @@ export default function ReconcilePage() {
                 version={version}
                 onOpen={(id) => setEditor({ open: true, id, prefill: null })}
                 onEntry={(id) => setEntry({ id, prefill: null })}
+                onRest={fillRest}
               />
             ),
           },
@@ -177,6 +220,11 @@ export default function ReconcilePage() {
         onClose={(changed) => {
           setEntry(null)
           if (changed) setVersion((x) => x + 1)
+        }}
+        onReceipt={(r) => {
+          // 分几种业务里有设备回款：转到到账录入选大架号（别的几种跟着到账一起存）；或打开和这一笔一起填的到账
+          setEntry(null)
+          setEditor({ open: true, id: r.id ?? null, prefill: r.prefill ?? null })
         }}
       />
     </div>
@@ -285,11 +333,13 @@ function UnmatchedLines({
   version,
   onCreate,
   onEntry,
+  onRest,
 }: {
   accountId?: number
   version: number
   onCreate: (l: StatementLine) => void
   onEntry: (l: StatementLine, kind: 'in' | 'transfer') => void
+  onRest: (r: RestLine) => void
 }) {
   const t = useT()
   const { message } = App.useApp()
@@ -438,10 +488,14 @@ function UnmatchedLines({
         </span>
       </Space>
       <Table rowKey="id" size="small" loading={loading} columns={columns} dataSource={rows} scroll={{ x: 1000 }} pagination={{ defaultPageSize: 50 }} rowSelection={bulk.rowSelection} />
-      <LinkModal line={linkFor} onClose={(ok) => {
-        setLinkFor(null)
-        if (ok) void load()
-      }} />
+      <LinkModal
+        line={linkFor}
+        onRest={canFill ? onRest : undefined}
+        onClose={(ok) => {
+          setLinkFor(null)
+          if (ok) void load()
+        }}
+      />
       <Modal open={!!ignoreFor} title={t('忽略这条流水')} okText={t('忽略')} onOk={ignore} onCancel={() => setIgnoreFor(null)}>
         <Typography.Paragraph>
           {ignoreFor?.line_date} · {ignoreFor?.currency} {money(ignoreFor?.amount_orig)} · {ignoreFor?.payer_summary}
@@ -701,9 +755,9 @@ function BatchFillModal({ lines, onClose }: { lines: StatementLine[] | null; onC
 }
 
 /** 把一条银行流水手工关联到已录的到账 */
-function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok: boolean) => void }) {
+function LinkModal({ line, onClose, onRest }: { line: StatementLine | null; onClose: (ok: boolean) => void; onRest?: (r: RestLine) => void }) {
   const t = useT()
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const [cands, setCands] = useState<Receipt[]>([])
   const [loading, setLoading] = useState(false)
   const [picked, setPicked] = useState<number | null>(null)
@@ -743,6 +797,17 @@ function LinkModal({ line, onClose }: { line: StatementLine | null; onClose: (ok
       message.success(t('已关联'))
       notifyJournalChanged()
       onClose(true)
+      // 流水比到账多（37）：剩下的钱多半是别的业务（代收代付、其他收入……），问一句要不要现在填
+      const r = cands.find((c) => c.id === picked)
+      const rest = r ? round2(Number(line.amount_orig) - Number(r.amount_orig)) : 0
+      if (r && onRest && rest > 0)
+        modal.confirm({
+          title: t('流水比到账多 {cur} {amt}，剩下的钱现在填上？', { cur: line.currency ?? '', amt: money(rest) }),
+          content: t('剩下的钱是别的业务（代收代付、其他收入……）的话，填成一笔收入，和到账一起记在银行日记账的同一行。以后也可以在「全部流水明细」点「补填差额」。'),
+          okText: t('现在填'),
+          cancelText: t('以后再说'),
+          onOk: () => onRest({ ...restLine(line), receipt_no: r.receipt_no, receipt_amount: Number(r.amount_orig) }),
+        })
     }
   }
 
@@ -848,11 +913,13 @@ function AllLines({
   version,
   onOpen,
   onEntry,
+  onRest,
 }: {
   accountId?: number
   version: number
   onOpen: (id: number) => void
   onEntry: (id: number) => void
+  onRest: (r: RestLine) => void
 }) {
   const t = useT()
   const { message } = App.useApp()
@@ -861,7 +928,11 @@ function AllLines({
   const rcEdit = canEdit('reconcile')
   const rxView = canView('receipts')
   const jView = canView('journal')
+  /** 补填差额（37）：“银行日记账”可编辑 */
+  const jEdit = canEdit('journal')
   const myLine = (l: StatementLine) => mine(Number(l.amount_orig) < 0 ? 'out' : 'in')
+  /** 配上的到账比流水少多少（37：剩下的钱可以补填成收入） */
+  const restOf = (l: StatementLine) => (l.receipt_id && !l.entry_id && Number(l.amount_orig) > 0 ? round2(Number(l.amount_orig) - Number(l.receipt_amount_orig)) : 0)
   const [logFor, setLogFor] = useState<StatementLine | null>(null)
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
@@ -926,7 +997,7 @@ function AllLines({
         loading={loading}
         dataSource={rows}
         pagination={{ defaultPageSize: 50 }}
-        scroll={{ x: 1280 }}
+        scroll={{ x: 1380 }}
         rowSelection={bulk.rowSelection}
         columns={[
           { title: t('银行日期'), dataIndex: 'line_date', width: 104, ...textCol<StatementLine>((l) => l.line_date) },
@@ -977,20 +1048,53 @@ function AllLines({
           },
           {
             title: t('配上的单据'),
-            width: 230,
-            ...textCol<StatementLine>((l) => l.receipt_no ?? l.entry_no),
+            width: 330,
+            ...textCol<StatementLine>((l) => [l.receipt_no, l.entry_no].filter(Boolean).join(' ')),
             render: (_, l) =>
               l.receipt_id ? (
-                <Space size={4}>
+                <Space size={4} wrap>
                   {rxView ? <a onClick={() => onOpen(l.receipt_id as number)}>{l.receipt_no}</a> : l.receipt_no}
-                  {Number(l.receipt_amount_orig) !== Number(l.amount_orig) && (
-                    <Tag color="orange">{t('差')} {money(Number(l.receipt_amount_orig) - Number(l.amount_orig))}</Tag>
+                  {l.entry_id ? (
+                    // 到账和一笔收入一起填的同一条流水（37）：流水 = 到账 + 这一笔
+                    <>
+                      <span className="hint">+</span>
+                      {jView ? <a onClick={() => onEntry(l.entry_id as number)}>{l.entry_no}</a> : l.entry_no}
+                      {l.entry_module && <Tag color={moduleColor(l.entry_module)}>{t(l.entry_module)}</Tag>}
+                    </>
+                  ) : (
+                    Number(l.receipt_amount_orig) !== Number(l.amount_orig) && (
+                      <Tag color="orange">
+                        {t('差')} {money(Number(l.receipt_amount_orig) - Number(l.amount_orig))}
+                      </Tag>
+                    )
                   )}
-                  {rcEdit && myLine(l) && (
-                    <Button size="small" type="link" onClick={() => patch(l.id as number, { receipt_id: null, match_type: null }, t('已取消配对'))}>
-                      {t('取消配对')}
+                  {restOf(l) > 0 && jEdit && myLine(l) && (
+                    <Button size="small" type="link" onClick={() => onRest(restLine(l))}>
+                      {t('补填差额')}
                     </Button>
                   )}
+                  {rcEdit &&
+                    myLine(l) &&
+                    (l.entry_id ? (
+                      <Popconfirm
+                        title={t('取消配对？')}
+                        description={t('和这笔到账一起填的「{module}」{no} 会一起删掉，这条流水回到没配对。', {
+                          module: t(l.entry_module ?? ''),
+                          no: l.entry_no ?? '',
+                        })}
+                        okText={t('取消配对')}
+                        cancelText={t('返回')}
+                        onConfirm={() => patch(l.id as number, { receipt_id: null, match_type: null }, t('已取消配对'))}
+                      >
+                        <Button size="small" type="link">
+                          {t('取消配对')}
+                        </Button>
+                      </Popconfirm>
+                    ) : (
+                      <Button size="small" type="link" onClick={() => patch(l.id as number, { receipt_id: null, match_type: null }, t('已取消配对'))}>
+                        {t('取消配对')}
+                      </Button>
+                    ))}
                 </Space>
               ) : l.entry_id ? (
                 jView ? <a onClick={() => onEntry(l.entry_id as number)}>{l.entry_no}</a> : l.entry_no

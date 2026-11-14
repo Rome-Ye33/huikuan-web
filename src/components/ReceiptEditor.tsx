@@ -31,6 +31,9 @@ import { errorText } from '../lib/errors'
 import { parseFlow, receiptStatus, useFlow } from '../lib/flow'
 import { dateTime, money, num, round2, todayAccra, usd } from '../lib/format'
 import { useT } from '../lib/i18n'
+import { moduleOptions, newPart, notifyJournalChanged, partsPayload, partsTotal } from '../lib/journal'
+import { listSep } from '../lib/journalLog'
+import type { PartDraft } from '../lib/journal'
 import { defaultNature, receiptNatures } from '../lib/natures'
 import { accountOptions, lookupRate, useRefData } from '../lib/refdata'
 import { claimsSummary, notifySubmissionsChanged, parseClaims } from '../lib/submissions'
@@ -40,6 +43,7 @@ import type { Receipt, Vehicle } from '../lib/supabase'
 import type { Json } from '../lib/database.types'
 import AiFill from './AiFill'
 import CustomerSelect from './CustomerSelect'
+import PartsEditor from './PartsEditor'
 import ReportBox from './ReportBox'
 import VehicleFormModal from './VehicleFormModal'
 import VehicleSelect from './VehicleSelect'
@@ -59,7 +63,16 @@ export type ReceiptPrefill = {
   cheque_id?: number
   /** 预填的拆分（支票上选了车就带一行） */
   claims?: { nature?: string; vehicle_id?: number | null; customer_id?: number | null; amount_orig?: number | null }[]
+  /** 流水本身的金额（37：流水里还有不是回款的钱时，到账金额 = 流水 − 那些） */
+  line_amount?: number
+  /** 同一条流水里不是回款的几种业务（37，从日记账「分几种业务」带过来）：跟着到账一起存成一笔收入 */
+  others?: { module: string; counterparty: string | null; summary: string | null; amount: number }[]
+  /** 那一笔收入的摘要（日记账里填的） */
+  others_summary?: string | null
 }
+
+/** 配对的流水里和到账一起填的那一笔收入（37） */
+type LineEntry = { no: string; module: string; amount: number; line: number }
 
 /** 配对的银行流水里，按银行为准的几项 */
 type BankFacts = {
@@ -125,7 +138,7 @@ const nowSp = (r: Receipt | null): boolean => !!r?.step && parseFlow(r.flow).som
 
 export default function ReceiptEditor({ open, receiptId, prefill, submission, onClose }: Props) {
   const t = useT()
-  const { isStaff, isAdmin, posts, profile, canEdit } = useAuth()
+  const { isStaff, isAdmin, posts, profile, canEdit, mine } = useAuth()
   /** 能改到账（“到账录入”可编辑的财务、管理员）；只看的财务、业务员只能看，轮到自己那一级照样能批 */
   const rxEdit = canEdit('receipts')
   /** 车不在系统里可以当场新增（要“车辆台账”可编辑） */
@@ -165,6 +178,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const [aiIndex, setAiIndex] = useState<number | null>(null)
   /** 配对上的银行流水（由流水生成的新到账按预填算）：账户、日期、金额和银行给的摘要、参考号、支票号按银行为准，锁住不能改 */
   const [bankLine, setBankLine] = useState<BankFacts | null>(null)
+  /** 同一条银行流水里不是回款的几种业务（37，从流水新录到账时填）：跟着到账一起存成一笔收入，到账金额 = 流水 − 这些 */
+  const [others, setOthers] = useState<PartDraft[]>([])
+  /** 配对的流水里还有一笔和到账一起填的收入（37）：打开已录的到账时说一声 */
+  const [lineEntry, setLineEntry] = useState<LineEntry | null>(null)
   const rateTouched = useRef(false)
 
   const accountId = Form.useWatch('account_id', form)
@@ -177,6 +194,14 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
   const bankLocked = !!bankLine
   /** 银行流水里有这一项（非空）就不让改；银行没给的可以补 */
   const bankGave = (k: 'payer_summary' | 'bank_ref' | 'cheque_no') => !!bankLine?.[k]?.trim()
+  /** 从银行流水新录的到账（37：流水里还有别的钱，可以在这里一起填） */
+  const fromLine = !currentId && !!prefill?.line_id && !review && !submission
+  const lineAmount = round2(prefill?.line_amount ?? prefill?.amount_orig ?? 0)
+  /** 能在这里填流水里不是回款的钱：要能改银行日记账、收进来的流水是自己这一摊 */
+  const canOthers = fromLine && rxEdit && canEdit('journal') && mine('in')
+  const othersTotal = partsTotal(others)
+  /** 其他业务的客户 / 供应商候选：客户资料里的名字 */
+  const cpOptions = useMemo(() => customers.map((c) => ({ value: c.name })), [customers])
   // 到账自己的审批：录入后按录入时的审批流一级一级审，批完才算到账（才进余额、报表，才能报款）
   const rStatus = receiptStatus(receipt?.status)
   const rStep = receipt?.step ?? null
@@ -246,7 +271,17 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       if (rec.bank_line_id) {
         const l = await supabase.from('v_statement_lines').select('*').eq('id', rec.bank_line_id).maybeSingle()
         setBankLine(l.data ? bankFacts(l.data) : { line_date: null, amount_orig: null })
-      } else setBankLine(null)
+        // 同一条流水里还有一笔和到账一起填的收入（37）
+        const ld = l.data
+        setLineEntry(
+          ld?.entry_id
+            ? { no: ld.entry_no ?? '', module: ld.entry_module ?? '', amount: round2(num(ld.amount_orig) - num(rec.amount_orig)), line: num(ld.amount_orig) }
+            : null,
+        )
+      } else {
+        setBankLine(null)
+        setLineEntry(null)
+      }
       setReportText(tx.data ?? '')
       setAttachments(rec.attachments ?? [])
       rateTouched.current = true
@@ -295,6 +330,8 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     setFillReq(null)
     setFillApplied(false)
     setRequesting(false)
+    setOthers([])
+    setLineEntry(null)
     if (receiptId) {
       void load(receiptId)
       return
@@ -342,6 +379,9 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     }
     rateTouched.current = false
     setAttachments([])
+    // 日记账里分了几种业务带过来的（37）：不是回款的那几种放在「其他业务」里
+    if (prefill?.line_id && prefill.others?.length)
+      setOthers(prefill.others.map((o) => newPart({ module: o.module, counterparty: o.counterparty ?? undefined, summary: o.summary ?? undefined, amount: o.amount })))
     form.setFieldsValue({
       account_id: prefill?.account_id,
       receipt_date: dayjs(prefill?.receipt_date ?? todayAccra()),
@@ -399,6 +439,13 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       if (!rateTouched.current) form.setFieldValue('fx_rate', r)
     })
   }, [open, currency, isUsd, receiptDate, form])
+
+  // 从流水新录的（37）：到账金额 = 流水 − 其他业务（放在“打开时”那段后面，打开时先预填、再按其他业务算）
+  useEffect(() => {
+    if (!open || !fromLine) return
+    const v = round2(lineAmount - othersTotal)
+    form.setFieldValue('amount_orig', v > 0 ? v : null)
+  }, [open, fromLine, lineAmount, othersTotal, form])
 
   const claimedTotal = useMemo(() => round2(claims.reduce((s, c) => s + num(c.amount_orig), 0)), [claims])
   const remaining = round2(amount - claimedTotal)
@@ -519,6 +566,19 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
 
   /** 保存。accept：采用业务员填的（财务请他填的那条记录）——拆分按 rows 存，那条记录标为已通过 */
   const save = async (opts?: { rows?: ClaimDraft[]; accept?: Submission }): Promise<boolean> => {
+    // 流水里不是回款的几种业务（37）：空行不算；每种都要选业务模块、填金额，回款还得剩下钱
+    const extra = fromLine ? others.filter((o) => o.module || o.counterparty?.trim() || o.summary?.trim() || Number(o.amount) > 0) : []
+    if (extra.length) {
+      const bad = extra.findIndex((o) => !o.module || !(Number(o.amount) > 0))
+      if (bad >= 0) {
+        message.error(t('其他业务第 {n} 种：请选业务模块、填金额', { n: bad + 1 }))
+        return false
+      }
+      if (partsTotal(extra) >= lineAmount - 0.001) {
+        message.error(t('其他业务加起来 {a}，流水只有 {b}，回款没有钱了。整条都不是回款的，请到日记账里「填收支」。', { a: money(partsTotal(extra)), b: money(lineAmount) }))
+        return false
+      }
+    }
     let v: FormValues
     try {
       v = await form.validateFields()
@@ -563,7 +623,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       salesperson_id: r.vehicle_id ? null : (r.salesperson_id ?? null),
     }))
     setSaving(true)
-    const { data, error } = await supabase.rpc('save_receipt', { p_receipt, p_claims: p_claims as Json })
+    // 流水里还有别的业务（37）：到账和那一笔收入一起存（一起成功、一起失败）
+    const { data, error } = extra.length
+      ? await supabase.rpc('save_receipt_with_parts', { p_receipt, p_claims: p_claims as Json, p_entry: othersEntry(extra, isUsd ? null : (v.fx_rate ?? null)) })
+      : await supabase.rpc('save_receipt', { p_receipt, p_claims: p_claims as Json })
     setSaving(false)
     if (error) {
       message.error((review ? t('通过失败：') : opts?.accept ? t('采用失败：') : t('保存失败：')) + errorText(error))
@@ -582,6 +645,10 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
       aiSession.markSaved(aiIndex)
       setAiIndex(null)
     }
+    if (extra.length) {
+      setOthers([])
+      notifyJournalChanged()
+    }
     setChanged(true)
     // 到账的状态、进度、待办都可能变了（新录的开始审批、改了关键内容重新审批）
     notifySubmissionsChanged()
@@ -595,7 +662,19 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
     else if (!currentId) message.success(pending ? t('已保存，等{name}审批，批完才算到账', { name }) : t('已保存，报款文字在下面'))
     else if (pending) message.success(wasApproved ? t('已保存，这笔到账回到审批中，等{name}审批', { name }) : t('已保存，等{name}审批', { name }))
     else message.success(t('已保存'))
+    if (extra.length) message.info(t('流水里的{mods}也记进了银行日记账', { mods: [...new Set(extra.map((o) => t(o.module ?? '')))].join(listSep()) }))
     return true
+  }
+
+  /** 流水里不是回款的几种业务 → save_receipt_with_parts 的 p_entry（37）：一种就记业务模块、客户、摘要；几种就带 parts */
+  const othersEntry = (rows: PartDraft[], fx: number | null): Json => {
+    const sums = rows.map((r) => r.summary?.trim()).filter((x): x is string => !!x)
+    const summary = prefill?.others_summary?.trim() || (sums.length ? sums.join('；') : null)
+    if (rows.length === 1) {
+      const [o] = partsPayload(rows)
+      return { module: o.module, counterparty: o.counterparty, summary: o.summary ?? summary, fx_rate: fx }
+    }
+    return { parts: partsPayload(rows), summary, fx_rate: fx }
   }
 
   /** 到账的审批动作：通过这一级 / 退回 / 重新提交（receipt_action） */
@@ -1341,14 +1420,35 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                       cur: bankLine.currency ?? currency,
                       amt: money(bankLine.amount_orig ?? 0),
                     })
-                  : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
+                  : others.length
+                    ? t('这笔是从银行流水生成的：账户、日期按银行为准；到账金额 = 流水 {cur} {line} − 下面的其他业务 {other}。保存后到账和其他业务一起配上这条流水。', {
+                        cur: currency,
+                        line: money(lineAmount),
+                        other: money(othersTotal),
+                      })
+                    : t('这笔是从银行流水生成的：账户、日期、金额按银行为准，不能改；保存后会自动和那条流水配对。')
             }
+          />
+        )}
+        {currentId && lineEntry && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title={t('同一条银行流水 {cur} {line} 里还有 {cur} {amt} 是「{module}」（{no}），和这笔到账一起记在银行日记账的同一行。', {
+              cur: bankLine?.currency ?? currency,
+              line: money(lineEntry.line),
+              amt: money(lineEntry.amount),
+              module: t(lineEntry.module),
+              no: lineEntry.no,
+            })}
+            description={t('到「银行对账」取消这笔到账的配对时，那一笔会一起删掉。')}
           />
         )}
         {AI_FILL_ENABLED && isAdmin && !currentId && !receiptId && !review && !submission && (
           <AiFill
             attachments={attachments}
-            lockedAmount={prefill?.line_id ? (prefill.amount_orig ?? null) : null}
+            lockedAmount={prefill?.line_id ? (amount > 0 ? amount : (prefill.amount_orig ?? null)) : null}
             onAttach={(p) => {
               setAttachments((a) => [...a, ...p])
               setDirty(true)
@@ -1379,6 +1479,7 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
                   name="amount_orig"
                   label={currency ? t('到账金额（{cur}）', { cur: currency }) : t('到账金额')}
                   rules={[{ required: true, message: t('请填金额') }]}
+                  extra={fromLine && othersTotal > 0 ? t('流水 {line} − 其他业务 {other}', { line: money(lineAmount), other: money(othersTotal) }) : undefined}
                 >
                   <InputNumber min={0.01} precision={2} style={{ width: '100%' }} disabled={bankLocked || readOnly} />
                 </Form.Item>
@@ -1445,6 +1546,58 @@ export default function ReceiptEditor({ open, receiptId, prefill, submission, on
             </div>
           )}
         </Card>
+
+        {fromLine &&
+          (others.length > 0 ? (
+            <Card
+              size="small"
+              className="others-card"
+              title={t('这条流水里的其他业务（不是回款）')}
+              style={{ marginBottom: 12 }}
+              extra={
+                <span className={othersTotal >= lineAmount ? 'text-danger' : 'hint'}>
+                  {t('流水 {cur} {line} = 回款 {rcpt} + 其他 {other}', {
+                    cur: currency,
+                    line: money(lineAmount),
+                    rcpt: money(Math.max(round2(lineAmount - othersTotal), 0)),
+                    other: money(othersTotal),
+                  })}
+                </span>
+              }
+            >
+              <PartsEditor
+                rows={others}
+                onChange={(r) => {
+                  setOthers(r)
+                  setDirty(true)
+                }}
+                modules={moduleOptions('in')}
+                currency={currency}
+                readOnly={!canOthers}
+                counterparties={cpOptions}
+                minRows={0}
+              />
+              <div className="hint" style={{ marginTop: 6 }}>
+                {t('不是车款的钱（代收代付、其他收入……）不用选大架号，跟着到账一起保存，记进银行日记账；回款那部分在下面拆到车。')}
+              </div>
+            </Card>
+          ) : (
+            canOthers && (
+              <Button
+                type="dashed"
+                block
+                icon={<PlusOutlined />}
+                className="others-toggle"
+                style={{ marginBottom: 12 }}
+                onClick={() => {
+                  setOthers([newPart()])
+                  setDirty(true)
+                }}
+              >
+                {t('这条流水里还有不是回款的钱（代收代付、其他收入……）')}
+              </Button>
+            )
+          ))}
 
         <Card
           size="small"

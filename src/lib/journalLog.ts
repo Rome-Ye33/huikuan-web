@@ -2,6 +2,8 @@
 // 数据库的触发器自动记，绕不过去：记一笔、改（改了哪几项、从什么改成什么）、删；
 // 银行流水填上 / 回到待填、配上到账 / 取消配对、忽略 / 取消忽略、删掉；导流水、改期初也记。
 // 同一次操作（一个事务）的几行 txid 一样（比如一笔互转两边各一行），页面上合成一条。
+// 一笔分了几种业务的（37）：记了 / 删了说每一种的业务模块；改了几种业务说成「关税 1,000.00、手续费 510.00」；
+//   一条流水既录成到账、又把剩下的钱填成一笔收入（同一次操作），“填成了”那句写剩下多少。
 import type { Database, Json } from './database.types'
 import { money } from './format'
 import { currentLang } from './i18n'
@@ -57,18 +59,38 @@ const FIELD_LABEL: Record<string, string> = {
   cheque_no: '支票号',
   note: '备注',
   attachments: '凭证',
+  parts: '分几种业务',
 }
 
 /** 冒号、分号：中文用全角，英文用半角 */
 const punct = () => (currentLang() === 'en' ? { colon: ': ', semi: '; ' } : { colon: '：', semi: '；' })
+/** 几样东西并列：中文顿号，英文逗号 */
+export const listSep = () => (currentLang() === 'en' ? ', ' : '、')
 
 const str = (v: Json | undefined): string => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
+
+/** 记下来的几种业务（37）：[{module, amount, …}]，两种以上才算 */
+const partsOf = (v: Json | undefined): { module: string; amount: number }[] =>
+  Array.isArray(v) && v.length >= 2
+    ? v
+        .filter((x): x is { [k: string]: Json | undefined } => !!x && typeof x === 'object' && !Array.isArray(x))
+        .map((x) => ({ module: str(x.module), amount: Number(x.amount ?? 0) }))
+    : []
+
+/** 一笔的业务模块：分了几种的说每一种（不重复） */
+const modulesText = (d: Detail, t: Tr): string => {
+  const ps = partsOf(d.parts)
+  return ps.length ? [...new Set(ps.map((p) => t(p.module)))].join(listSep()) : t(str(d.module))
+}
+
+/** describeGroup 给 describeLog 的补充：填流水时这一笔的业务模块（分了几种的每一种）、和到账一起填时剩下的钱 */
+type FillCtx = { module?: string; rest?: number }
 
 /**
  * 一行记录说成一句话（界面语言）。accountName：账户 id → 名字（改账户时只记了 id）；
  * noAccount：“改了…”不说是哪个账户（一笔互转两边改了同样的内容，合成一句时用）
  */
-export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => string, noAccount = false): string {
+export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => string, noAccount = false, ctx?: FillCtx): string {
   const d = (r.detail ?? {}) as Detail
   const no = r.doc_no ?? ''
   const cur = r.currency ?? ''
@@ -87,6 +109,11 @@ export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => s
       amt: money(Math.abs(signed)),
     })
   const val = (f: string, v: Json | undefined): string => {
+    // 几种业务（37）：空的就是没分
+    if (f === 'parts') {
+      const ps = partsOf(v)
+      return ps.length ? ps.map((p) => `${t(p.module)} ${money(p.amount)}`).join(listSep()) : t('不分')
+    }
     if (v === null || v === undefined || v === '') return t('空')
     if (f === 'amount') return money(v)
     if (f === 'account_id') return accountName(Number(v)) || String(v)
@@ -98,7 +125,7 @@ export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => s
     case 'create':
       if (d.fee) return t('记了手续费：{what}', { what: entryWhat() })
       if (d.transfer) return d.direction === 'in' ? t('互转 {no} 转入：{what}', { no, what: entryWhat() }) : t('记了互转 {no}，转出：{what}', { no, what: entryWhat() })
-      return t('记了 {no}：{what}，{module}', { no, what: entryWhat(), module: t(str(d.module)) })
+      return t('记了 {no}：{what}，{module}', { no, what: entryWhat(), module: modulesText(d, t) })
     case 'update': {
       const list = Array.isArray(d.changes) ? (d.changes as { f?: string; from?: Json; to?: Json }[]) : []
       const { colon, semi } = punct()
@@ -106,9 +133,13 @@ export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => s
       return noAccount ? t('改了 {no}：{changes}', { no, changes }) : t('改了 {no}（{account}）：{changes}', { no, account: acct, changes })
     }
     case 'delete':
-      return t('删了 {no}：{what}，{module}', { no, what: entryWhat(), module: t(str(d.module)) })
+      return t('删了 {no}：{what}，{module}', { no, what: entryWhat(), module: modulesText(d, t) })
     case 'fill':
-      return d.auto ? t('{line}自动对上了 {no}', { line: lineWhat(), no }) : t('{line}填成了「{module}」（{no}）', { line: lineWhat(), module: t(str(d.module)), no })
+      if (d.auto) return t('{line}自动对上了 {no}', { line: lineWhat(), no })
+      // 和到账一起填的（37）：到账以外剩下的钱填成了这一笔
+      if (ctx?.rest != null)
+        return t('{line}里到账以外的 {cur} {amt} 填成了「{module}」（{no}）', { line: lineWhat(), cur, amt: money(ctx.rest), module: ctx.module ?? t(str(d.module)), no })
+      return t('{line}填成了「{module}」（{no}）', { line: lineWhat(), module: ctx?.module ?? t(str(d.module)), no })
     case 'unfill':
       return t('{line}回到待填（{no} 删了）', { line: lineWhat(), no })
     case 'match':
@@ -161,9 +192,22 @@ export function describeGroup(g: LogGroup, t: Tr, accountName: (id: number) => s
   const plain = (r: JournalLog) => describeLog(r, t, accountName, true)
   const updates = g.rows.filter((r) => r.action === 'update').map(plain)
   const twice = new Set(updates.filter((s, i) => updates.indexOf(s) !== i))
+  // 填流水的那一笔（同一次记的）：分了几种业务的说每一种；同一次还配上了到账的（37），说填的是剩下的多少钱
+  const created = new Map(g.rows.filter((r) => r.action === 'create').map((r) => [r.entry_id, (r.detail ?? {}) as Detail]))
+  const matched = new Set(g.rows.filter((r) => r.action === 'match').map((r) => r.line_id))
+  const fillCtx = (r: JournalLog): FillCtx | undefined => {
+    const c = created.get(r.entry_id)
+    if (!c) return undefined
+    return { module: modulesText(c, t), rest: matched.has(r.line_id) ? Number(c.amount ?? 0) : undefined }
+  }
   for (const r of g.rows) {
     if (r.action === 'create' && filled.has(r.entry_id)) continue
-    const s = r.action === 'update' && twice.has(plain(r)) ? plain(r) : describeLog(r, t, accountName)
+    const s =
+      r.action === 'update' && twice.has(plain(r))
+        ? plain(r)
+        : r.action === 'fill'
+          ? describeLog(r, t, accountName, false, fillCtx(r))
+          : describeLog(r, t, accountName)
     if (seen.has(s)) continue
     seen.add(s)
     out.push(s)
