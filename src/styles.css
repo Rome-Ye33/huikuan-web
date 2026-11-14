@@ -1108,6 +1108,14 @@ html[lang='en'] .logo-name {
 .journal-log-table .log-line + .log-line {
   margin-top: 2px;
 }
+/* 一次操作的话很多时这一行很高：时间、操作人放在顶上，不要跑到正中间 */
+.journal-log-table .ant-table-tbody > tr > td {
+  vertical-align: top;
+}
+.log-more.ant-btn {
+  height: auto;
+  padding: 2px 0 0;
+}
 .duty-note {
   margin-bottom: 8px;
 }

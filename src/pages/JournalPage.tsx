@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import CashEntryEditor from '../components/CashEntryEditor'
 import type { CashEntryPrefill } from '../components/CashEntryEditor'
+import LogLines from '../components/LogLines'
 import OpeningEditor from '../components/OpeningEditor'
 import PartsList from '../components/PartsList'
 import ReceiptEditor from '../components/ReceiptEditor'
@@ -1039,15 +1040,7 @@ function LogTab({ scope, version }: { scope: JournalScope; version: number }) {
         columns={[
           { title: t('时间'), width: 150, render: (_, g) => <span className="num">{dayjs(g.at).format('YYYY-MM-DD HH:mm')}</span> },
           { title: t('操作人'), width: 120, render: (_, g) => g.by || t('系统') },
-          {
-            title: t('做了什么'),
-            render: (_, g) =>
-              describeGroup(g, t, name).map((line, i) => (
-                <div key={i} className="log-line">
-                  {line}
-                </div>
-              )),
-          },
+          { title: t('做了什么'), render: (_, g) => <LogLines lines={describeGroup(g, t, name)} /> },
         ]}
       />
       <Typography.Paragraph type="secondary" className="journal-note">
