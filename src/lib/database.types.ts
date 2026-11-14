@@ -1066,6 +1066,7 @@ export type Database = {
           account_id: number | null
           action: string
           at: string
+          book: string
           by_user: string | null
           detail: Json
           doc_no: string | null
@@ -1078,6 +1079,7 @@ export type Database = {
           account_id?: number | null
           action: string
           at?: string
+          book: string
           by_user?: string | null
           detail?: Json
           doc_no?: string | null
@@ -1090,6 +1092,7 @@ export type Database = {
           account_id?: number | null
           action?: string
           at?: string
+          book?: string
           by_user?: string | null
           detail?: Json
           doc_no?: string | null
@@ -1800,10 +1803,10 @@ export type Database = {
       v_journal_log: {
         Row: {
           account_id: number | null
-          account_kind: string | null
           account_name: string | null
           action: string | null
           at: string | null
+          book: string | null
           by_name: string | null
           by_user: string | null
           currency: string | null

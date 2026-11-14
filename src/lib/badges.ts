@@ -43,6 +43,8 @@ let wantLines = 0
 const subs = new Set<(b: Badges) => void>()
 
 async function pull() {
+  // 同一次渲染里几个角标先后加入（菜单上的几个是一起的）：等它们都登记好要不要支票、流水的数字，再决定这一轮查哪些
+  await Promise.resolve()
   const withCheque = wantCheque > 0 && Date.now() - chequeAt >= CHEQUE_MS
   const withLines = wantLines > 0 && Date.now() - linesAt >= LINES_MS
   const [work, sub, alert, lines] = await Promise.all([
@@ -125,7 +127,14 @@ export function useBadges(enabled: boolean, cheques = false, lines = false): Bad
     if (cheques) wantCheque += 1
     if (lines) wantLines += 1
     const leave = join(setN)
-    if (first) refresh(0)
+    // 正在查的这一轮没带上支票、流水的数字（后打开的页面才要）：等它查完再取一次
+    if (first) {
+      if (running)
+        void running.then(() => {
+          if ((cheques && !chequeAt) || (lines && !linesAt)) refresh(0)
+        })
+      else refresh(0)
+    }
     return () => {
       leave()
       if (cheques) wantCheque -= 1

@@ -4,6 +4,7 @@
 // 同一次操作（一个事务）的几行 txid 一样（比如一笔互转两边各一行），页面上合成一条。
 import type { Database, Json } from './database.types'
 import { money } from './format'
+import { currentLang } from './i18n'
 import { supabase } from './supabase'
 
 export type JournalLog = Database['public']['Views']['v_journal_log']['Row']
@@ -58,6 +59,9 @@ const FIELD_LABEL: Record<string, string> = {
   attachments: '凭证',
 }
 
+/** 冒号、分号：中文用全角，英文用半角 */
+const punct = () => (currentLang() === 'en' ? { colon: ': ', semi: '; ' } : { colon: '：', semi: '；' })
+
 const str = (v: Json | undefined): string => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
 
 /**
@@ -97,9 +101,8 @@ export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => s
       return t('记了 {no}：{what}，{module}', { no, what: entryWhat(), module: t(str(d.module)) })
     case 'update': {
       const list = Array.isArray(d.changes) ? (d.changes as { f?: string; from?: Json; to?: Json }[]) : []
-      const changes = list
-        .map((c) => t('{field}：{from} → {to}', { field: t(FIELD_LABEL[c.f ?? ''] ?? c.f ?? ''), from: val(c.f ?? '', c.from), to: val(c.f ?? '', c.to) }))
-        .join('；')
+      const { colon, semi } = punct()
+      const changes = list.map((c) => `${t(FIELD_LABEL[c.f ?? ''] ?? c.f ?? '')}${colon}${val(c.f ?? '', c.from)} → ${val(c.f ?? '', c.to)}`).join(semi)
       return noAccount ? t('改了 {no}：{changes}', { no, changes }) : t('改了 {no}（{account}）：{changes}', { no, account: acct, changes })
     }
     case 'delete':
@@ -117,11 +120,11 @@ export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => s
     case 'unmatch':
       return t('{line}取消了和到账 {no} 的配对', { line: lineWhat(), no })
     case 'ignore':
-      return d.note ? t('忽略了{line}：{note}', { line: lineWhat(), note: t(str(d.note)) }) : t('忽略了{line}', { line: lineWhat() })
+      return d.note ? t('忽略了 {line}：{note}', { line: lineWhat(), note: t(str(d.note)) }) : t('忽略了 {line}', { line: lineWhat() })
     case 'unignore':
-      return t('取消忽略{line}', { line: lineWhat() })
+      return t('取消忽略 {line}', { line: lineWhat() })
     case 'remove':
-      return t('删了{line}', { line: lineWhat() })
+      return t('删了 {line}', { line: lineWhat() })
     case 'import': {
       const s = t('导入 {account} 的银行流水《{file}》：新 {n} 条（付出去的 {out} 条），重复的 {skip} 条没导，自动对上 {matched} 条', {
         account: acct,
@@ -141,7 +144,7 @@ export function describeLog(r: JournalLog, t: Tr, accountName: (id: number) => s
       const parts = list.map((c) =>
         t('{account} 期初 {from} → {to}', { account: accountName(Number(c.account_id)), from: val('amount', c.from), to: val('amount', c.to) }),
       )
-      return [head, ...parts].join('；')
+      return [head, ...parts].join(punct().semi)
     }
     default:
       return r.action ?? ''

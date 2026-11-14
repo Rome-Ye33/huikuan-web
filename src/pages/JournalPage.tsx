@@ -327,11 +327,35 @@ function SummaryTab({
   const span = (r: SumRow, n: number) => (r.type === 'group' ? { colSpan: n } : {})
   const hide = (r: SumRow) => (r.type === 'group' ? { colSpan: 0 } : {})
 
+  const bankColumns: ColumnsType<SumRow> =
+    scope === 'bank'
+      ? [
+          {
+            title: t('银行余额'),
+            width: 150,
+            align: 'right',
+            onCell: hide,
+            render: (_, r) =>
+              r.type === 'acct' && r.m.bank_balance != null ? (
+                <span className="num">
+                  {money(r.m.bank_balance)}
+                  <div className="hint">{t('流水到 {date}', { date: r.m.bank_date?.slice(5) ?? '' })}</div>
+                </span>
+              ) : null,
+          },
+          {
+            title: t('流水'),
+            width: 120,
+            onCell: hide,
+            render: (_, r) => (r.type === 'acct' ? <StatusTag status={r.status} m={r.m} /> : null),
+          },
+        ]
+      : []
   const columns: ColumnsType<SumRow> = [
     {
       title: t('币别'),
       width: 64,
-      onCell: (r) => span(r, 9),
+      onCell: (r) => span(r, 7 + bankColumns.length),
       render: (_, r) =>
         r.type === 'group' ? <span className="group-title">{t(r.label)}</span> : r.type === 'acct' ? t(CURRENCY_ZH[r.a.currency] ?? r.a.currency) : null,
     },
@@ -394,25 +418,8 @@ function SummaryTab({
           <b className="num">{money(r.closing)}</b>
         ) : null,
     },
-    {
-      title: t('银行余额'),
-      width: 150,
-      align: 'right',
-      onCell: hide,
-      render: (_, r) =>
-        r.type === 'acct' && r.m.bank_balance != null ? (
-          <span className="num">
-            {money(r.m.bank_balance)}
-            <div className="hint">{t('流水到 {date}', { date: r.m.bank_date?.slice(5) ?? '' })}</div>
-          </span>
-        ) : null,
-    },
-    {
-      title: t('流水'),
-      width: 120,
-      onCell: hide,
-      render: (_, r) => (r.type === 'acct' ? <StatusTag status={r.status} m={r.m} /> : null),
-    },
+    // 银行余额、流水填了没有：只有银行日记账有（现金账户没有流水）
+    ...bankColumns,
     { title: '', onCell: hide, render: () => null },
   ]
 
@@ -900,8 +907,9 @@ function LogTab({ scope, version }: { scope: JournalScope; version: number }) {
       .lte('at', range[1].endOf('day').toISOString())
       .order('id', { ascending: false })
       .limit(LOG_LIMIT)
-    // 期初（不分账户）两本都出
-    q = accountId ? q.eq('account_id', accountId) : q.or(scope === 'bank' ? 'account_kind.eq.bank,account_id.is.null' : 'account_kind.neq.bank,account_id.is.null')
+    // 每一行记着是哪本日记账的（期初两本各记一行）
+    q = q.eq('book', scope)
+    if (accountId) q = q.eq('account_id', accountId)
     const k = LOG_KINDS.find((x) => x.key === kind)
     if (k) q = q.in('action', k.actions)
     const { data } = await q
