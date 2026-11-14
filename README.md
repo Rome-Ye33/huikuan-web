@@ -1,4 +1,4 @@
-# 销售管理（前端）
+# 业财管理（前端）
 
 财务每天录到账、拆分到车、生成报款文字；每周或每月导银行流水自动对账。后端是 Supabase 项目 `huikuan-system`（伦敦），表、视图、函数和权限都在数据库里，SQL 文件在项目资料 `supabase/` 目录。
 
@@ -26,7 +26,7 @@
 
 ## 外观
 
-- 系统名“销售管理 / Sales Management”：中文界面在名字下面带一行英文，英文界面只写英文；浏览器标签也跟着语言（`销售管理 · Sales Management` / `Sales Management`）。图标用 FET AUTO 的圆环标志（Rome 2026-11-11 给的公司 logo，`src/assets/fet-mark.jpg`，放在白色圆角方块里），浏览器标签上的 `public/favicon.png` 和手机主屏幕的 `public/apple-touch-icon.png` 是同一个图；登录页左边放完整的 FET AUTO logo，下面只列模块名，不写说明。
+- 系统名“业财管理 / Sales & Finance”（2026-11-14 从“销售管理”改过来：菜单里到账、日记账、支票、对账这些财务功能多了）：中文界面在名字下面带一行英文（SALES & FINANCE），英文界面只写英文；浏览器标签也跟着语言（`业财管理 · Sales & Finance` / `Sales & Finance`）。图标用 FET AUTO 的圆环标志（Rome 2026-11-11 给的公司 logo，`src/assets/fet-mark.jpg`，放在白色圆角方块里），浏览器标签上的 `public/favicon.png` 和手机主屏幕的 `public/apple-touch-icon.png` 是同一个图；登录页左边放完整的 FET AUTO logo，下面只列模块名，不写说明。
 - 配色：深蓝侧边栏、主色 `#2563eb`、浅灰底上一张白色的页面。antd 主题在 `src/main.tsx`，其余在 `src/styles.css`，两边用同一套颜色。
 - 登录页：宽屏左边是系统名和主要功能，右边登录；窄屏只有登录框，系统名在上面。
 - 侧边栏：中文 216 宽，英文 248 宽（英文菜单字长）；菜单上的数字总是看得见，地方不够时文字出省略号。宽屏往下滚时菜单不动；窄屏（992 以下）菜单收起，点左上角按钮打开，盖在页面上面，点旁边灰色的地方或点菜单项收起。
