@@ -13,7 +13,7 @@
 //   SMTP_PASS   这个邮箱的应用专用密码（Gmail：开了两步验证以后在“应用专用密码”里生成的 16 位，中间的空格有没有都行）
 //   SMTP_HOST、SMTP_PORT（可选，默认 smtp.gmail.com、465；用公司邮箱时按邮箱服务商给的填，比如腾讯企业邮 smtp.exmail.qq.com、465）
 //   MAIL_FROM_NAME（可选，发件人名字，默认“业财管理 Sales & Finance”）
-//   SITE_URL（可选，邮件里按钮打开的网址，默认 https://rome-ye33.github.io/huikuan-web/）
+//   SITE_URL（可选，邮件里按钮打开的网址，默认 https://rome-ye33.github.io/fetpower/）
 // 部署时 verify_jwt = false：flush、check 用口令校验，test 自己校验登录。服务端密钥只在 Supabase 服务器上用，不会进浏览器。
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import nodemailer from 'npm:nodemailer@7'
@@ -56,7 +56,7 @@ const SMTP_PORT = Number(Deno.env.get('SMTP_PORT')) || 465
 const SMTP_USER = (Deno.env.get('SMTP_USER') ?? '').trim()
 const SMTP_PASS = (Deno.env.get('SMTP_PASS') ?? '').replace(/\s+/g, '') // Gmail 显示的应用专用密码中间有空格
 const FROM_NAME = (Deno.env.get('MAIL_FROM_NAME') || '业财管理 Sales & Finance').trim()
-const SITE = (Deno.env.get('SITE_URL') || 'https://rome-ye33.github.io/huikuan-web/').trim().replace(/\/*$/, '/')
+const SITE = (Deno.env.get('SITE_URL') || 'https://rome-ye33.github.io/fetpower/').trim().replace(/\/*$/, '/')
 const BATCH = 20 // 一批 20 个人（一人一封）
 const MAX_ROUNDS = 3 // 一次最多 3 批（60 封），剩下的等下一分钟的定时任务
 const TIME_BUDGET = 60_000 // 发了一分钟还没发完的，也等下一分钟

@@ -28,7 +28,7 @@ export async function sendTestEmail(): Promise<string> {
 }
 
 // ---------------------------------------------------------------- 邮件里的按钮
-// 按钮打开 https://…/huikuan-web/?go=v12（提成单 12）、?go=s34（到账提交 34）、?go=r56（到账 56）、?go=wb（工作台）。
+// 按钮打开 https://…/fetpower/?go=v12（提成单 12）、?go=s34（到账提交 34）、?go=r56（到账 56）、?go=wb（工作台）。
 // 页面一打开就记下来、把地址栏里的 ?go= 去掉；没登录的登录以后再打开。
 const GO_KEY = 'go'
 const GO_RE = /^(?:[vsr]\d{1,12}|wb)$/
