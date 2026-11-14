@@ -1180,10 +1180,11 @@ html[lang='en'] .logo-name {
   border-radius: 6px;
 }
 .parts-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 6px;
-  padding: 3px 0;
+  gap: 1px 6px;
+  padding: 4px 0;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -1201,12 +1202,19 @@ html[lang='en'] .logo-name {
   font-size: 11px;
   line-height: 18px;
 }
-.parts-item-text {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  gap: 0 6px;
+.parts-who {
   min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 第二行小字：摘要、大架号、单号 */
+.parts-what {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2 / 4;
+  gap: 0 8px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 11.5px;
   overflow-wrap: anywhere;
 }
 .parts-vin {
