@@ -1112,6 +1112,126 @@ html[lang='en'] .logo-name {
   margin-bottom: 8px;
 }
 
+/* ---------- 一笔里分几种业务（37） ---------- */
+.parts-toggle {
+  margin: -6px 0 12px;
+  padding-inline-start: 0;
+}
+.parts-wrap {
+  margin-bottom: 16px;
+  padding: 10px 12px 8px;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 8px;
+}
+.parts-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 8px;
+}
+.parts-title .hint {
+  font-size: 12px;
+}
+.parts-title .ant-btn {
+  margin-inline-start: auto;
+}
+.parts-head {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.parts-row {
+  margin-bottom: 8px;
+}
+.parts-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px 12px;
+}
+.parts-car-tip {
+  margin-top: 10px;
+}
+@media (max-width: 575px) {
+  .parts-head {
+    display: none;
+  }
+  .parts-row {
+    padding-bottom: 4px;
+    border-bottom: 1px dashed #e2e8f0;
+  }
+  .parts-row > .ant-col {
+    margin-bottom: 6px;
+  }
+}
+/* 日记账里一行分了几种业务：摘要下面点开看每一种 */
+.parts-link.ant-btn {
+  height: auto;
+  padding: 0;
+  font-size: 12px;
+}
+.parts-list {
+  margin-top: 4px;
+  padding: 2px 8px;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 6px;
+}
+.parts-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1px 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.parts-item + .parts-item {
+  border-top: 1px dashed #e9edf3;
+}
+.parts-item.clickable {
+  cursor: pointer;
+}
+.parts-item.clickable:hover {
+  background: #eef4ff;
+}
+.parts-item .ant-tag {
+  margin-inline-end: 0;
+  font-size: 11px;
+  line-height: 18px;
+}
+.parts-who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 第二行小字：摘要、大架号、单号 */
+.parts-what {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2 / 4;
+  gap: 0 8px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.parts-vin {
+  color: #1d4ed8;
+}
+.parts-item-amt {
+  white-space: nowrap;
+  font-weight: 600;
+}
+.parts-left {
+  font-style: italic;
+}
+/* 到账录入：这条流水里还有不是回款的钱 */
+.others-card .ant-card-head {
+  background: #f6ffed;
+}
+
 /* 表格里整段显示的备注：放不下就换行，不截断 */
 .ant-table-cell.wrap-note {
   white-space: normal;

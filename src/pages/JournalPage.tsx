@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom'
 import CashEntryEditor from '../components/CashEntryEditor'
 import type { CashEntryPrefill } from '../components/CashEntryEditor'
 import OpeningEditor from '../components/OpeningEditor'
+import PartsList from '../components/PartsList'
 import ReceiptEditor from '../components/ReceiptEditor'
 import type { ReceiptPrefill } from '../components/ReceiptEditor'
 import { useAuth } from '../lib/auth'
@@ -23,13 +24,15 @@ import {
   groupRank,
   isCashLike,
   JOURNAL_MODULES,
+  lineModules,
   moduleColor,
   monthRange,
+  parseParts,
   SCOPE_PERM,
   SCOPE_TITLE,
   scopeOf,
 } from '../lib/journal'
-import type { AccountMonth, AcctStatus, FillHow, JournalLine, JournalScope, LedgerRow } from '../lib/journal'
+import type { AccountMonth, AcctStatus, FillHow, JournalLine, JournalScope, LedgerRow, Part } from '../lib/journal'
 import { describeGroup, groupLogs, LOG_KINDS } from '../lib/journalLog'
 import type { JournalLog, LogGroup } from '../lib/journalLog'
 import { accountOptions, useRefData } from '../lib/refdata'
@@ -44,6 +47,8 @@ import type { Account } from '../lib/supabase'
 // 账户余额 = 解款表的“银行主页 / 现金主页”：每个账户这个月的月初余额、收、付、月末余额，流水填完了没有。
 // 日记账明细 = 一个账户一段时间里的每一笔，每行带余额，每天一行小计。
 // 修改记录 = 这本日记账里谁、什么时候、做了什么（数据库触发器记的）。
+// 一行里分了几种业务的（数据库 37：付款分关税 + 手续费、收款里有车款也有代收代付……）：业务模块写每一种，
+//   摘要下面点「分 N 种业务」看每种的客户、摘要、大架号、金额，点一种打开它那一张（到账 / 收支）。
 
 type Editor = { open: boolean; id: number | null; prefill: CashEntryPrefill | null }
 
@@ -76,6 +81,11 @@ export default function JournalPage({ scope }: { scope: JournalScope }) {
     const eid = l.entry_id ?? (l.source === 'entry' ? l.source_id : null)
     if (rid) setReceipt({ open: true, id: rid, prefill: null })
     else if (eid) setEditor({ open: true, id: eid, prefill: null })
+  }
+  // 点分开的一种业务：打开它所在的那一张（37）
+  const openPart = (p: Part) => {
+    if (p.receipt_id) setReceipt({ open: true, id: p.receipt_id, prefill: null })
+    else if (p.entry_id) setEditor({ open: true, id: p.entry_id, prefill: null })
   }
   // 填一条待填的流水：日期、账户、金额都照银行的
   const fill = (l: JournalLine, how: FillHow) => {
@@ -140,7 +150,18 @@ export default function JournalPage({ scope }: { scope: JournalScope }) {
           {
             key: 'ledger',
             label: t('日记账明细'),
-            children: <LedgerTab scope={scope} month={month} accountId={accountId} onAccount={setAccountId} version={version} onOpen={openLine} onFill={fill} />,
+            children: (
+              <LedgerTab
+                scope={scope}
+                month={month}
+                accountId={accountId}
+                onAccount={setAccountId}
+                version={version}
+                onOpen={openLine}
+                onOpenPart={openPart}
+                onFill={fill}
+              />
+            ),
           },
           {
             key: 'log',
@@ -157,6 +178,11 @@ export default function JournalPage({ scope }: { scope: JournalScope }) {
         onClose={(changed) => {
           setEditor({ open: false, id: null, prefill: null })
           if (changed) setVersion((x) => x + 1)
+        }}
+        onReceipt={(r) => {
+          // 分几种业务里有设备回款：转到到账录入选大架号（别的几种跟着到账一起存）；或打开和这一笔一起填的到账
+          setEditor({ open: false, id: null, prefill: null })
+          setReceipt({ open: true, id: r.id ?? null, prefill: r.prefill ?? null })
         }}
       />
       <ReceiptEditor
@@ -518,6 +544,7 @@ function LedgerTab({
   onAccount,
   version,
   onOpen,
+  onOpenPart,
   onFill,
 }: {
   scope: JournalScope
@@ -526,12 +553,15 @@ function LedgerTab({
   onAccount: (id: number | undefined) => void
   version: number
   onOpen: (l: JournalLine) => void
+  onOpenPart: (p: Part) => void
   onFill: (l: JournalLine, how: FillHow) => void
 }) {
   const t = useT()
   const { canEdit, mine } = useAuth()
   const jEdit = canEdit('journal')
   const rxEdit = canEdit('receipts')
+  /** 录成到账要配上流水：还要“银行对账”可编辑 */
+  const rcEdit = canEdit('reconcile')
   const { accounts: all, accountById } = useRefData()
   const accounts = useMemo(() => all.filter((a) => scopeOf(a) === scope), [all, scope])
   const [range, setRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>(() => {
@@ -546,7 +576,17 @@ function LedgerTab({
   const [onlyTodo, setOnlyTodo] = useState(false)
   const [q, setQ] = useState('')
   const [daySub, setDaySub] = useState(true)
+  /** 分了几种业务的行：点开了哪几行；allParts = 全部展开 */
+  const [openParts, setOpenParts] = useState<Set<string>>(new Set())
+  const [allParts, setAllParts] = useState(false)
   const acct = accountId ? accountById.get(accountId) : undefined
+  const toggleParts = (key: string) =>
+    setOpenParts((s) => {
+      const next = new Set(s)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
 
   // 从“账户余额”点进来换了月份
   useEffect(() => {
@@ -585,12 +625,21 @@ function LedgerTab({
   // 业务模块、待填、搜索只是筛着看：一筛余额就不连续了，所以筛的时候不显示余额和小计
   const s = cleanSearch(q).toLowerCase()
   const filtering = modules.length > 0 || onlyTodo || !!s
+  // 分了几种业务的：里面有选的业务模块就算；搜索也搜每种的客户、摘要、大架号、金额
+  const partsText = (l: JournalLine) =>
+    parseParts(l.parts)
+      .map((p) => `${p.counterparty ?? ''} ${p.summary ?? ''} ${p.vin ?? ''} ${p.amount}`)
+      .join(' ')
   const shown = lines.filter(
     (l) =>
-      (!modules.length || modules.includes(l.module ?? '')) &&
+      (!modules.length || lineModules(l).some((m) => modules.includes(m))) &&
       (!onlyTodo || l.fill_status === '待填') &&
-      (!s || `${l.doc_no ?? ''} ${l.summary ?? ''} ${l.bank_summary ?? ''} ${l.counterparty ?? ''} ${l.amount_in ?? ''} ${l.amount_out ?? ''}`.toLowerCase().includes(s)),
+      (!s ||
+        `${l.doc_no ?? ''} ${l.summary ?? ''} ${l.bank_summary ?? ''} ${l.counterparty ?? ''} ${l.amount_in ?? ''} ${l.amount_out ?? ''} ${partsText(l)}`
+          .toLowerCase()
+          .includes(s)),
   )
+  const anyParts = lines.some((l) => l.parts)
   const todoN = lines.filter((l) => l.fill_status === '待填').length
   const ledger: LedgerRow[] = buildLedger(shown, acct && head && !filtering ? Number(head.opening) : null, range[0].format('YYYY-MM-DD'), daySub && !filtering)
   const inSum = round2(shown.reduce((x, l) => x + Number(l.amount_in ?? 0), 0))
@@ -612,7 +661,7 @@ function LedgerTab({
     )
     const list = l.amount_out
       ? [jEdit && btn('out', t('填付款'), true), jEdit && btn('transfer', t('互转'))]
-      : [rxEdit && btn('receipt', t('录成到账'), true), jEdit && btn('in', t('其他收入')), jEdit && btn('transfer', t('互转'))]
+      : [rxEdit && rcEdit && btn('receipt', t('录成到账'), true), jEdit && btn('in', t('其他收入')), jEdit && btn('transfer', t('互转'))]
     return <span className="fill-buttons">{list.filter(Boolean)}</span>
   }
 
@@ -648,7 +697,11 @@ function LedgerTab({
           )
         return (
           <>
-            {l.module && <Tag color={moduleColor(l.module)}>{t(l.module)}</Tag>}
+            {lineModules(l).map((m) => (
+              <Tag key={m} color={moduleColor(m)} className="tag-under">
+                {t(m)}
+              </Tag>
+            ))}
             {l.fill_status === '审批中' && (
               <Tooltip title={t('这条流水已经录成到账，到账还在审批')}>
                 <Tag color={FILL_COLOR['审批中']} className="tag-under">
@@ -691,11 +744,36 @@ function LedgerTab({
             </div>
           )
         const tip = [l.summary, l.bank_summary && t('银行摘要：{text}', { text: l.bank_summary })].filter(Boolean).join('\n')
-        return l.summary || l.bank_summary ? (
-          <Tooltip title={<div className="pre-line">{tip}</div>} placement="topLeft" mouseEnterDelay={0.4}>
-            <div className="clamp2">{l.summary || <span className="hint">{l.bank_summary}</span>}</div>
-          </Tooltip>
-        ) : null
+        const text =
+          l.summary || l.bank_summary ? (
+            <Tooltip title={<div className="pre-line">{tip}</div>} placement="topLeft" mouseEnterDelay={0.4}>
+              <div className="clamp2">{l.summary || <span className="hint">{l.bank_summary}</span>}</div>
+            </Tooltip>
+          ) : null
+        // 分了几种业务（37）：点「分 N 种业务」看每一种
+        const ps = parseParts(l.parts)
+        if (!ps.length) return text
+        const key = l.key ?? ''
+        const open = allParts || openParts.has(key)
+        return (
+          <>
+            {text}
+            {!allParts && (
+              <Button
+                type="link"
+                size="small"
+                className="parts-link"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleParts(key)
+                }}
+              >
+                {open ? t('收起') : t('分 {n} 种业务', { n: ps.length })}
+              </Button>
+            )}
+            {open && <PartsList parts={ps} total={Number(l.amount_in ?? 0) || Number(l.amount_out ?? 0)} onOpen={onOpenPart} />}
+          </>
+        )
       },
     },
     {
@@ -786,6 +864,11 @@ function LedgerTab({
         <span className="switch-label">
           <Switch size="small" checked={daySub} onChange={setDaySub} /> {t('按日小计')}
         </span>
+        {anyParts && (
+          <span className="switch-label">
+            <Switch size="small" checked={allParts} onChange={setAllParts} /> {t('展开每种业务')}
+          </span>
+        )}
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('刷新')}
         </Button>
