@@ -896,3 +896,9 @@ html[lang='en'] .logo-name {
     height: var(--fit-h-print);
   }
 }
+
+/* 表格里整段显示的备注：放不下就换行，不截断 */
+.ant-table-cell.wrap-note {
+  white-space: normal;
+  word-break: break-word;
+}

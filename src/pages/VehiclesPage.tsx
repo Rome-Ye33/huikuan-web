@@ -553,8 +553,9 @@ function VehicleDrawer({
   }
 
   const v = vehicle
+  // 到账明细里的账户名和备注都可能很长（Rome 2026-11-14「这看不清啊」），所以抽屉开宽一点，这两列整段显示、不截断
   return (
-    <Drawer open={!!v} onClose={onClose} size={860} title={v ? `${v.vin} · ${v.model}` : ''} destroyOnHidden
+    <Drawer open={!!v} onClose={onClose} size={Math.min(1040, typeof window !== 'undefined' ? window.innerWidth : 1040)} title={v ? `${v.vin} · ${v.model}` : ''} destroyOnHidden
       extra={vxEdit && v ? <Button icon={<EditOutlined />} onClick={() => onEdit(v)}>{t('修改车辆')}</Button> : null}
     >
       {v && (
@@ -619,22 +620,22 @@ function VehicleDrawer({
             loading={loading}
             dataSource={claims}
             pagination={false}
-            scroll={{ x: 760 }}
+            scroll={{ x: 900 }}
             columns={[
               { title: t('日期'), dataIndex: 'claim_date', width: 100 },
               { title: t('性质'), dataIndex: 'nature', width: 90, render: (x: string) => t(x) },
               {
                 title: t('金额'),
-                width: 150,
+                width: 125,
                 align: 'right',
                 render: (_, c) => (c.receipt_id ? `${c.currency} ${money(c.amount_orig)}` : ''),
               },
               { title: 'USD', dataIndex: 'amount_usd', width: 90, align: 'right', render: (x) => usd(x) },
-              { title: t('账户'), dataIndex: 'account_name', ellipsis: true },
+              { title: t('账户'), dataIndex: 'account_name', width: 150 },
               {
                 title: t('到账编号'),
                 dataIndex: 'receipt_no',
-                width: 150,
+                width: 180,
                 render: (no: string | null, c) =>
                   no ? (
                     <Space size={4}>
@@ -651,7 +652,8 @@ function VehicleDrawer({
                     '—'
                   ),
               },
-              { title: t('备注'), dataIndex: 'report_note', ellipsis: true },
+              // 备注整段显示（放不下就换行），不截断
+              { title: t('备注'), dataIndex: 'report_note', className: 'wrap-note' },
             ]}
           />
           {!isAdmin && !isStaff && (
