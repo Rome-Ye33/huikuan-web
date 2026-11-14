@@ -1,11 +1,13 @@
 import { ArrowLeftOutlined, PrinterOutlined } from '@ant-design/icons'
 import { Button, Checkbox, Result, Space, Spin } from 'antd'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import CommissionSheet from '../components/CommissionSheet'
+import { parseVehicles } from '../lib/commission'
 import type { CommissionVoucher } from '../lib/commission'
 import { errorText } from '../lib/errors'
+import { num } from '../lib/format'
 import { useT } from '../lib/i18n'
 import { useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
@@ -60,6 +62,8 @@ function PrintOne({ id }: { id: string | undefined }) {
   const [v, setV] = useState<CommissionVoucher | null>(null)
   /** 审批过程（approval_logs）：读完才出单，免得打印时还没出来 */
   const [trail, setTrail] = useState<ApprovalLog[] | null>(null)
+  /** 每台车现在的到账情况（车辆台账）：一张单上可以混着结清和没结清的车，印出来要看得出是哪几台 */
+  const [ledger, setLedger] = useState<Map<number, { received: number; balance: number }> | null>(null)
   const [err, setErr] = useState<string | null>(null)
   /** 缩到一页（默认缩）；去掉勾就按原大小，放不下就打两页 */
   const [fit, setFit] = useState(true)
@@ -70,7 +74,9 @@ function PrintOne({ id }: { id: string | undefined }) {
   const innerRef = useRef<HTMLDivElement>(null)
   // 签字栏要用审批流里级别的名字，等基础资料读好再出单
   const { loaded } = useRefData()
-  const ready = !!v && loaded && trail !== null
+  /** 这张单上的车（台账里的 id）：没有就不用查到账情况 */
+  const vids = useMemo(() => (v ? parseVehicles(v.vehicles).map((x) => x.vehicle_id).filter((x) => x > 0) : []), [v])
+  const ready = !!v && loaded && trail !== null && (ledger !== null || !vids.length)
 
   useEffect(() => {
     const vid = Number(id)
@@ -97,6 +103,33 @@ function PrintOne({ id }: { id: string | undefined }) {
       alive = false
     }
   }, [id, t])
+
+  // 每台车现在的到账情况（车辆台账里的数）
+  useEffect(() => {
+    if (!vids.length) return
+    let alive = true
+    void supabase
+      .from('v_vehicle_ledger')
+      .select('id,received_usd,balance_usd')
+      .in('id', vids)
+      .then(({ data }) => {
+        // 读不到就空着这一栏，单子照出
+        if (alive) setLedger(new Map((data ?? []).map((r) => [Number(r.id), { received: num(r.received_usd), balance: num(r.balance_usd) }])))
+      })
+    return () => {
+      alive = false
+    }
+  }, [vids])
+
+  // 打印时浏览器用页面标题当文件名
+  useEffect(() => {
+    if (!v) return
+    const old = document.title
+    document.title = [v.voucher_no ?? `#${v.id}`, v.customer_name, 'Commission Voucher'].filter(Boolean).join(' ')
+    return () => {
+      document.title = old
+    }
+  }, [v])
 
   const measure = useCallback(() => {
     const wrap = wrapRef.current
@@ -129,7 +162,7 @@ function PrintOne({ id }: { id: string | undefined }) {
       alive = false
       cancelAnimationFrame(raf)
     }
-  }, [ready, fit, v, trail, measure])
+  }, [ready, fit, v, trail, ledger, measure])
 
   // 实际用的比例：没勾“缩到一页”就按原大小。缩放用 transform，不用 zoom——量过，Chrome 打印时
   // 按 zoom 之前的高度分页，照样打成两页。transform 不占位置，所以分两层：里面那层缩小（排版高度不变），
@@ -166,7 +199,7 @@ function PrintOne({ id }: { id: string | undefined }) {
       ) : v && ready ? (
         <div className={scaled ? 'cv-fit cv-fit-on' : 'cv-fit'} ref={wrapRef} style={outerStyle}>
           <div ref={innerRef} style={innerStyle}>
-            <CommissionSheet v={v} trail={trail ?? []} />
+            <CommissionSheet v={v} trail={trail ?? []} ledger={ledger ?? undefined} />
           </div>
         </div>
       ) : (
