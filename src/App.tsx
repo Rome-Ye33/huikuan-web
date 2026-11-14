@@ -1,4 +1,5 @@
 import {
+  AccountBookOutlined,
   AppstoreOutlined,
   BankOutlined,
   CarOutlined,
@@ -28,6 +29,7 @@ import LoginPage from './pages/LoginPage'
 
 const ReceiptsPage = lazy(() => import('./pages/ReceiptsPage'))
 const ChequesPage = lazy(() => import('./pages/ChequesPage'))
+const JournalPage = lazy(() => import('./pages/JournalPage'))
 const VehiclesPage = lazy(() => import('./pages/VehiclesPage'))
 const ReconcilePage = lazy(() => import('./pages/ReconcilePage'))
 const BaseDataPage = lazy(() => import('./pages/BaseDataPage'))
@@ -131,6 +133,7 @@ export default function App() {
         ...(canView('receipts')
           ? [{ key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) }]
           : []),
+        ...(canView('journal') ? [{ key: '/journal', icon: <AccountBookOutlined />, label: t('银行现金日记账') }] : []),
         ...(canView('cheques')
           ? [{ key: '/cheques', icon: <CreditCardOutlined />, label: withCount(t('支票管理'), chequeAlert) }]
           : []),
@@ -210,6 +213,7 @@ export default function App() {
               <Routes>
                 <Route path="/workbench" element={<WorkbenchPage />} />
                 {canView('receipts') && <Route path="/receipts" element={<ReceiptsPage />} />}
+                {canView('journal') && <Route path="/journal" element={<JournalPage />} />}
                 {canView('cheques') && <Route path="/cheques" element={<ChequesPage />} />}
                 {isSales && <Route path="/submit" element={<SubmitPage />} />}
                 {(isSales || canView('vehicles')) && <Route path="/vehicles" element={<VehiclesPage />} />}

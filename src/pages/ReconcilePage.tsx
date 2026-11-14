@@ -24,6 +24,8 @@ import dayjs from 'dayjs'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Key } from 'react'
 import * as XLSX from 'xlsx'
+import CashEntryEditor from '../components/CashEntryEditor'
+import type { CashEntryPrefill } from '../components/CashEntryEditor'
 import ReceiptEditor from '../components/ReceiptEditor'
 import type { ReceiptPrefill } from '../components/ReceiptEditor'
 import { useAuth } from '../lib/auth'
@@ -50,8 +52,17 @@ export default function ReconcilePage() {
     prefill: null,
   })
   const [version, setVersion] = useState(0)
+  // 填付款、其他收入、互转（银行现金日记账的收支）
+  const [entry, setEntry] = useState<CashEntryPrefill | null>(null)
   const { accounts } = useRefData()
   const bankAccounts = accounts.filter((a) => a.kind !== 'cash')
+  /** 一条流水填成收支：付出去的填付款或互转，收进来的填其他收入或互转。日期、账户、金额照银行的 */
+  const fillLine = (l: StatementLine, kind: 'out' | 'in' | 'transfer') => {
+    const amt = Math.abs(Number(l.amount_orig))
+    const base = { entry_date: l.line_date ?? undefined, summary: l.payer_summary, bank_ref: l.bank_ref, bank_summary: l.payer_summary, line_id: l.id ?? undefined }
+    if (kind === 'transfer' && Number(l.amount_orig) > 0) setEntry({ ...base, kind, to_account_id: l.account_id ?? undefined, to_amount: amt })
+    else setEntry({ ...base, kind, account_id: l.account_id ?? undefined, amount: amt })
+  }
 
   return (
     <div>
@@ -68,7 +79,7 @@ export default function ReconcilePage() {
         />
       </div>
       <Typography.Paragraph type="secondary">
-        {t('每周或每月把银行流水导进来一次。系统按“同账户、同金额、日期相差 3 天内”自动和已录的到账配对，只需要处理下面两种：银行有但没人报的款，和录了但银行查不到的款。')}
+        {t('先导银行流水，再一条一条填：收进来的按“同账户、同金额、日期相差 3 天内”自动和已录的到账配对，配不上的在「银行有、没人报」里录成到账；付出去的在「付款待填」里填业务模块和摘要。填好的流水就是银行现金日记账。')}
       </Typography.Paragraph>
       <Tabs
         activeKey={tab}
@@ -82,6 +93,7 @@ export default function ReconcilePage() {
               <UnmatchedLines
                 accountId={accountId}
                 version={version}
+                onEntry={fillLine}
                 onCreate={(l) =>
                   setEditor({
                     open: true,
@@ -99,6 +111,11 @@ export default function ReconcilePage() {
                 }
               />
             ),
+          },
+          {
+            key: 'payments',
+            label: t('付款待填'),
+            children: <UnfilledPayments accountId={accountId} version={version} onFill={fillLine} />,
           },
           {
             key: 'missing',
@@ -135,6 +152,15 @@ export default function ReconcilePage() {
         prefill={editor.prefill}
         onClose={(changed) => {
           setEditor({ open: false, id: null, prefill: null })
+          if (changed) setVersion((x) => x + 1)
+        }}
+      />
+      <CashEntryEditor
+        open={!!entry}
+        entryId={null}
+        prefill={entry}
+        onClose={(changed) => {
+          setEntry(null)
           if (changed) setVersion((x) => x + 1)
         }}
       />
@@ -205,10 +231,12 @@ function UnmatchedLines({
   accountId,
   version,
   onCreate,
+  onEntry,
 }: {
   accountId?: number
   version: number
   onCreate: (l: StatementLine) => void
+  onEntry: (l: StatementLine, kind: 'in' | 'transfer') => void
 }) {
   const t = useT()
   const { message } = App.useApp()
@@ -216,6 +244,8 @@ function UnmatchedLines({
   /** 关联、忽略、重新配对：“银行对账”可编辑；录成到账还要“到账录入”可编辑 */
   const rcEdit = canEdit('reconcile')
   const canCreate = rcEdit && canEdit('receipts')
+  /** 填成其他收入、互转：还要“银行现金日记账”可编辑 */
+  const canFill = rcEdit && canEdit('journal')
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [linkFor, setLinkFor] = useState<StatementLine | null>(null)
@@ -225,7 +255,8 @@ function UnmatchedLines({
 
   const load = useCallback(async () => {
     setLoading(true)
-    let q = supabase.from('v_statement_lines').select('*').eq('match_status', '未配对').order('line_date').order('id').limit(2000)
+    // 只看收进来的；付出去的在「付款待填」
+    let q = supabase.from('v_statement_lines').select('*').eq('match_status', '未配对').gt('amount_orig', 0).order('line_date').order('id').limit(2000)
     if (accountId) q = q.eq('account_id', accountId)
     const { data } = await q
     setRows(data ?? [])
@@ -289,9 +320,9 @@ function UnmatchedLines({
   if (rcEdit)
     columns.push({
       title: t('处理'),
-      width: 250,
+      width: 330,
       render: (_, l) => (
-        <Space size={4}>
+        <Space size={4} wrap>
           {canCreate && (
             <Button size="small" type="primary" onClick={() => onCreate(l)}>
               {t('录成到账')}
@@ -300,6 +331,16 @@ function UnmatchedLines({
           <Button size="small" onClick={() => setLinkFor(l)}>
             {t('关联已录的')}
           </Button>
+          {canFill && (
+            <Button size="small" onClick={() => onEntry(l, 'in')}>
+              {t('其他收入')}
+            </Button>
+          )}
+          {canFill && (
+            <Button size="small" onClick={() => onEntry(l, 'transfer')}>
+              {t('互转')}
+            </Button>
+          )}
           <Button
             size="small"
             type="text"
@@ -326,7 +367,7 @@ function UnmatchedLines({
         {bulk.button}
         <span className="hint">
           {rcEdit
-            ? t('银行流水里有、但系统里没人录的款。是回款就“录成到账”；已经录过但金额或日期对不上就“关联已录的”；利息、内部转账等就“忽略”。')
+            ? t('银行流水里有、但系统里没人录的款。是回款就“录成到账”；已经录过但金额或日期对不上就“关联已录的”；利息、退款记“其他收入”；自己账户之间转来的记“互转”。')
             : t('银行流水里有、但系统里没人录的款。')}
         </span>
       </Space>
@@ -340,6 +381,159 @@ function UnmatchedLines({
           {ignoreFor?.line_date} · {ignoreFor?.currency} {money(ignoreFor?.amount_orig)} · {ignoreFor?.payer_summary}
         </Typography.Paragraph>
         <Input placeholder={t('原因，如：利息、公司内部转账')} value={ignoreNote} onChange={(e) => setIgnoreNote(e.target.value)} />
+      </Modal>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// 付款待填：银行流水里付出去的、还没填业务模块和摘要的（银行账户先导流水再填）
+// ---------------------------------------------------------------------------
+function UnfilledPayments({
+  accountId,
+  version,
+  onFill,
+}: {
+  accountId?: number
+  version: number
+  onFill: (l: StatementLine, kind: 'out' | 'transfer') => void
+}) {
+  const t = useT()
+  const { message } = App.useApp()
+  const { canEdit } = useAuth()
+  const rcEdit = canEdit('reconcile')
+  const canFill = rcEdit && canEdit('journal')
+  const [rows, setRows] = useState<StatementLine[]>([])
+  const [loading, setLoading] = useState(false)
+  const [ignoreFor, setIgnoreFor] = useState<StatementLine | null>(null)
+  const [ignoreNote, setIgnoreNote] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    let q = supabase
+      .from('v_statement_lines')
+      .select('*')
+      .lt('amount_orig', 0)
+      .eq('ignored', false)
+      .is('entry_id', null)
+      .order('line_date')
+      .order('id')
+      .limit(2000)
+    if (accountId) q = q.eq('account_id', accountId)
+    const { data } = await q
+    setRows(data ?? [])
+    setLoading(false)
+  }, [accountId])
+
+  useEffect(() => {
+    void load()
+  }, [load, version])
+
+  const ignore = async () => {
+    if (!ignoreFor) return
+    const { error } = await supabase
+      .from('bank_statement_lines')
+      .update({ ignored: true, note: ignoreNote.trim() || null })
+      .eq('id', ignoreFor.id as number)
+    if (error) message.error(errorText(error))
+    else {
+      message.success(t('已忽略'))
+      setIgnoreFor(null)
+      void load()
+    }
+  }
+
+  const bulk = useLineBulk(rows, () => void load())
+  const total = new Map<string, number>()
+  for (const r of rows) total.set(r.currency ?? '', round2((total.get(r.currency ?? '') ?? 0) - Number(r.amount_orig)))
+
+  const columns: ColumnsType<StatementLine> = [
+    { title: t('银行日期'), dataIndex: 'line_date', width: 104, ...textCol<StatementLine>((l) => l.line_date) },
+    { title: t('账户'), dataIndex: 'account_name', width: 210, ellipsis: true, ...pickCol(rows, (l) => l.account_name) },
+    {
+      title: t('付出'),
+      width: 150,
+      align: 'right',
+      render: (_, l) => (
+        <span className="num text-warn">
+          {l.currency} {money(-Number(l.amount_orig))}
+        </span>
+      ),
+      ...textCol<StatementLine>((l) => `${l.currency} ${money(-Number(l.amount_orig))}`),
+    },
+    { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<StatementLine>((l) => l.payer_summary) },
+    { title: t('参考号'), dataIndex: 'bank_ref', width: 130, ellipsis: true, ...textCol<StatementLine>((l) => l.bank_ref) },
+    {
+      title: t('银行余额'),
+      width: 130,
+      align: 'right',
+      render: (_, l) => (l.balance != null ? <span className="num hint">{money(l.balance)}</span> : null),
+    },
+  ]
+  if (rcEdit)
+    columns.push({
+      title: t('处理'),
+      width: 220,
+      render: (_, l) => (
+        <Space size={4}>
+          {canFill && (
+            <Button size="small" type="primary" onClick={() => onFill(l, 'out')}>
+              {t('填付款')}
+            </Button>
+          )}
+          {canFill && (
+            <Button size="small" onClick={() => onFill(l, 'transfer')}>
+              {t('互转')}
+            </Button>
+          )}
+          <Button
+            size="small"
+            type="text"
+            onClick={() => {
+              setIgnoreNote('')
+              setIgnoreFor(l)
+            }}
+          >
+            {t('忽略')}
+          </Button>
+        </Space>
+      ),
+    })
+
+  return (
+    <div>
+      <Space wrap style={{ marginBottom: 8 }}>
+        <Button icon={<ReloadOutlined />} onClick={() => void load()} />
+        {bulk.button}
+        <span className="hint">
+          {t('银行流水里付出去、还没填的。点「填付款」选业务模块、写摘要（日期、账户、金额照银行的）；转到自己别的账户的点「互转」；银行冲正之类不算收付的点「忽略」。')}
+        </span>
+      </Space>
+      {rows.length > 0 && (
+        <div className="hint filters">
+          {t('一共 {n} 条待填：{sum}', {
+            n: rows.length,
+            sum: [...total.entries()].map(([c, v]) => `${c} ${money(v)}`).join('，'),
+          })}
+        </div>
+      )}
+      <Table
+        rowKey="id"
+        size="small"
+        loading={loading}
+        columns={columns}
+        dataSource={rows}
+        scroll={{ x: 1100 }}
+        pagination={{ defaultPageSize: 50 }}
+        rowSelection={bulk.rowSelection}
+        className="payments-todo"
+        locale={{ emptyText: t('付出去的流水都填好了') }}
+      />
+      <Modal open={!!ignoreFor} title={t('忽略这条流水')} okText={t('忽略')} onOk={ignore} onCancel={() => setIgnoreFor(null)}>
+        <Typography.Paragraph>
+          {ignoreFor?.line_date} · {ignoreFor?.currency} {money(ignoreFor?.amount_orig)} · {ignoreFor?.payer_summary}
+        </Typography.Paragraph>
+        <Input placeholder={t('原因，如：银行冲正')} value={ignoreNote} onChange={(e) => setIgnoreNote(e.target.value)} />
       </Modal>
     </div>
   )

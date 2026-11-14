@@ -140,6 +140,8 @@ export type Database = {
           last4: string | null
           list_name: string | null
           masked_hints: string[]
+          opening_balance: number | null
+          opening_date: string | null
           short_name: string
         }
         Insert: {
@@ -154,6 +156,8 @@ export type Database = {
           last4?: string | null
           list_name?: string | null
           masked_hints?: string[]
+          opening_balance?: number | null
+          opening_date?: string | null
           short_name: string
         }
         Update: {
@@ -168,6 +172,8 @@ export type Database = {
           last4?: string | null
           list_name?: string | null
           masked_hints?: string[]
+          opening_balance?: number | null
+          opening_date?: string | null
           short_name?: string
         }
         Relationships: []
@@ -326,10 +332,12 @@ export type Database = {
         Row: {
           account_id: number
           amount_orig: number
+          balance: number | null
           bank_ref: string | null
           batch_id: number
           cheque_no: string | null
           created_at: string
+          entry_id: number | null
           id: number
           ignored: boolean
           line_date: string
@@ -342,10 +350,12 @@ export type Database = {
         Insert: {
           account_id: number
           amount_orig: number
+          balance?: number | null
           bank_ref?: string | null
           batch_id: number
           cheque_no?: string | null
           created_at?: string
+          entry_id?: number | null
           id?: never
           ignored?: boolean
           line_date: string
@@ -358,10 +368,12 @@ export type Database = {
         Update: {
           account_id?: number
           amount_orig?: number
+          balance?: number | null
           bank_ref?: string | null
           batch_id?: number
           cheque_no?: string | null
           created_at?: string
+          entry_id?: number | null
           id?: never
           ignored?: boolean
           line_date?: string
@@ -405,6 +417,93 @@ export type Database = {
             columns: ["receipt_id"]
             isOneToOne: true
             referencedRelation: "v_receipt_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cash_entries: {
+        Row: {
+          account_id: number
+          amount: number
+          amount_usd: number | null
+          attachments: string[]
+          bank_ref: string | null
+          cheque_no: string | null
+          counterparty: string | null
+          created_at: string
+          created_by: string | null
+          currency: string
+          direction: string
+          entry_date: string
+          entry_no: string
+          fx_rate: number | null
+          id: number
+          module: string | null
+          note: string | null
+          peer_id: number | null
+          summary: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          account_id: number
+          amount: number
+          amount_usd?: number | null
+          attachments?: string[]
+          bank_ref?: string | null
+          cheque_no?: string | null
+          counterparty?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          direction: string
+          entry_date: string
+          entry_no?: string
+          fx_rate?: number | null
+          id?: never
+          module?: string | null
+          note?: string | null
+          peer_id?: number | null
+          summary?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          account_id?: number
+          amount?: number
+          amount_usd?: number | null
+          attachments?: string[]
+          bank_ref?: string | null
+          cheque_no?: string | null
+          counterparty?: string | null
+          created_at?: string
+          created_by?: string | null
+          currency?: string
+          direction?: string
+          entry_date?: string
+          entry_no?: string
+          fx_rate?: number | null
+          id?: never
+          module?: string | null
+          note?: string | null
+          peer_id?: number | null
+          summary?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_entries_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "bank_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_entries_peer_id_fkey"
+            columns: ["peer_id"]
+            isOneToOne: false
+            referencedRelation: "cash_entries"
             referencedColumns: ["id"]
           },
         ]
@@ -1614,6 +1713,37 @@ export type Database = {
           },
         ]
       }
+      v_journal: {
+        Row: {
+          account_id: number | null
+          account_name: string | null
+          amount_in: number | null
+          amount_out: number | null
+          amount_usd: number | null
+          bank_balance: number | null
+          bank_ref: string | null
+          bank_summary: string | null
+          counterparty: string | null
+          created_at: string | null
+          created_by_name: string | null
+          currency: string | null
+          doc_no: string | null
+          entry_date: string | null
+          entry_id: number | null
+          fill_status: string | null
+          fx_rate: number | null
+          key: string | null
+          line_id: number | null
+          module: string | null
+          peer_account_id: number | null
+          peer_account_name: string | null
+          receipt_id: number | null
+          source: string | null
+          source_id: number | null
+          summary: string | null
+        }
+        Relationships: []
+      }
       v_receipt_claims: {
         Row: {
           account_name: string | null
@@ -1717,11 +1847,13 @@ export type Database = {
           account_id: number | null
           account_name: string | null
           amount_orig: number | null
+          balance: number | null
           bank_ref: string | null
           batch_id: number | null
           cheque_no: string | null
           created_at: string | null
           currency: string | null
+          entry_id: number | null
           id: number | null
           ignored: boolean | null
           line_date: string | null
@@ -1892,10 +2024,30 @@ export type Database = {
         }
         Returns: Json
       }
+      delete_cash_entry: { Args: { p_id: number }; Returns: undefined }
       import_cheques: { Args: { p_rows: Json }; Returns: Json }
       import_vehicles: {
         Args: { p_opening_date: string; p_rows: Json; p_update?: boolean }
         Returns: Json
+      }
+      journal_month: {
+        Args: { p_account?: number; p_from: string; p_to: string }
+        Returns: {
+          account_id: number
+          bank_balance: number | null
+          bank_date: string | null
+          closing: number
+          expense: number
+          has_opening: boolean
+          income: number
+          line_n: number
+          opening: number
+          pending_amount: number
+          pending_n: number
+          unfilled_n: number
+          waiting_amount: number
+          waiting_n: number
+        }[]
       }
       link_submission: {
         Args: { p_receipt_id: number; p_submission_id: number }
@@ -1964,12 +2116,14 @@ export type Database = {
         Args: { p_doc_type: string; p_steps: Json }
         Returns: undefined
       }
+      save_cash_entry: { Args: { p: Json }; Returns: Json }
       save_claims: {
         Args: { p_claims: Json; p_receipt_id: number }
         Returns: undefined
       }
       save_commission_voucher: { Args: { p: Json }; Returns: number }
       save_cheques: { Args: { p_rows: Json }; Returns: Json }
+      save_openings: { Args: { p_date: string; p_rows: Json }; Returns: number }
       save_receipt: {
         Args: { p_claims?: Json; p_receipt: Json }
         Returns: number
