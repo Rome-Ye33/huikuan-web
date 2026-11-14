@@ -897,6 +897,221 @@ html[lang='en'] .logo-name {
   }
 }
 
+/* ---------- 银行现金日记账 ---------- */
+.balance-cards {
+  margin-bottom: 12px;
+}
+.balance-big {
+  margin: 2px 0;
+  color: #0f172a;
+  font-size: 20px;
+  font-weight: 600;
+}
+.check-counts {
+  margin-top: 6px;
+}
+.journal-summary .row-group > td {
+  background: #eef2f8 !important;
+  border-top: 8px solid #fff;
+}
+.group-title {
+  color: #1e3a8a;
+  font-weight: 600;
+}
+.journal-summary .row-total > td,
+.journal-ledger .ant-table-summary .row-total > td {
+  background: #f8fafc;
+}
+.bal-ok,
+.bal-todo {
+  color: #237804;
+}
+.bal-broken {
+  color: #cf1322;
+}
+.text-orange {
+  color: #d46b08;
+}
+.tag-mini {
+  margin-inline-start: 6px;
+  font-size: 11px;
+  line-height: 18px;
+}
+.journal-note {
+  margin-top: 10px;
+  font-size: 12px;
+}
+.switch-label {
+  white-space: nowrap;
+}
+.ledger-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: #f6f8fb;
+  border: 1px solid #e9edf3;
+  border-radius: 8px;
+}
+.ledger-acct {
+  font-weight: 600;
+  color: #0f172a;
+}
+.doc-no {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+/* 长的摘要、客户名最多两行，悬停看全文 */
+.clamp2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.pre-line {
+  white-space: pre-line;
+}
+.peer-acct {
+  color: #531dab;
+}
+.journal-ledger .row-day > td {
+  background: #fafafa;
+  color: #64748b;
+  font-size: 12px;
+}
+.journal-ledger .row-opening > td {
+  background: #f0f5ff;
+}
+.day-label {
+  color: #64748b;
+}
+.journal-ledger .row-todo > td {
+  background: #fffaf0;
+}
+.todo-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fill-buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tag-under {
+  margin-top: 2px;
+}
+/* 收支录入 */
+.entry-kind {
+  margin-bottom: 14px;
+}
+.entry-tip {
+  margin-bottom: 12px;
+}
+.entry-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.transfer-box {
+  margin-bottom: 16px;
+  padding: 12px 14px 0;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 8px;
+}
+.transfer-arrow {
+  padding-top: 30px;
+  line-height: 32px;
+  text-align: center;
+  font-size: 22px;
+  color: #94a3b8;
+}
+.transfer-note {
+  margin: -8px 0 12px;
+  font-size: 12px;
+}
+.auto-module-box {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+}
+.auto-module {
+  margin-inline-end: 8px;
+}
+.transfer-preview {
+  margin: 0;
+  padding: 8px 12px;
+  background: #f9f0ff;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.entry-meta {
+  margin-top: 8px;
+}
+
+/* ---------- 日记账：分工、修改记录（36） ---------- */
+.duty-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 8px;
+}
+.duty-box > div {
+  flex: 1 1 320px;
+}
+.entry-log {
+  margin-top: 6px;
+}
+.entry-log .ant-collapse-header {
+  padding-inline-start: 0 !important;
+  color: #475569 !important;
+}
+.log-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+.log-group {
+  padding: 6px 0;
+  border-bottom: 1px dashed #e9edf3;
+}
+.log-group:last-child {
+  border-bottom: 0;
+}
+.log-head {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: #64748b;
+}
+.log-head b {
+  color: #334155;
+  font-weight: 600;
+}
+.log-line {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.journal-log-table .log-line + .log-line {
+  margin-top: 2px;
+}
+.duty-note {
+  margin-bottom: 8px;
+}
+
 /* 表格里整段显示的备注：放不下就换行，不截断 */
 .ant-table-cell.wrap-note {
   white-space: normal;

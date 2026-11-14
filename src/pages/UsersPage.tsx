@@ -414,14 +414,14 @@ export default function UsersPage() {
             width: 240,
             render: (_, p) => (
               <div className="perm-cell">
-                <PermSummary role={p.role} perms={p.perms} />
+                <PermSummary role={p.role} perms={p.perms} duty={p.journal_duty} />
                 {p.role === 'finance' && (
                   <Button
                     size="small"
                     type="link"
                     icon={<EditOutlined />}
                     className="perm-set"
-                    onClick={() => setPermFor({ kind: 'profile', id: p.id, name: personName(p), perms: p.perms })}
+                    onClick={() => setPermFor({ kind: 'profile', id: p.id, name: personName(p), perms: p.perms, duty: p.journal_duty })}
                   >
                     {t('设置')}
                   </Button>
@@ -551,14 +551,14 @@ export default function UsersPage() {
                 ) : null
               ) : (
                 <div className="perm-cell">
-                  <PermSummary role={i.role} perms={i.perms} />
+                  <PermSummary role={i.role} perms={i.perms} duty={i.journal_duty} />
                   {i.role === 'finance' && (
                     <Button
                       size="small"
                       type="link"
                       icon={<EditOutlined />}
                       className="perm-set"
-                      onClick={() => setPermFor({ kind: 'invite', email: i.email, name: personName(i), perms: i.perms })}
+                      onClick={() => setPermFor({ kind: 'invite', email: i.email, name: personName(i), perms: i.perms, duty: i.journal_duty })}
                     >
                       {t('设置')}
                     </Button>

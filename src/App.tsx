@@ -1,7 +1,9 @@
 import {
+  AccountBookOutlined,
   AppstoreOutlined,
   BankOutlined,
   CarOutlined,
+  WalletOutlined,
   CreditCardOutlined,
   DatabaseOutlined,
   FileDoneOutlined,
@@ -21,6 +23,7 @@ import { ROLE_LABEL, useAuth } from './lib/auth'
 import { useChequeAlert } from './lib/cheques'
 import { useVoucherTodo } from './lib/commission'
 import { useI18n } from './lib/i18n'
+import { useLineTodo } from './lib/journal'
 import { goPath, takeGo } from './lib/notify'
 import { useSubmissionCount } from './lib/submissions'
 import { useTodoCount } from './lib/workbench'
@@ -28,6 +31,7 @@ import LoginPage from './pages/LoginPage'
 
 const ReceiptsPage = lazy(() => import('./pages/ReceiptsPage'))
 const ChequesPage = lazy(() => import('./pages/ChequesPage'))
+const JournalPage = lazy(() => import('./pages/JournalPage'))
 const VehiclesPage = lazy(() => import('./pages/VehiclesPage'))
 const ReconcilePage = lazy(() => import('./pages/ReconcilePage'))
 const BaseDataPage = lazy(() => import('./pages/BaseDataPage'))
@@ -77,6 +81,8 @@ export default function App() {
   const todo = useTodoCount(!!auth.role)
   // 支票：到期还没存的 + 存了 3 天还没到账的
   const chequeAlert = useChequeAlert(canView('cheques'))
+  // 银行流水还没填的（按分工：填收款的只算收进来的、填付款的只算付出去的）：管填流水的人才提醒
+  const lineTodo = useLineTodo(canView('reconcile') && (auth.canEdit('reconcile') || auth.canEdit('journal')), auth.duty)
 
   // 登录后换成这个人上次选的语言
   useEffect(() => {
@@ -131,6 +137,8 @@ export default function App() {
         ...(canView('receipts')
           ? [{ key: '/receipts', icon: <MoneyCollectOutlined />, label: withCount(t('到账录入'), pending) }]
           : []),
+        ...(canView('journal') ? [{ key: '/journal', icon: <AccountBookOutlined />, label: t('银行日记账') }] : []),
+        ...(canView('cash') ? [{ key: '/cash', icon: <WalletOutlined />, label: t('现金日记账') }] : []),
         ...(canView('cheques')
           ? [{ key: '/cheques', icon: <CreditCardOutlined />, label: withCount(t('支票管理'), chequeAlert) }]
           : []),
@@ -138,7 +146,7 @@ export default function App() {
         ...(canView('commission')
           ? [{ key: '/commission', icon: <FileDoneOutlined />, label: withCount(t('提成申请单'), voucherTodo) }]
           : []),
-        ...(canView('reconcile') ? [{ key: '/reconcile', icon: <BankOutlined />, label: t('银行对账') }] : []),
+        ...(canView('reconcile') ? [{ key: '/reconcile', icon: <BankOutlined />, label: withCount(t('银行对账'), lineTodo) }] : []),
         ...(canView('base') ? [{ key: '/base', icon: <DatabaseOutlined />, label: t('基础资料') }] : []),
         ...(auth.isAdmin ? [{ key: '/users', icon: <TeamOutlined />, label: t('用户与权限') }] : []),
       ]
@@ -210,6 +218,9 @@ export default function App() {
               <Routes>
                 <Route path="/workbench" element={<WorkbenchPage />} />
                 {canView('receipts') && <Route path="/receipts" element={<ReceiptsPage />} />}
+                {/* 两本日记账同一个页面，key 不一样：切过去时重新开始（选着的账户、标签页不带过去） */}
+                {canView('journal') && <Route path="/journal" element={<JournalPage key="bank" scope="bank" />} />}
+                {canView('cash') && <Route path="/cash" element={<JournalPage key="cash" scope="cash" />} />}
                 {canView('cheques') && <Route path="/cheques" element={<ChequesPage />} />}
                 {isSales && <Route path="/submit" element={<SubmitPage />} />}
                 {(isSales || canView('vehicles')) && <Route path="/vehicles" element={<VehiclesPage />} />}

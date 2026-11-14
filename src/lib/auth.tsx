@@ -1,8 +1,8 @@
 import type { Session } from '@supabase/supabase-js'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { permOf } from './perms'
-import type { PermLevel, PermModule } from './perms'
+import { asDuty, permOf } from './perms'
+import type { Duty, PermLevel, PermModule } from './perms'
 import { supabase } from './supabase'
 import type { AppRole, Profile } from './supabase'
 
@@ -21,6 +21,10 @@ type AuthState = {
   canView: (m: PermModule) => boolean
   /** 能改这个模块：新建、修改、删除、导入这些按钮 */
   canEdit: (m: PermModule) => boolean
+  /** 银行流水分工：in 填收款、out 填付款、null 都填（管理员、没设的都是 null） */
+  duty: Duty | null
+  /** 收进来的（in）/ 付出去的（out）流水是不是我这一摊（没设分工就都是） */
+  mine: (d: Duty) => boolean
   reloadProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -72,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const role = profile && profile.active ? profile.role : null
     const profileReady = !session || profileUid === session.user.id
     const perm = (m: PermModule) => permOf(role, profile?.perms, m)
+    const duty = role === 'finance' ? asDuty(profile?.journal_duty) : null
     return {
       loading: loading || !profileReady,
       session,
@@ -83,6 +88,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       perm,
       canView: (m) => perm(m) !== 'none',
       canEdit: (m) => perm(m) === 'edit',
+      duty,
+      mine: (d) => !duty || duty === d,
       reloadProfile: () => loadProfile(session),
       signOut: async () => {
         await supabase.auth.signOut()

@@ -9,8 +9,8 @@ export function errorText(e: unknown): string {
   const code = err.code ?? ''
   if (code === '42501' || /row-level security|permission denied/i.test(msg)) {
     if (/不在邀请名单/.test(msg)) return trServer(msg)
-    // 财务的模块权限（31）：说清楚是哪个模块没有编辑权限
-    if (/^没有“.+”的编辑权限/.test(msg)) return trServer(msg)
+    // 财务的模块权限（31）：说清楚是哪个模块没有编辑权限；日记账（36）：期初日期两本共用、流水只能在哪里填
+    if (/^没有“.+”的(编辑)?权限|^期初日期是|^银行流水只能在/.test(msg)) return trServer(msg)
     return tr('没有权限做这个操作')
   }
   if (code === '23505' || /duplicate key/i.test(msg)) {
