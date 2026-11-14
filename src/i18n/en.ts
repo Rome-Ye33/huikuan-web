@@ -527,7 +527,7 @@ const UI: Record<string, string> = {
     "This money has arrived and is recorded under the customer, but the vehicle isn't known yet, so it doesn't count toward any vehicle.",
   "银行流水里有、但系统里没人录的款。": "Money in the bank statement that nobody has entered.",
   // 菜单、页头
-  "销售管理": "Sales Management",
+  "业财管理": "Sales & Finance",
   "到账录入": "Receipts",
   "报款": "Reports",
   "车辆台账": "Vehicle ledger",

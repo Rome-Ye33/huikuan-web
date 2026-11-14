@@ -51,7 +51,7 @@ const THEME: ThemeConfig = {
 function Themed({ children }: { children: ReactNode }) {
   const { lang } = useI18n()
   useEffect(() => {
-    document.title = lang === 'en' ? 'Sales Management' : '销售管理 · Sales Management'
+    document.title = lang === 'en' ? 'Sales & Finance' : '业财管理 · Sales & Finance'
   }, [lang])
   return (
     <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={THEME}>

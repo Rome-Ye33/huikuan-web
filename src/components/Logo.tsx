@@ -13,8 +13,8 @@ export default function Logo({ size = 32, className }: { size?: number; classNam
     <div className={className ? `logo ${className}` : 'logo'}>
       <LogoMark size={size} />
       <div className="logo-text">
-        <div className="logo-name">{t('销售管理')}</div>
-        {lang === 'zh' && <div className="logo-sub">Sales Management</div>}
+        <div className="logo-name">{t('业财管理')}</div>
+        {lang === 'zh' && <div className="logo-sub">{'Sales & Finance'}</div>}
       </div>
     </div>
   )
