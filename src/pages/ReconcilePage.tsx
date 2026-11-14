@@ -6,6 +6,7 @@ import {
   Card,
   Col,
   DatePicker,
+  Form,
   Input,
   InputNumber,
   Modal,
@@ -34,6 +35,7 @@ import { errorText } from '../lib/errors'
 import { money, round2, todayAccra } from '../lib/format'
 import { accountOptions, useRefData } from '../lib/refdata'
 import { supabase } from '../lib/supabase'
+import { moduleColor, moduleOptions, notifyJournalChanged } from '../lib/journal'
 import { DATE_FORMATS, findHeaderRow, guessMapping, matchAccount, toLines } from '../lib/statement'
 import type { ImportResult, Mapping, ParsedLine } from '../lib/statement'
 import type { ImportFormat, Receipt, StatementLine } from '../lib/supabase'
@@ -52,16 +54,16 @@ export default function ReconcilePage() {
     prefill: null,
   })
   const [version, setVersion] = useState(0)
-  // 填付款、其他收入、互转（银行现金日记账的收支）
-  const [entry, setEntry] = useState<CashEntryPrefill | null>(null)
+  // 填付款、其他收入、互转（银行现金日记账的收支）；id = 打开已经填好的那一笔
+  const [entry, setEntry] = useState<{ id: number | null; prefill: CashEntryPrefill | null } | null>(null)
   const { accounts } = useRefData()
   const bankAccounts = accounts.filter((a) => a.kind !== 'cash')
   /** 一条流水填成收支：付出去的填付款或互转，收进来的填其他收入或互转。日期、账户、金额照银行的 */
   const fillLine = (l: StatementLine, kind: 'out' | 'in' | 'transfer') => {
     const amt = Math.abs(Number(l.amount_orig))
     const base = { entry_date: l.line_date ?? undefined, summary: l.payer_summary, bank_ref: l.bank_ref, bank_summary: l.payer_summary, line_id: l.id ?? undefined }
-    if (kind === 'transfer' && Number(l.amount_orig) > 0) setEntry({ ...base, kind, to_account_id: l.account_id ?? undefined, to_amount: amt })
-    else setEntry({ ...base, kind, account_id: l.account_id ?? undefined, amount: amt })
+    if (kind === 'transfer' && Number(l.amount_orig) > 0) setEntry({ id: null, prefill: { ...base, kind, to_account_id: l.account_id ?? undefined, to_amount: amt } })
+    else setEntry({ id: null, prefill: { ...base, kind, account_id: l.account_id ?? undefined, amount: amt } })
   }
 
   return (
@@ -142,7 +144,14 @@ export default function ReconcilePage() {
           {
             key: 'all',
             label: t('全部流水明细'),
-            children: <AllLines accountId={accountId} version={version} onOpen={(id) => setEditor({ open: true, id, prefill: null })} />,
+            children: (
+              <AllLines
+                accountId={accountId}
+                version={version}
+                onOpen={(id) => setEditor({ open: true, id, prefill: null })}
+                onEntry={(id) => setEntry({ id, prefill: null })}
+              />
+            ),
           },
         ]}
       />
@@ -157,8 +166,8 @@ export default function ReconcilePage() {
       />
       <CashEntryEditor
         open={!!entry}
-        entryId={null}
-        prefill={entry}
+        entryId={entry?.id ?? null}
+        prefill={entry?.prefill ?? null}
         onClose={(changed) => {
           setEntry(null)
           if (changed) setVersion((x) => x + 1)
@@ -168,8 +177,11 @@ export default function ReconcilePage() {
   )
 }
 
-/** 管理员多选流水、删除选中：已配对的不删（要删先取消配对）。删掉的行再导入同一份对账单时会重新进来 */
-function useLineBulk(rows: StatementLine[], reload: () => void) {
+/**
+ * 多选流水：管理员可以删除选中的（已配对、已填的不删：要删先取消配对或删掉填的那一笔；删掉的行再导入同一份对账单时会重新进来）；
+ * select = 能一起填的地方（付款待填）别人也能勾
+ */
+function useLineBulk(rows: StatementLine[], reload: () => void, select = false) {
   const t = useT()
   const { isAdmin } = useAuth()
   const { message } = App.useApp()
@@ -178,8 +190,8 @@ function useLineBulk(rows: StatementLine[], reload: () => void) {
   const chosen = rows.filter((r) => sel.includes(r.id as number))
 
   const remove = async () => {
-    const matched = chosen.filter((r) => r.receipt_id != null)
-    const ids = chosen.filter((r) => r.receipt_id == null).map((r) => r.id as number)
+    const matched = chosen.filter((r) => r.receipt_id != null || r.entry_id != null)
+    const ids = chosen.filter((r) => r.receipt_id == null && r.entry_id == null).map((r) => r.id as number)
     setBusy(true)
     if (ids.length) {
       const { error } = await supabase.from('bank_statement_lines').delete().in('id', ids)
@@ -195,7 +207,7 @@ function useLineBulk(rows: StatementLine[], reload: () => void) {
         t('已删除 {n} 条；{m} 条没删：{list}', {
           n: ids.length,
           m: matched.length,
-          list: matched.map((l) => `${l.line_date} ${l.currency} ${money(l.amount_orig)}（${t('已配对')}）`).join('、'),
+          list: matched.map((l) => `${l.line_date} ${l.currency} ${money(l.amount_orig)}（${t(l.receipt_id != null ? '已配对' : '已填')}）`).join('、'),
         }),
         8,
       )
@@ -204,14 +216,15 @@ function useLineBulk(rows: StatementLine[], reload: () => void) {
     reload()
   }
 
-  const rowSelection = isAdmin
-    ? { selectedRowKeys: sel, onChange: (keys: Key[]) => setSel(keys as number[]), selections: [Table.SELECTION_ALL, Table.SELECTION_NONE], columnWidth: 40 }
-    : undefined
+  const rowSelection =
+    isAdmin || select
+      ? { selectedRowKeys: sel, onChange: (keys: Key[]) => setSel(keys as number[]), selections: [Table.SELECTION_ALL, Table.SELECTION_NONE], columnWidth: 40 }
+      : undefined
   const button =
     isAdmin && chosen.length > 0 ? (
       <Popconfirm
         title={t('删除选中的 {n} 条流水？', { n: chosen.length })}
-        description={t('已配对的不会删（要删先取消配对）。以后再导入同一份对账单，删掉的行会重新进来。')}
+        description={t('已配对、已填的不会删（要删先取消配对，或删掉填的那一笔）。以后再导入同一份对账单，删掉的行会重新进来。')}
         okText={t('删除')}
         okButtonProps={{ danger: true }}
         onConfirm={() => void remove()}
@@ -221,7 +234,7 @@ function useLineBulk(rows: StatementLine[], reload: () => void) {
         </Button>
       </Popconfirm>
     ) : null
-  return { rowSelection, button }
+  return { rowSelection, button, chosen, clear: () => setSel([]) }
 }
 
 // ---------------------------------------------------------------------------
@@ -244,8 +257,8 @@ function UnmatchedLines({
   /** 关联、忽略、重新配对：“银行对账”可编辑；录成到账还要“到账录入”可编辑 */
   const rcEdit = canEdit('reconcile')
   const canCreate = rcEdit && canEdit('receipts')
-  /** 填成其他收入、互转：还要“银行现金日记账”可编辑 */
-  const canFill = rcEdit && canEdit('journal')
+  /** 填成其他收入、互转：“银行现金日记账”可编辑 */
+  const canFill = canEdit('journal')
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [linkFor, setLinkFor] = useState<StatementLine | null>(null)
@@ -317,7 +330,7 @@ function UnmatchedLines({
     { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<StatementLine>((l) => l.payer_summary) },
     { title: t('参考号'), dataIndex: 'bank_ref', width: 140, ellipsis: true, ...textCol<StatementLine>((l) => l.bank_ref) },
   ]
-  if (rcEdit)
+  if (rcEdit || canFill)
     columns.push({
       title: t('处理'),
       width: 330,
@@ -328,9 +341,11 @@ function UnmatchedLines({
               {t('录成到账')}
             </Button>
           )}
-          <Button size="small" onClick={() => setLinkFor(l)}>
-            {t('关联已录的')}
-          </Button>
+          {rcEdit && (
+            <Button size="small" onClick={() => setLinkFor(l)}>
+              {t('关联已录的')}
+            </Button>
+          )}
           {canFill && (
             <Button size="small" onClick={() => onEntry(l, 'in')}>
               {t('其他收入')}
@@ -341,16 +356,18 @@ function UnmatchedLines({
               {t('互转')}
             </Button>
           )}
-          <Button
-            size="small"
-            type="text"
-            onClick={() => {
-              setIgnoreNote('')
-              setIgnoreFor(l)
-            }}
-          >
-            {t('忽略')}
-          </Button>
+          {rcEdit && (
+            <Button
+              size="small"
+              type="text"
+              onClick={() => {
+                setIgnoreNote('')
+                setIgnoreFor(l)
+              }}
+            >
+              {t('忽略')}
+            </Button>
+          )}
         </Space>
       ),
     })
@@ -401,12 +418,14 @@ function UnfilledPayments({
   const t = useT()
   const { message } = App.useApp()
   const { canEdit } = useAuth()
+  /** 忽略：“银行对账”可编辑；填付款、互转、一起填：“银行现金日记账”可编辑 */
   const rcEdit = canEdit('reconcile')
-  const canFill = rcEdit && canEdit('journal')
+  const canFill = canEdit('journal')
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [ignoreFor, setIgnoreFor] = useState<StatementLine | null>(null)
   const [ignoreNote, setIgnoreNote] = useState('')
+  const [batch, setBatch] = useState<StatementLine[] | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -417,6 +436,7 @@ function UnfilledPayments({
       .eq('ignored', false)
       .is('entry_id', null)
       .order('line_date')
+      .order('line_seq')
       .order('id')
       .limit(2000)
     if (accountId) q = q.eq('account_id', accountId)
@@ -443,7 +463,7 @@ function UnfilledPayments({
     }
   }
 
-  const bulk = useLineBulk(rows, () => void load())
+  const bulk = useLineBulk(rows, () => void load(), canFill)
   const total = new Map<string, number>()
   for (const r of rows) total.set(r.currency ?? '', round2((total.get(r.currency ?? '') ?? 0) - Number(r.amount_orig)))
 
@@ -470,7 +490,7 @@ function UnfilledPayments({
       render: (_, l) => (l.balance != null ? <span className="num hint">{money(l.balance)}</span> : null),
     },
   ]
-  if (rcEdit)
+  if (rcEdit || canFill)
     columns.push({
       title: t('处理'),
       width: 220,
@@ -486,16 +506,18 @@ function UnfilledPayments({
               {t('互转')}
             </Button>
           )}
-          <Button
-            size="small"
-            type="text"
-            onClick={() => {
-              setIgnoreNote('')
-              setIgnoreFor(l)
-            }}
-          >
-            {t('忽略')}
-          </Button>
+          {rcEdit && (
+            <Button
+              size="small"
+              type="text"
+              onClick={() => {
+                setIgnoreNote('')
+                setIgnoreFor(l)
+              }}
+            >
+              {t('忽略')}
+            </Button>
+          )}
         </Space>
       ),
     })
@@ -504,9 +526,14 @@ function UnfilledPayments({
     <div>
       <Space wrap style={{ marginBottom: 8 }}>
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
+        {canFill && bulk.chosen.length > 0 && (
+          <Button type="primary" onClick={() => setBatch(bulk.chosen)}>
+            {t('一起填（{n} 条）', { n: bulk.chosen.length })}
+          </Button>
+        )}
         {bulk.button}
         <span className="hint">
-          {t('银行流水里付出去、还没填的。点「填付款」选业务模块、写摘要（日期、账户、金额照银行的）；转到自己别的账户的点「互转」；银行冲正之类不算收付的点「忽略」。')}
+          {t('银行流水里付出去、还没填的。点「填付款」选业务模块、写摘要（日期、账户、金额照银行的）；转到自己别的账户的点「互转」；手续费这类小额的勾上几条「一起填」；银行冲正之类不算收付的点「忽略」。')}
         </span>
       </Space>
       {rows.length > 0 && (
@@ -535,7 +562,79 @@ function UnfilledPayments({
         </Typography.Paragraph>
         <Input placeholder={t('原因，如：银行冲正')} value={ignoreNote} onChange={(e) => setIgnoreNote(e.target.value)} />
       </Modal>
+      <BatchFillModal
+        lines={batch}
+        onClose={(ok) => {
+          setBatch(null)
+          if (ok) {
+            bulk.clear()
+            void load()
+          }
+        }}
+      />
     </div>
+  )
+}
+
+/** 勾上的几条付款一起填：同一个业务模块、收款方；摘要空着就用各自的银行摘要。每条记成一笔付款，日期、账户、金额照银行的 */
+function BatchFillModal({ lines, onClose }: { lines: StatementLine[] | null; onClose: (ok: boolean) => void }) {
+  const t = useT()
+  const { message } = App.useApp()
+  const [form] = Form.useForm<{ module: string; counterparty?: string; summary?: string }>()
+  const [saving, setSaving] = useState(false)
+  const sums = new Map<string, number>()
+  for (const l of lines ?? []) sums.set(l.currency ?? '', round2((sums.get(l.currency ?? '') ?? 0) - Number(l.amount_orig)))
+
+  const save = async () => {
+    let v: { module: string; counterparty?: string; summary?: string }
+    try {
+      v = await form.validateFields()
+    } catch {
+      return // 没填的地方表单上已经标红了
+    }
+    setSaving(true)
+    const { data, error } = await supabase.rpc('fill_statement_lines', {
+      p_line_ids: (lines ?? []).map((l) => l.id as number),
+      p: { module: v.module, counterparty: v.counterparty?.trim() || null, summary: v.summary?.trim() || null },
+    })
+    setSaving(false)
+    if (error) return message.error(errorText(error))
+    message.success(t('已填 {n} 条', { n: data ?? 0 }))
+    notifyJournalChanged()
+    onClose(true)
+  }
+
+  return (
+    <Modal
+      open={!!lines}
+      title={t('一起填 {n} 条付款', { n: lines?.length ?? 0 })}
+      okText={t('填好了')}
+      confirmLoading={saving}
+      onOk={() => void save()}
+      onCancel={() => onClose(false)}
+      destroyOnHidden
+    >
+      <Typography.Paragraph type="secondary">
+        {t('合计 {sum}。每条记成一笔付款，日期、账户、金额照各自的银行流水。', {
+          sum: [...sums].map(([c, v]) => `${c} ${money(v)}`).join('，'),
+        })}
+      </Typography.Paragraph>
+      <Form form={form} layout="vertical" preserve={false}>
+        <Form.Item name="module" label={t('业务模块')} rules={[{ required: true, message: t('请选业务模块') }]}>
+          <Select
+            showSearch={{ optionFilterProp: 'label' }}
+            options={moduleOptions('out').map((m) => ({ value: m, label: t(m) }))}
+            placeholder={t('如：手续费')}
+          />
+        </Form.Item>
+        <Form.Item name="counterparty" label={t('收款方 / 供应商')}>
+          <Input placeholder={t('可以不填')} />
+        </Form.Item>
+        <Form.Item name="summary" label={t('摘要')} extra={t('空着就用各自的银行摘要')}>
+          <Input maxLength={500} />
+        </Form.Item>
+      </Form>
+    </Modal>
   )
 }
 
@@ -677,15 +776,26 @@ function MissingReceipts({ accountId, version, onOpen }: { accountId?: number; v
 }
 
 // ---------------------------------------------------------------------------
-// 全部流水明细
+// 全部流水明细：收、付都在，带银行余额；填了什么、配了哪笔到账
 // ---------------------------------------------------------------------------
-function AllLines({ accountId, version, onOpen }: { accountId?: number; version: number; onOpen: (id: number) => void }) {
+function AllLines({
+  accountId,
+  version,
+  onOpen,
+  onEntry,
+}: {
+  accountId?: number
+  version: number
+  onOpen: (id: number) => void
+  onEntry: (id: number) => void
+}) {
   const t = useT()
   const { message } = App.useApp()
   const { canEdit, canView } = useAuth()
-  /** 取消配对、取消忽略：“银行对账”可编辑；点开到账：“到账录入”看得到 */
+  /** 取消配对、取消忽略：“银行对账”可编辑；点开到账：“到账录入”看得到；点开填的那一笔：“银行现金日记账”看得到 */
   const rcEdit = canEdit('reconcile')
   const rxView = canView('receipts')
+  const jView = canView('journal')
   const [rows, setRows] = useState<StatementLine[]>([])
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<string | undefined>()
@@ -699,6 +809,7 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
       .gte('line_date', range[0].format('YYYY-MM-DD'))
       .lte('line_date', range[1].format('YYYY-MM-DD'))
       .order('line_date', { ascending: false })
+      .order('line_seq', { ascending: false })
       .order('id', { ascending: false })
       .limit(3000)
     if (accountId) q = q.eq('account_id', accountId)
@@ -730,11 +841,11 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
         <DatePicker.RangePicker value={range} allowClear={false} onChange={(v) => v && v[0] && v[1] && setRange([v[0], v[1]])} />
         <Select
           allowClear
-          placeholder={t('配对状态')}
+          placeholder={t('状态')}
           style={{ width: 120 }}
           value={status}
           onChange={setStatus}
-          options={['已配对', '未配对', '已忽略'].map((x) => ({ value: x, label: t(x) }))}
+          options={['已配对', '已填', '未配对', '待填', '已忽略'].map((x) => ({ value: x, label: t(x) }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()} />
         {bulk.button}
@@ -745,16 +856,32 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
         loading={loading}
         dataSource={rows}
         pagination={{ defaultPageSize: 50 }}
-        scroll={{ x: 1100 }}
+        scroll={{ x: 1280 }}
         rowSelection={bulk.rowSelection}
         columns={[
           { title: t('银行日期'), dataIndex: 'line_date', width: 104, ...textCol<StatementLine>((l) => l.line_date) },
           { title: t('账户'), dataIndex: 'account_name', width: 200, ellipsis: true, ...pickCol(rows, (l) => l.account_name) },
-          { title: t('金额'), width: 150, align: 'right', render: (_, l) => `${l.currency} ${money(l.amount_orig)}`, ...textCol<StatementLine>((l) => `${l.currency} ${money(l.amount_orig)}`) },
+          {
+            title: t('收 / 付'),
+            width: 150,
+            align: 'right',
+            render: (_, l) => (
+              <span className={Number(l.amount_orig) < 0 ? 'num text-warn' : 'num'}>
+                {l.currency} {money(l.amount_orig)}
+              </span>
+            ),
+            ...textCol<StatementLine>((l) => `${l.currency} ${money(l.amount_orig)}`),
+          },
+          {
+            title: t('银行余额'),
+            width: 130,
+            align: 'right',
+            render: (_, l) => (l.balance != null ? <span className="num hint">{money(l.balance)}</span> : null),
+          },
           { title: t('银行摘要'), dataIndex: 'payer_summary', ellipsis: true, ...textCol<StatementLine>((l) => l.payer_summary) },
           {
             title: t('状态'),
-            width: 170,
+            width: 190,
             ...pickCol(rows, (l) => l.match_status, t),
             render: (_, l) =>
               l.match_status === '已配对' ? (
@@ -762,19 +889,26 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
                   <Tag color="green">{t('已配对')}</Tag>
                   <span className="hint">{MATCH_LABEL[l.match_type ?? ''] ?? ''}</span>
                 </Space>
+              ) : l.match_status === '已填' ? (
+                <Space size={4}>
+                  <Tag color="blue">{t('已填')}</Tag>
+                  {l.entry_module && <Tag color={moduleColor(l.entry_module)}>{t(l.entry_module)}</Tag>}
+                </Space>
               ) : l.match_status === '已忽略' ? (
                 <Space size={4}>
                   <Tag>{t('已忽略')}</Tag>
-                  <span className="hint">{l.note}</span>
+                  <span className="hint">{l.note ? t(l.note) : ''}</span>
                 </Space>
+              ) : l.match_status === '待填' ? (
+                <Tag color="orange">{t('待填')}</Tag>
               ) : (
                 <Tag color="red">{t('未配对')}</Tag>
               ),
           },
           {
-            title: t('到账'),
+            title: t('配上的单据'),
             width: 230,
-            ...textCol<StatementLine>((l) => l.receipt_no),
+            ...textCol<StatementLine>((l) => l.receipt_no ?? l.entry_no),
             render: (_, l) =>
               l.receipt_id ? (
                 <Space size={4}>
@@ -788,6 +922,8 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
                     </Button>
                   )}
                 </Space>
+              ) : l.entry_id ? (
+                jView ? <a onClick={() => onEntry(l.entry_id as number)}>{l.entry_no}</a> : l.entry_no
               ) : l.ignored && rcEdit ? (
                 <Button size="small" type="link" onClick={() => patch(l.id as number, { ignored: false }, t('已取消忽略'))}>
                   {t('取消忽略')}
@@ -804,8 +940,23 @@ function AllLines({ accountId, version, onOpen }: { accountId?: number; version:
 // 导入银行流水
 // 两种文件：单个账户的网银导出（在上面选账户）；或者月度汇总，一张表里有多个账户、有“账户名称”列（按账户分别导入）
 // ---------------------------------------------------------------------------
-type ImportSummary = ImportResult & { accounts: number; failed: string[]; multi: boolean }
-type AccountGroup = { key: string; rows: number; lines: ParsedLine[]; total: number; auto?: number }
+type ImportSummary = ImportResult & { accounts: number; failed: string[]; multi: boolean; chainList: string[] }
+type AccountGroup = { key: string; rows: number; lines: ParsedLine[]; inN: number; inSum: number; outN: number; outSum: number; auto?: number }
+
+/** 收、付各几条、合计多少 */
+function inOut(lines: ParsedLine[]) {
+  const r = { inN: 0, inSum: 0, outN: 0, outSum: 0 }
+  for (const l of lines) {
+    if (l.amount_orig > 0) {
+      r.inN += 1
+      r.inSum = round2(r.inSum + l.amount_orig)
+    } else {
+      r.outN += 1
+      r.outSum = round2(r.outSum - l.amount_orig)
+    }
+  }
+  return r
+}
 
 function ImportStatement({
   accountId,
@@ -854,7 +1005,7 @@ function ImportStatement({
     if (!multi) return []
     return [...parsed.seen.entries()].map(([key, rows]) => {
       const lines = parsed.lines.filter((l) => l.account_key === key)
-      return { key, rows, lines, total: lines.reduce((s, l) => s + l.amount_orig, 0), auto: matchAccount(key, bankAccounts) }
+      return { key, rows, lines, ...inOut(lines), auto: matchAccount(key, bankAccounts) }
     })
   }, [multi, parsed, bankAccounts])
   const targetOf = (g: AccountGroup) => (g.key in acctPick ? (acctPick[g.key] ?? undefined) : g.auto)
@@ -885,6 +1036,8 @@ function ImportStatement({
     setMapping({
       date: idx(m.date),
       credit: idx(m.credit),
+      debit: idx(m.debit),
+      balance: idx(m.balance),
       drcr: idx(m.drcr),
       summary: idx(m.summary),
       ref: idx(m.ref),
@@ -920,8 +1073,29 @@ function ImportStatement({
     loadSheet(wb, wb.SheetNames.find((n) => findHeaderRow(sheetToRows(wb, n)) > 0) ?? wb.SheetNames[0])
   }
 
+  // 按银行的先后（从旧到新）送：数据库照这个顺序查余额接不接得上
   const rowsForRpc = (lines: ParsedLine[]) =>
-    lines.map((l) => ({ line_date: l.line_date, amount_orig: l.amount_orig, payer_summary: l.payer_summary, bank_ref: l.bank_ref, cheque_no: l.cheque_no })) as unknown as Json
+    lines.map((l) => ({
+      line_date: l.line_date,
+      amount_orig: l.amount_orig,
+      payer_summary: l.payer_summary,
+      bank_ref: l.bank_ref,
+      cheque_no: l.cheque_no,
+      balance: l.balance,
+      ignored: l.ignored ?? false,
+      note: l.note ?? null,
+    })) as unknown as Json
+  const parsedIO = useMemo(() => inOut(parsed.lines), [parsed])
+
+  /** 导完数据库查出来的余额接不上：哪个账户、几处、在哪几天差多少 */
+  const chainText = (id: number, r: ImportResult) =>
+    r.chain && r.chain.n > 0
+      ? t('{account}：{n} 处，在 {dates}', {
+          account: accountById.get(id)?.short_name ?? id,
+          n: r.chain.n,
+          dates: r.chain.first.map((f) => `${f.line_date}（${t('差')} ${money(f.diff)}）`).join(t('、')),
+        })
+      : null
 
   const runImport = (id: number, lines: ParsedLine[]) =>
     supabase.rpc('import_statement', {
@@ -937,13 +1111,16 @@ function ImportStatement({
     setResult(null)
     if (!multi) {
       if (!accountId) return message.error(t('先选收款账户'))
-      if (!parsed.lines.length) return message.error(t('没有解析出贷方（入账）记录，请检查列的对应'))
+      if (!parsed.lines.length) return message.error(t('没有解析出收付记录，请检查列的对应'))
       setImporting(true)
       const { data, error } = await runImport(accountId, parsed.lines)
       setImporting(false)
       if (error) return message.error(t('导入失败：') + errorText(error))
-      setResult({ ...(data as ImportResult), accounts: 1, failed: [], multi: false })
+      const r = data as ImportResult
+      const chain = chainText(accountId, r)
+      setResult({ ...r, accounts: 1, failed: [], multi: false, chainList: chain ? [chain] : [] })
       message.success(t('导入完成'))
+      notifyJournalChanged()
       onDone()
       return
     }
@@ -957,7 +1134,19 @@ function ImportStatement({
       byId.set(id, [...(byId.get(id) ?? []), ...g.lines])
     }
     setImporting(true)
-    const sum: ImportSummary = { inserted: 0, skipped: 0, matched: 0, unmatched: 0, accounts: 0, failed: [], multi: true }
+    const sum: ImportSummary = {
+      inserted: 0,
+      skipped: 0,
+      matched: 0,
+      unmatched: 0,
+      debits: 0,
+      unfilled: 0,
+      balance_filled: 0,
+      accounts: 0,
+      failed: [],
+      multi: true,
+      chainList: [],
+    }
     for (const [id, lines] of byId) {
       const { data, error } = await runImport(id, lines)
       if (error) {
@@ -969,10 +1158,16 @@ function ImportStatement({
       sum.skipped += r.skipped
       sum.matched += r.matched
       sum.unmatched += r.unmatched
+      sum.debits = (sum.debits ?? 0) + (r.debits ?? 0)
+      sum.unfilled = (sum.unfilled ?? 0) + (r.unfilled ?? 0)
+      sum.balance_filled = (sum.balance_filled ?? 0) + (r.balance_filled ?? 0)
+      const chain = chainText(id, r)
+      if (chain) sum.chainList.push(chain)
       sum.accounts += 1
     }
     setImporting(false)
     setResult(sum)
+    notifyJournalChanged()
     if (sum.failed.length) message.warning(t('有 {n} 个账户没导进去，原因见下方', { n: sum.failed.length }))
     else message.success(t('导入完成'))
     onDone()
@@ -990,6 +1185,8 @@ function ImportStatement({
       mapping: {
         date: pick(mapping.date),
         credit: pick(mapping.credit),
+        debit: pick(mapping.debit),
+        balance: pick(mapping.balance),
         drcr: pick(mapping.drcr),
         summary: pick(mapping.summary),
         ref: pick(mapping.ref),
@@ -1024,8 +1221,25 @@ function ImportStatement({
   const previewColumns: ColumnsType<ParsedLine> = [
     ...(multi ? [{ title: t('账户'), dataIndex: 'account_key', width: 220, ellipsis: true }] : []),
     { title: t('日期'), dataIndex: 'line_date', width: 110 },
-    { title: t('金额'), dataIndex: 'amount_orig', width: 140, align: 'right', render: (v: number) => money(v) },
-    { title: t('摘要'), dataIndex: 'payer_summary', ellipsis: true },
+    { title: t('收入'), width: 130, align: 'right', render: (_, l) => (l.amount_orig > 0 ? money(l.amount_orig) : '') },
+    {
+      title: t('支出'),
+      width: 130,
+      align: 'right',
+      render: (_, l) => (l.amount_orig < 0 ? <span className="text-warn">{money(-l.amount_orig)}</span> : ''),
+    },
+    { title: t('余额'), dataIndex: 'balance', width: 130, align: 'right', render: (v: number | null) => (v === null ? '' : money(v)) },
+    {
+      title: t('摘要'),
+      dataIndex: 'payer_summary',
+      ellipsis: true,
+      render: (v: string, l) => (
+        <>
+          {l.ignored && <Tag>{t(l.note ?? '已忽略')}</Tag>}
+          {v}
+        </>
+      ),
+    },
     { title: t('参考号'), dataIndex: 'bank_ref', width: 160, ellipsis: true },
     { title: t('支票号'), dataIndex: 'cheque_no', width: 100 },
   ]
@@ -1082,7 +1296,7 @@ function ImportStatement({
             <InboxOutlined />
           </p>
           <p className="ant-upload-text">{fileName ? t('已读取：{fileName}（点这里换一个文件）', { fileName }) : t('把网银导出的 Excel / CSV，或每月的流水汇总表拖到这里，或点击选择')}</p>
-          <p className="ant-upload-hint">{t('只导入贷方（入账）记录，借方自动跳过；同一份流水重复导入不会重复。')}</p>
+          <p className="ant-upload-hint">{t('收、付都导进来（有余额列也导），同一份流水重复导入不会重复；以前只导了收入的，再导一次会补上付出去的和余额。')}</p>
         </Upload.Dragger>
       </Card>
 
@@ -1105,7 +1319,9 @@ function ImportStatement({
               <InputNumber min={1} max={50} value={headerRow} onChange={(v) => setHeaderRow(v ?? 1)} style={{ width: '100%' }} />
             </Col>
             {colSelect('date', t('日期列'), true)}
-            {colSelect('credit', t('贷方 / 入账金额列'), true)}
+            {colSelect('credit', t('贷方 / 入账金额列'), mapping.debit === undefined)}
+            {colSelect('debit', t('借方 / 支出金额列'))}
+            {colSelect('balance', t('余额列'))}
             {colSelect('summary', t('摘要列'))}
             {colSelect('ref', t('参考号列'))}
             {colSelect('cheque', t('支票号列'))}
@@ -1141,8 +1357,13 @@ function ImportStatement({
             columns={[
               { title: t('文件里的账户'), dataIndex: 'key', ellipsis: true },
               { title: t('行数'), dataIndex: 'rows', width: 70, align: 'right' },
-              { title: t('入账条数'), width: 90, align: 'right', render: (_, g) => g.lines.length },
-              { title: t('入账合计'), width: 150, align: 'right', render: (_, g) => money(g.total) },
+              { title: t('收入'), width: 170, align: 'right', render: (_, g) => (g.inN ? `${g.inN} · ${money(g.inSum)}` : '') },
+              {
+                title: t('支出'),
+                width: 170,
+                align: 'right',
+                render: (_, g) => (g.outN ? <span className="text-warn">{`${g.outN} · ${money(g.outSum)}`}</span> : ''),
+              },
               {
                 title: t('对应系统账户'),
                 width: 300,
@@ -1170,8 +1391,13 @@ function ImportStatement({
           size="small"
           title={
             multi
-              ? t('预览：{n} 条入账，{accounts} 个账户', { n: parsed.lines.length, accounts: groups.length })
-              : t('预览：{n} 条入账，合计 {total}', { n: parsed.lines.length, total: money(parsed.lines.reduce((s, l) => s + l.amount_orig, 0)) })
+              ? t('预览：收 {inN} 条、付 {outN} 条，{accounts} 个账户', { inN: parsedIO.inN, outN: parsedIO.outN, accounts: groups.length })
+              : t('预览：收 {inN} 条 {inSum}，付 {outN} 条 {outSum}', {
+                  inN: parsedIO.inN,
+                  inSum: money(parsedIO.inSum),
+                  outN: parsedIO.outN,
+                  outSum: money(parsedIO.outSum),
+                })
           }
           extra={
             <Space>
@@ -1196,12 +1422,28 @@ function ImportStatement({
               title={t('第 {rows} 行的日期认不出来，已跳过。请检查“日期格式”。', { rows: parsed.bad.slice(0, 10).join(t('、')) })}
             />
           )}
+          {parsed.breaks.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 8 }}
+              title={t('这份文件里的余额有 {n} 处接不上（第 {rows} 行）：文件可能不全，或者余额列、收付列对错了。照样可以导，导完再看日记账的余额。', {
+                n: parsed.breaks.length,
+                rows: parsed.breaks
+                  .slice(0, 10)
+                  .map((b) => b.row)
+                  .join(t('、')),
+              })}
+            />
+          )}
           {parsed.reversals.some((r) => r.paired) && (
             <Alert
               type="info"
               showIcon
               style={{ marginBottom: 8 }}
-              title={t('去掉了 {n} 对退票或冲回：先入账、后来又被冲掉的同额款，两笔都不导入。', { n: parsed.reversals.filter((r) => r.paired).length })}
+              title={t('有 {n} 对退票或冲回（先入账、后来又被冲掉的同额款）：两条都导进来、标成“已忽略”，不会配到账，余额照算。', {
+                n: parsed.reversals.filter((r) => r.paired).length,
+              })}
             />
           )}
           {parsed.reversals.some((r) => !r.paired) && (
@@ -1209,7 +1451,7 @@ function ImportStatement({
               type="warning"
               showIcon
               style={{ marginBottom: 8 }}
-              title={t('下面这些冲回在这份文件里找不到原来那笔入账，原入账多半在上个月的流水里。请到“全部流水明细”找到原入账，配过对的先取消配对，再忽略。')}
+              title={t('下面这些冲回在这份文件里找不到原来那笔入账（多半在上个月的流水里），导进来算付出去的。请到“全部流水明细”找到原来那笔入账，配过对的先取消配对，再把两条都忽略。')}
               description={parsed.reversals
                 .filter((r) => !r.paired)
                 .map((r) => [r.account_key, r.line_date, t('冲回'), money(r.amount), r.payer_summary].filter(Boolean).join(' '))
@@ -1218,24 +1460,38 @@ function ImportStatement({
           )}
           {result && (
             <Alert
-              type={result.failed.length ? 'warning' : 'success'}
+              type={result.failed.length || result.chainList.length ? 'warning' : 'success'}
               showIcon
               style={{ marginBottom: 8 }}
               title={
                 (result.multi ? t('导入了 {n} 个账户：', { n: result.accounts }) : '') +
-                t('新导入 {inserted} 条（重复跳过 {skipped} 条），自动配对上 {matched} 笔；', {
+                t('新导入 {inserted} 条（其中付出去的 {debits} 条，重复跳过 {skipped} 条），自动配对上 {matched} 笔。', {
                   inserted: result.inserted,
+                  debits: result.debits ?? 0,
                   skipped: result.skipped,
                   matched: result.matched,
                 }) +
-                (result.multi
-                  ? t('这些账户还有 {n} 条没人报，请到“银行有、没人报”处理。', { n: result.unmatched })
-                  : t('这个账户还有 {n} 条没人报，请到“银行有、没人报”处理。', { n: result.unmatched }))
+                t('还有 {unmatched} 条收入没人报（到“银行有、没人报”处理）、{unfilled} 条付款待填（到“付款待填”填）。', {
+                  unmatched: result.unmatched,
+                  unfilled: result.unfilled ?? 0,
+                }) +
+                (result.balance_filled ? t('以前导过的 {n} 条补上了余额。', { n: result.balance_filled }) : '')
               }
-              description={result.failed.length ? t('没导进去的账户：{list}', { list: result.failed.join(t('；')) }) : undefined}
+              description={
+                result.failed.length || result.chainList.length ? (
+                  <>
+                    {result.chainList.length > 0 && (
+                      <div>
+                        {t('余额接不上：{list}。多半是中间漏导了一段流水，补导缺的那段就好。', { list: result.chainList.join(t('；')) })}
+                      </div>
+                    )}
+                    {result.failed.length > 0 && <div>{t('没导进去的账户：{list}', { list: result.failed.join(t('；')) })}</div>}
+                  </>
+                ) : undefined
+              }
             />
           )}
-          <Table rowKey={(_, i) => String(i)} size="small" dataSource={parsed.lines} pagination={{ defaultPageSize: 20 }} columns={previewColumns} />
+          <Table rowKey="row" size="small" dataSource={parsed.lines} pagination={{ defaultPageSize: 20 }} columns={previewColumns} />
         </Card>
       )}
     </div>

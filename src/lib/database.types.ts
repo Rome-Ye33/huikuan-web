@@ -342,6 +342,7 @@ export type Database = {
           ignored: boolean
           line_date: string
           line_hash: string
+          line_seq: number | null
           match_type: string | null
           note: string | null
           payer_summary: string | null
@@ -360,6 +361,7 @@ export type Database = {
           ignored?: boolean
           line_date: string
           line_hash: string
+          line_seq?: number | null
           match_type?: string | null
           note?: string | null
           payer_summary?: string | null
@@ -378,6 +380,7 @@ export type Database = {
           ignored?: boolean
           line_date?: string
           line_hash?: string
+          line_seq?: number | null
           match_type?: string | null
           note?: string | null
           payer_summary?: string | null
@@ -436,9 +439,10 @@ export type Database = {
           direction: string
           entry_date: string
           entry_no: string
+          fee_of: number | null
           fx_rate: number | null
           id: number
-          module: string | null
+          module: string
           note: string | null
           peer_id: number | null
           summary: string | null
@@ -459,9 +463,10 @@ export type Database = {
           direction: string
           entry_date: string
           entry_no?: string
+          fee_of?: number | null
           fx_rate?: number | null
           id?: never
-          module?: string | null
+          module?: string
           note?: string | null
           peer_id?: number | null
           summary?: string | null
@@ -482,9 +487,10 @@ export type Database = {
           direction?: string
           entry_date?: string
           entry_no?: string
+          fee_of?: number | null
           fx_rate?: number | null
           id?: never
-          module?: string | null
+          module?: string
           note?: string | null
           peer_id?: number | null
           summary?: string | null
@@ -1738,6 +1744,7 @@ export type Database = {
           peer_account_id: number | null
           peer_account_name: string | null
           receipt_id: number | null
+          seq: number | null
           source: string | null
           source_id: number | null
           summary: string | null
@@ -1854,10 +1861,13 @@ export type Database = {
           created_at: string | null
           currency: string | null
           entry_id: number | null
+          entry_module: string | null
+          entry_no: string | null
           id: number | null
           ignored: boolean | null
           line_date: string | null
           line_hash: string | null
+          line_seq: number | null
           match_status: string | null
           match_type: string | null
           note: string | null
@@ -2025,6 +2035,7 @@ export type Database = {
         Returns: Json
       }
       delete_cash_entry: { Args: { p_id: number }; Returns: undefined }
+      fill_statement_lines: { Args: { p: Json; p_line_ids: number[] }; Returns: number }
       import_cheques: { Args: { p_rows: Json }; Returns: Json }
       import_vehicles: {
         Args: { p_opening_date: string; p_rows: Json; p_update?: boolean }
@@ -2036,6 +2047,7 @@ export type Database = {
           account_id: number
           bank_balance: number | null
           bank_date: string | null
+          bank_diff: number | null
           closing: number
           expense: number
           has_opening: boolean

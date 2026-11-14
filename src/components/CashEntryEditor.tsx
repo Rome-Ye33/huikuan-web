@@ -79,6 +79,8 @@ export default function CashEntryEditor({
   const [kind, setKind] = useState<EntryKind>('out')
   const [entry, setEntry] = useState<CashEntry | null>(null)
   const [peer, setPeer] = useState<CashEntry | null>(null)
+  // 改的时候：哪一边已经和银行流水对上了（那一边的账户、金额照银行的，不能改；对上了日期也不能改）
+  const [linked, setLinked] = useState<{ out: boolean; in: boolean }>({ out: false, in: false })
   const [attachments, setAttachments] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [changed, setChanged] = useState(false)
@@ -89,8 +91,9 @@ export default function CashEntryEditor({
   const fromLine = !editing && !!prefill?.line_id
   // 收进来的流水（填成其他收入，或者互转的转入那一边）
   const lineCredit = fromLine && (!!prefill?.to_account_id || prefill?.kind === 'in')
-  const lockFrom = fromLine && !lineCredit
-  const lockTo = fromLine && lineCredit
+  const lockFrom = (fromLine && !lineCredit) || linked.out
+  const lockTo = (fromLine && lineCredit) || linked.in
+  const lockDate = fromLine || linked.out || linked.in
 
   // 打开时：新记一笔按带过来的内容填；改一笔先读回来（互转的把另一边也读回来）
   useEffect(() => {
@@ -99,6 +102,7 @@ export default function CashEntryEditor({
     setCount(0)
     setEntry(null)
     setPeer(null)
+    setLinked({ out: false, in: false })
     form.resetFields()
     if (entryId === null) {
       const k = prefill?.kind ?? 'out'
@@ -119,7 +123,9 @@ export default function CashEntryEditor({
     }
     let alive = true
     void (async () => {
-      const { data } = await supabase.from('cash_entries').select('*').eq('id', entryId).maybeSingle()
+      let { data } = await supabase.from('cash_entries').select('*').eq('id', entryId).maybeSingle()
+      // 互转的手续费：打开那笔互转（手续费跟着互转改）
+      if (data?.fee_of) ({ data } = await supabase.from('cash_entries').select('*').eq('id', data.fee_of).maybeSingle())
       if (!alive || !data) return
       let out = data
       let other: CashEntry | null = null
@@ -129,7 +135,14 @@ export default function CashEntryEditor({
         // 互转统一按“转出 → 转入”显示
         if (other && data.direction === 'in') [out, other] = [other, data]
       }
+      const ids = [out.id, other?.id].filter((x): x is number => !!x)
+      const [{ data: fee }, { data: lines }] = await Promise.all([
+        other ? supabase.from('cash_entries').select('amount').eq('fee_of', out.id).maybeSingle() : Promise.resolve({ data: null }),
+        supabase.from('bank_statement_lines').select('entry_id').in('entry_id', ids),
+      ])
       if (!alive) return
+      const on = new Set((lines ?? []).map((l) => l.entry_id))
+      setLinked({ out: on.has(out.id), in: !!other && on.has(other.id) })
       setEntry(out)
       setPeer(other)
       setKind(other ? 'transfer' : (out.direction as EntryKind))
@@ -147,6 +160,7 @@ export default function CashEntryEditor({
         note: out.note ?? undefined,
         to_account_id: other?.account_id,
         to_amount: other ? Number(other.amount) : undefined,
+        fee: fee ? Number(fee.amount) : null,
       })
     })()
     return () => {
@@ -299,7 +313,13 @@ export default function CashEntryEditor({
     <div className="entry-footer">
       {editing && canEdit ? (
         <Popconfirm
-          title={peer ? t('删除这笔互转？两个账户的两笔一起删') : t('删除这一笔？')}
+          title={
+            peer
+              ? t('删除这笔互转？两个账户的两笔一起删')
+              : linked.out
+                ? t('删除这一笔？对上的银行流水回到“待填”')
+                : t('删除这一笔？')
+          }
           okText={t('删除')}
           okButtonProps={{ danger: true }}
           onConfirm={() => void remove()}
@@ -369,6 +389,14 @@ export default function CashEntryEditor({
           description={t('日期、账户、金额照银行的，不能改；填好业务模块和摘要，保存后这条流水就填好了。')}
         />
       )}
+      {editing && (linked.out || linked.in) && (
+        <Alert
+          type="success"
+          showIcon
+          className="entry-tip"
+          title={t('已经和银行流水对上：日期、账户、金额照银行的，不能改；要改请删掉这一笔（流水回到“待填”）再重新填。')}
+        />
+      )}
       {!fromLine && !editing && kind !== 'transfer' && (
         <Alert
           type="info"
@@ -388,7 +416,7 @@ export default function CashEntryEditor({
         <Row gutter={12}>
           <Col xs={24} sm={8}>
             <Form.Item name="entry_date" label={t('日期')} rules={[{ required: true, message: t('请选日期') }]}>
-              <DatePicker style={{ width: '100%' }} allowClear={false} disabled={readOnly || fromLine} />
+              <DatePicker style={{ width: '100%' }} allowClear={false} disabled={readOnly || lockDate} />
             </Form.Item>
           </Col>
           {kind !== 'transfer' && (
@@ -403,13 +431,13 @@ export default function CashEntryEditor({
                     showSearch={{ optionFilterProp: 'label' }}
                     options={fromLine || editing ? allAccounts : cashAccounts}
                     placeholder={t('现金账户')}
-                    disabled={readOnly || fromLine}
+                    disabled={readOnly || fromLine || linked.out}
                   />
                 </Form.Item>
               </Col>
               <Col xs={24} sm={8}>
                 <Form.Item name="amount" label={t('金额')} rules={[{ required: true, message: t('请填金额') }]}>
-                  <InputNumber style={{ width: '100%' }} min={0.01} precision={2} suffix={cur} disabled={readOnly || fromLine} />
+                  <InputNumber style={{ width: '100%' }} min={0.01} precision={2} suffix={cur} disabled={readOnly || fromLine || linked.out} />
                 </Form.Item>
               </Col>
               <Col xs={24} sm={8}>

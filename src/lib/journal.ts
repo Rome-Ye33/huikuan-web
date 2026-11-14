@@ -1,7 +1,10 @@
-// 银行现金日记账：每个账户每天收了多少、付了多少、还剩多少，和银行流水的余额比。
-// 收：到账录入里审批通过的到账自动带进来（设备回款 / 配件回款），加上这里录的“其他收入”。
-// 付：这里录的“支出”。账户之间的钱（资金拨付、货币兑换、现金存现、银行取现）录一次“账户互转”，两边各记一笔。
-// 读：v_journal（一笔一行）、journal_month（每个账户一段时间的期初 / 收 / 付 / 期末 / 银行余额）。写：save_cash_entry、delete_cash_entry。
+// 银行现金日记账：每个账户每天收了多少、付了多少、还剩多少（数据库 36）。
+// 银行账户先导流水再填：日记账就是银行流水本身，一条一行，金额、日期、余额都是银行的；
+//   收进来的配上到账（设备回款 / 配件回款）或填成其他收入、互转；付出去的填成付款或互转；没填的标“待填”，照样算余额。
+// 现金账户（cash、momo）没有流水：一笔笔记（支出、其他收入、互转），加上审批通过的现金到账。
+// 账户之间的钱（资金拨付、货币兑换、现金存现、银行取现）录一次“账户互转”，两边各记一笔；银行那一边没流水就“等流水”，导进来自动对上。
+// 读：v_journal（一笔一行）、journal_month（每个账户一段时间的期初 / 收 / 付 / 期末 / 银行余额）。
+// 写：save_cash_entry、delete_cash_entry、fill_statement_lines（勾几条一起填）、save_openings。
 import { round2 } from './format'
 import type { Account } from './supabase'
 import type { Database } from './database.types'
@@ -111,13 +114,15 @@ export const CURRENCY_ZH: Record<string, string> = {
 /**
  * 银行账户先导流水再填：日记账就是流水本身，所以余额一定跟着银行走。账户的状态只有这几种：
  * ok 流水都填完了（绿）；todo 还有流水没填（橙）；broken 算出来的余额和银行流水上的余额接不上（红，多半是漏导了一段或期初填错）；
- * none 还没导过流水（灰）；cash 现金账户，没有流水。
+ * none 这段时间没有流水（灰）；cash 现金账户，没有流水。
+ * bank_diff = 最后一条带余额的流水上，算出来的余额 - 银行给的余额（数据库算）；以前导的流水没有余额列，就只看填没填完。
  */
 export type AcctStatus = 'ok' | 'todo' | 'broken' | 'none' | 'cash'
 export function acctStatus(m: AccountMonth, cash: boolean): AcctStatus {
   if (cash) return 'cash'
-  if (m.bank_balance === null || m.bank_balance === undefined) return 'none'
-  if (Math.abs(round2(Number(m.closing) - Number(m.bank_balance))) >= 0.005) return 'broken'
+  const hasBank = m.bank_balance !== null && m.bank_balance !== undefined
+  if (!hasBank && !Number(m.line_n)) return 'none'
+  if (hasBank && Math.abs(round2(Number(m.bank_diff ?? 0))) >= 0.005) return 'broken'
   return Number(m.unfilled_n) > 0 ? 'todo' : 'ok'
 }
 export const ACCT_STATUS_COLOR: Record<AcctStatus, string> = { ok: 'success', todo: 'orange', broken: 'error', none: 'default', cash: 'default' }

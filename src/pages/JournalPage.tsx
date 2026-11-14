@@ -188,18 +188,25 @@ function StatusTag({ status, m }: { status: AcctStatus; m: AccountMonth }) {
   if (status === 'cash') return <span className="hint">{t('现金')}</span>
   const label =
     status === 'ok' ? t('已填完') : status === 'todo' ? t('待填 {n} 条', { n: m.unfilled_n }) : status === 'broken' ? t('余额接不上') : t('没有流水')
+  // 以前导的流水没有余额列：只能看填没填完，对不了余额
+  const hasBank = m.bank_balance !== null && m.bank_balance !== undefined
   const tip =
     status === 'ok'
-      ? t('流水都填好了，余额和银行一致')
+      ? hasBank
+        ? t('流水都填好了，余额和银行一致')
+        : t('流水都填好了（这段流水没有余额列，对不了余额）')
       : status === 'todo'
-        ? t('还有 {n} 条银行流水没填业务模块和摘要；余额已经算进去了，和银行一致', { n: m.unfilled_n })
+        ? hasBank
+          ? t('还有 {n} 条银行流水没填业务模块和摘要；余额已经算进去了，和银行一致', { n: m.unfilled_n })
+          : t('还有 {n} 条银行流水没填业务模块和摘要', { n: m.unfilled_n })
         : status === 'broken'
-          ? t('按期初和流水算出来是 {book}，银行流水上的余额是 {bank}，差 {diff}：多半是漏导了一段流水，或者期初余额填错了', {
-              book: money(m.closing),
+          ? t('按期初和流水算到 {date} 是 {book}，银行流水上那天的余额是 {bank}，差 {diff}：多半是漏导了一段流水，或者期初余额填错了', {
+              date: (m.bank_date ?? '').slice(5),
+              book: money(round2(Number(m.bank_balance) + Number(m.bank_diff ?? 0))),
               bank: money(m.bank_balance),
-              diff: money(round2(Number(m.closing) - Number(m.bank_balance))),
+              diff: money(m.bank_diff),
             })
-          : t('还没导过这个账户的银行流水')
+          : t('这段时间没有这个账户的银行流水')
   return (
     <Tooltip title={tip}>
       <Tag color={ACCT_STATUS_COLOR[status]}>{label}</Tag>
@@ -502,7 +509,7 @@ function LedgerTab({
       .gte('entry_date', from)
       .lte('entry_date', to)
       .order('entry_date', { ascending: true })
-      .order('created_at', { ascending: true })
+      .order('seq', { ascending: true })
       .limit(5000)
     if (accountId) query = query.eq('account_id', accountId)
     const [{ data }, m] = await Promise.all([
@@ -575,6 +582,12 @@ function LedgerTab({
         if (r.type !== 'line') return null
         const l = r.line
         if (l.fill_status === '待填') return <Tag color={FILL_COLOR['待填']}>{t('待填')}</Tag>
+        if (l.fill_status === '已忽略')
+          return (
+            <Tooltip title={t('在银行对账里忽略了（不用填）；钱确实动了，照样算进余额')}>
+              <Tag>{t('已忽略')}</Tag>
+            </Tooltip>
+          )
         return (
           <>
             {l.module && <Tag color={moduleColor(l.module)}>{t(l.module)}</Tag>}
