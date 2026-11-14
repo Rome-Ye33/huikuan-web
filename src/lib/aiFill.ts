@@ -62,6 +62,12 @@ export async function recognize(text: string, files: AiFile[]): Promise<AiResult
 }
 
 // ---------------------------------------------------------------- 凭证里的图片、PDF
+/**
+ * 智能填表的总开关。Rome 2026-11-14“把智能填表关了吧”：默认关，新建到账里不显示这张卡片，也不会调用识别服务。
+ * 识别服务（Edge Function receipt-ai）和密钥都留着；要开回来，打包时带上 VITE_AI_FILL=on（发布流程 deploy.yml 的 build 那一步）。
+ */
+export const AI_FILL_ENABLED = import.meta.env.VITE_AI_FILL === 'on'
+
 export const MAX_AI_FILES = 4
 const MAX_PDF_BYTES = 4 * 1024 * 1024
 const MAX_SEND_BYTES = 6 * 1024 * 1024
